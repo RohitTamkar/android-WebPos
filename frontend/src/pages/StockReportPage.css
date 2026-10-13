@@ -1,0 +1,10 @@
+/* Builds on BillWiseReportPage.css and ProductWiseReportPage.css; only stock-specific additions live here. */
+.stock-count { color: #163c55; font-size: 11px; }
+.stock-count.negative { color: #c42b31; }
+.stock-count.muted { color: #9aa8b4; font-weight: 600; }
+.stock-status { padding: 4px 7px; border-radius: 999px; font-size: 8px; font-weight: 800; white-space: nowrap; }
+.stock-status.in-stock { color: #25704f; background: #e9f7f0; }
+.stock-status.low-stock { color: #9a6200; background: #fff4de; }
+.stock-status.out-of-stock { color: #b52c32; background: #fff0f1; }
+.stock-status.not-tracked { color: #5d6f80; background: #eef2f5; }
+.stock-report-page tfoot td { border-top: 2px solid #e2e7eb; color: #173b53; background: #f6f8fa; font-weight: 800; }

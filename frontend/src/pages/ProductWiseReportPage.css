@@ -1,0 +1,7 @@
+/* Builds on BillWiseReportPage.css and CategoryWiseReportPage.css; only product-specific additions live here. */
+.product-report-page tbody tr { cursor: default; }
+.product-report-page td.product-code-cell { display: table-cell; }
+.product-code { display: inline-block; min-width: 34px; padding: 4px 7px; border-radius: 6px; color: #153f58; background: #eef3f7; font-size: 9px; font-weight: 800; text-align: center; font-variant-numeric: tabular-nums; }
+.product-sort-bar { display: flex; align-items: center; gap: 6px; padding: 10px 14px; border-bottom: 1px solid #edf0f3; color: #728496; font-size: 9px; font-weight: 800; text-transform: uppercase; }
+.product-sort-bar button { padding: 5px 9px; border: 1px solid #d8e0e7; border-radius: 999px; color: #465e71; background: #fff; font-size: 9px; font-weight: 800; text-transform: none; cursor: pointer; }
+.product-sort-bar button.active { border-color: #ed3036; color: #fff; background: #ed3036; }

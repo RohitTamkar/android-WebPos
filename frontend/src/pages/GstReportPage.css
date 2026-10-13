@@ -1,0 +1,10 @@
+/* Builds on BillWiseReportPage.css and ProductWiseReportPage.css; only GST-specific additions live here. */
+.gst-report-page td.gst-plain-cell { display: table-cell; }
+.gst-rate { display: inline-block; min-width: 42px; padding: 4px 8px; border-radius: 999px; color: #25704f; background: #e9f7f0; font-size: 9px; font-weight: 800; text-align: center; }
+.gst-rate.zero { color: #5d6f80; background: #eef2f5; }
+.gst-report-page tfoot td { border-top: 2px solid #e2e7eb; color: #173b53; background: #f6f8fa; font-weight: 800; }
+.gst-report-page tbody tr.gst-bill-row { cursor: pointer; }
+.gst-items-table td, .gst-items-table th { white-space: nowrap; }
+.gst-items-table td:first-child { display: grid; gap: 2px; white-space: normal; }
+.gst-items-table td:first-child small { color: #8a99a6; font-size: 8px; }
+.gst-items-table td:last-child, .gst-items-table th:last-child { text-align: right; }

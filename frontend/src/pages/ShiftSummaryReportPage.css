@@ -1,0 +1,11 @@
+/* Builds on BillWiseReportPage.css; only shift-specific additions live here. */
+.shift-report-page .bill-report-filters input:disabled { color: #a3b0bb; background: #f6f8fa; cursor: not-allowed; }
+.shift-report-page .bill-report-filters label > div:has(input:disabled) { background: #f6f8fa; }
+.shift-status { padding: 4px 7px; border-radius: 999px; font-size: 8px; font-weight: 800; }
+.shift-status.open { color: #25704f; background: #e9f7f0; }
+.shift-status.closed { color: #5d6f80; background: #eef2f5; }
+.shift-status.not-closed { color: #9a6200; background: #fff4de; }
+.shift-times { display: grid; gap: 3px; }
+.shift-times small { color: #8a99a6; font-size: 8px; }
+.shift-report-page tfoot td { border-top: 2px solid #e2e7eb; color: #173b53; background: #f6f8fa; font-weight: 800; }
+.shift-report-page tfoot td:first-child { display: table-cell; }
