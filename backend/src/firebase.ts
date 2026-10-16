@@ -1,6 +1,9 @@
 import { applicationDefault, getApp, getApps, initializeApp } from "firebase-admin/app";
 import type { App } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 let firebaseApp: App | undefined;
 
@@ -10,8 +13,17 @@ export function getFirebaseApp(): App {
   }
 
   if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    throw new Error("GOOGLE_APPLICATION_CREDENTIALS is not configured");
+    throw new Error("Set GOOGLE_APPLICATION_CREDENTIALS in backend/.env to your Firebase service-account JSON file");
   }
+
+  const credentialPath = resolve(
+    fileURLToPath(new URL("../", import.meta.url)),
+    process.env.GOOGLE_APPLICATION_CREDENTIALS
+  );
+  if (!existsSync(credentialPath)) {
+    throw new Error(`Firebase service-account file does not exist: ${credentialPath}. Update GOOGLE_APPLICATION_CREDENTIALS in backend/.env`);
+  }
+  process.env.GOOGLE_APPLICATION_CREDENTIALS = credentialPath;
 
   firebaseApp = getApps().length > 0
     ? getApp()

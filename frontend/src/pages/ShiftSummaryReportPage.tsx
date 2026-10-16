@@ -1,6 +1,9 @@
+import { downloadReportExcel, sumPayments } from '../utils/reportExcel.ts';
+import { ReportDateInput } from './ReportDateInput.tsx';
+import { reportDateError } from './reportDates.ts';
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Banknote, CalendarDays, Clock3, CreditCard, Download, Filter, Printer,
+  Banknote, Clock3, CreditCard, Download, Filter, Printer,
   RefreshCw, TrendingUp, X,
 } from 'lucide-react';
 import type { OutletSummary } from './OutletSelectionPage.tsx';
@@ -64,6 +67,7 @@ interface ShiftFilters {
 
 interface ShiftSummaryReportPageProps {
   outlet: OutletSummary;
+  reportName?: string;
   token: string;
   onSessionExpired: () => void;
 }
@@ -93,10 +97,6 @@ function labelPayment(mode: string): string {
   return labels[mode.toLowerCase()] || mode;
 }
 
-function csvCell(value: string | number): string {
-  return `"${String(value).replaceAll('"', '""')}"`;
-}
-
 // The POS does not always record an end time, so only today's unclosed shifts count as open.
 function shiftStatus(shift: ShiftRecord): 'Open' | 'Closed' | 'Not closed' {
   if (shift.endTime) return 'Closed';
@@ -112,7 +112,7 @@ function cashInHand(shift: ShiftRecord): number {
   return shift.openingAmt + shift.cashSale - shift.expCash;
 }
 
-export const ShiftSummaryReportPage = ({ outlet, token, onSessionExpired }: ShiftSummaryReportPageProps) => {
+export const ShiftSummaryReportPage = ({ outlet, token, onSessionExpired, reportName = 'Shift Summary Report' }: ShiftSummaryReportPageProps) => {
   const initialFilters = useMemo<ShiftFilters>(() => ({
     startDate: todayId(), endDate: todayId(), dayId: '', shiftNo: '', deviceId: '',
   }), []);
@@ -155,39 +155,46 @@ export const ShiftSummaryReportPage = ({ outlet, token, onSessionExpired }: Shif
   }, [outlet.id, token, appliedFilters, reloadKey]);
 
   const applyFilters = () => {
-    if (!filters.dayId && filters.startDate > filters.endDate) {
-      setError('Start date must be before the end date.');
+    const dateError = filters.dayId ? reportDateError(filters.dayId, filters.dayId) : reportDateError(filters.startDate, filters.endDate);
+    if (dateError) {
+      setError(dateError);
       return;
     }
     setAppliedFilters({ ...filters });
   };
 
   const resetFilters = () => {
-    setFilters(initialFilters);
-    setAppliedFilters(initialFilters);
+    const reset = { ...initialFilters, startDate: todayId(), endDate: todayId() };
+    setFilters(reset);
+    setAppliedFilters(reset);
   };
 
-  const exportExcel = () => {
+  const exportExcel = async () => {
     if (!report) return;
     const rows = [
       ['Day ID', 'Shift No', 'Status', 'Device ID', 'Start Time', 'End Time', 'Start Bill', 'Last Bill', 'Bill Count',
         'Opening Amount', 'Cash Sale', 'Digital Sale', 'Credit Sale', 'Discount', 'Tax', 'Expenses', 'Cash In Hand', 'Total Sale'],
       ...report.shifts.map(shift => [
         shift.dayId, shift.shiftNo, shiftStatus(shift), shift.deviceId,
-        dateTime(shift.startTime), dateTime(shift.endTime), shift.startBillNo, shift.lastBillNo, shift.billCount,
+        (shift.startTime ? new Date(shift.startTime) : '—'), (shift.endTime ? new Date(shift.endTime) : '—'), shift.startBillNo, shift.lastBillNo, shift.billCount,
         shift.openingAmt, shift.cashSale, shift.digitalSale, shift.creditSale, shift.discount, shift.tax,
         shift.expensesAmtTotal, cashInHand(shift), shift.totalSale,
       ]),
     ];
-    const csv = `﻿${rows.map(row => row.map(value => csvCell(value)).join(',')).join('\n')}`;
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = appliedFilters.dayId
-      ? `shift-summary-${outlet.name}-${appliedFilters.dayId}.csv`
-      : `shift-summary-${outlet.name}-${appliedFilters.startDate}-${appliedFilters.endDate}.csv`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+    await downloadReportExcel({
+      name: reportName, outlet, startDate: appliedFilters.dayId || appliedFilters.startDate, endDate: appliedFilters.dayId || appliedFilters.endDate,
+      summary: {
+        ...sumPayments(report.shifts),
+        'TOTAL SALE': report.summary.totalSale,
+        'TOTAL TAX': report.shifts.reduce((sum, shift) => sum + shift.tax, 0),
+        Cash: report.summary.cashSale,
+        Digital: report.summary.digitalSale,
+        Credit: report.summary.creditSale,
+        'Bill No Range': report.shifts.filter(shift => shift.startBillNo || shift.lastBillNo)
+          .map(shift => `${shift.startBillNo} to ${shift.lastBillNo}`).join('; ') || 'N/A',
+      },
+      rows,
+    });
   };
 
   return (
@@ -201,9 +208,9 @@ export const ShiftSummaryReportPage = ({ outlet, token, onSessionExpired }: Shif
       </div>
 
       <div className="bill-report-filters">
-        <label><span>From date</span><div><CalendarDays /><input type="date" value={filters.startDate} disabled={!!filters.dayId} onChange={event => setFilters(current => ({ ...current, startDate: event.target.value }))} /></div></label>
-        <label><span>To date</span><div><CalendarDays /><input type="date" value={filters.endDate} disabled={!!filters.dayId} onChange={event => setFilters(current => ({ ...current, endDate: event.target.value }))} /></div></label>
-        <label><span>Day ID</span><div><CalendarDays /><input type="date" value={filters.dayId} onChange={event => setFilters(current => ({ ...current, dayId: event.target.value }))} /></div></label>
+        <label><span>From date</span><ReportDateInput aria-label="From date" value={filters.startDate} onChange={event => setFilters(current => ({ ...current, startDate: event.target.value, dayId: '' }))} /></label>
+        <label><span>To date</span><ReportDateInput aria-label="To date" value={filters.endDate} onChange={event => setFilters(current => ({ ...current, endDate: event.target.value, dayId: '' }))} /></label>
+        <label><span>Day ID</span><ReportDateInput aria-label="Day ID" value={filters.dayId} onChange={event => setFilters(current => ({ ...current, dayId: event.target.value }))} /></label>
         <label><span>Shift No.</span><input type="number" min="1" value={filters.shiftNo} onChange={event => setFilters(current => ({ ...current, shiftNo: event.target.value }))} onKeyDown={event => { if (event.key === 'Enter') applyFilters(); }} placeholder="All shifts" /></label>
         <label><span>Device ID</span><input value={filters.deviceId} onChange={event => setFilters(current => ({ ...current, deviceId: event.target.value }))} onKeyDown={event => { if (event.key === 'Enter') applyFilters(); }} placeholder="All devices" /></label>
         <div className="bill-filter-buttons"><button type="button" className="apply" onClick={applyFilters}><Filter /> Apply</button><button type="button" onClick={resetFilters}><X /> Reset</button></div>

@@ -1,6 +1,11 @@
+import { gstDetailRows, loadGstExportBills, gstBillSummary } from '../utils/gstExcel.ts';
+import { downloadReportExcel, billRange, sumPayments } from '../utils/reportExcel.ts';
+import { useReportSearch } from './useReportSearch.ts';
+import { ReportDateInput } from './ReportDateInput.tsx';
+import { reportDateError } from './reportDates.ts';
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Banknote, CalendarDays, ChevronLeft, ChevronRight, CreditCard, Download,
+  Banknote, ChevronLeft, ChevronRight, CreditCard, Download,
   FileText, Filter, Printer, ReceiptText, RefreshCw, Search, X,
 } from 'lucide-react';
 import type { OutletSummary } from './OutletSelectionPage.tsx';
@@ -56,6 +61,7 @@ interface ReportFilters {
 
 interface BillWiseReportPageProps {
   outlet: OutletSummary;
+  reportName?: string;
   token: string;
   onSessionExpired: () => void;
 }
@@ -97,11 +103,7 @@ function entityLabel(value: unknown): string {
   return 'Not provided';
 }
 
-function csvCell(value: string | number): string {
-  return `"${String(value).replaceAll('"', '""')}"`;
-}
-
-export const BillWiseReportPage = ({ outlet, token, onSessionExpired }: BillWiseReportPageProps) => {
+export const BillWiseReportPage = ({ outlet, token, onSessionExpired, reportName = 'Bill Wise Sale Report' }: BillWiseReportPageProps) => {
   const initialFilters = useMemo<ReportFilters>(() => ({
     startDate: todayId(), endDate: todayId(), shiftId: '', paymentType: '', deviceId: '', search: '',
   }), []);
@@ -114,6 +116,8 @@ export const BillWiseReportPage = ({ outlet, token, onSessionExpired }: BillWise
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
+
+  useReportSearch(filters.search, appliedFilters.search, setAppliedFilters, setPage);
 
   const buildQuery = (targetPage: number, limit = 50) => {
     const params = new URLSearchParams({
@@ -147,9 +151,9 @@ export const BillWiseReportPage = ({ outlet, token, onSessionExpired }: BillWise
     setLoading(true);
     setError('');
     requestReport(page, controller.signal)
-      .then(setReport)
+      .then(result => { if (!controller.signal.aborted) setReport(result); })
       .catch(requestError => {
-        if ((requestError as Error).name !== 'AbortError') setError((requestError as Error).message);
+        if (!controller.signal.aborted) setError((requestError as Error).message);
       })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
@@ -158,18 +162,20 @@ export const BillWiseReportPage = ({ outlet, token, onSessionExpired }: BillWise
   }, [outlet.id, token, appliedFilters, page, reloadKey]);
 
   const applyFilters = () => {
-    if (filters.startDate > filters.endDate) {
-      setError('Start date must be before the end date.');
+    const dateError = reportDateError(filters.startDate, filters.endDate);
+    if (dateError) {
+      setError(dateError);
       return;
     }
     setPage(1);
-    setAppliedFilters({ ...filters });
+    setAppliedFilters({ ...filters, search: filters.search.trim() });
   };
 
   const resetFilters = () => {
-    setFilters(initialFilters);
+    const reset = { ...initialFilters, startDate: todayId(), endDate: todayId() };
+    setFilters(reset);
     setPage(1);
-    setAppliedFilters(initialFilters);
+    setAppliedFilters(reset);
   };
 
   const exportExcel = async () => {
@@ -181,21 +187,23 @@ export const BillWiseReportPage = ({ outlet, token, onSessionExpired }: BillWise
         Array.from({ length: Math.max(0, first.pagination.totalPages - 1) }, (_, index) => requestReport(index + 2))
       );
       const bills = [first, ...pages].flatMap(result => result.bills);
-      const rows = [
-        ['Bill No', 'Date/Time', 'Amount', 'Payment Mode', 'Bill Type', 'Shift', 'Device ID', 'Tax', 'Discount'],
-        ...bills.map(bill => [
-          bill.billNo, dateTime(bill.createdDate), bill.finalTotal,
-          bill.paymentModes.map(labelPayment).join(' + ') || 'Unspecified', bill.billType,
-          bill.shiftId, bill.deviceId, bill.taxAmount, bill.discount,
-        ]),
-      ];
-      const csv = `\uFEFF${rows.map(row => row.map(value => csvCell(value)).join(',')).join('\n')}`;
-      const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = `bill-wise-${outlet.name}-${appliedFilters.startDate}-${appliedFilters.endDate}.csv`;
-      anchor.click();
-      URL.revokeObjectURL(url);
+      const gstBills = await loadGstExportBills(
+        outlet.id, token, bills, appliedFilters.startDate, appliedFilters.endDate, onSessionExpired,
+      );
+      const rows = gstDetailRows(gstBills, 'bill');
+      await downloadReportExcel({
+        name: reportName, outlet, startDate: appliedFilters.startDate, endDate: appliedFilters.endDate,
+        summary: {
+          ...sumPayments(bills),
+          ...gstBillSummary(gstBills),
+          'Bill No Range': billRange(bills),
+          'TOTAL SALE': first.summary.totalAmount,
+          'TOTAL TAX': bills.reduce((sum, bill) => sum + bill.taxAmount, 0),
+          Cash: first.summary.cashTotal,
+          Digital: first.summary.digitalTotal,
+        },
+        rows,
+      });
     } catch (exportError) {
       setError((exportError as Error).message);
     } finally {
@@ -214,8 +222,8 @@ export const BillWiseReportPage = ({ outlet, token, onSessionExpired }: BillWise
       </div>
 
       <div className="bill-report-filters">
-        <label><span>From date</span><div><CalendarDays /><input type="date" value={filters.startDate} onChange={event => setFilters(current => ({ ...current, startDate: event.target.value }))} /></div></label>
-        <label><span>To date</span><div><CalendarDays /><input type="date" value={filters.endDate} onChange={event => setFilters(current => ({ ...current, endDate: event.target.value }))} /></div></label>
+        <label><span>From date</span><ReportDateInput aria-label="From date" value={filters.startDate} onChange={event => setFilters(current => ({ ...current, startDate: event.target.value }))} /></label>
+        <label><span>To date</span><ReportDateInput aria-label="To date" value={filters.endDate} onChange={event => setFilters(current => ({ ...current, endDate: event.target.value }))} /></label>
         <label><span>Shift</span><input value={filters.shiftId} onChange={event => setFilters(current => ({ ...current, shiftId: event.target.value }))} placeholder="All shifts" /></label>
         <label><span>Payment</span><select value={filters.paymentType} onChange={event => setFilters(current => ({ ...current, paymentType: event.target.value }))}><option value="">All payments</option><option value="cash">Cash</option><option value="card">Card</option><option value="googlepay">Google Pay</option><option value="phonepe">PhonePe</option><option value="paytm">Paytm</option><option value="credit">Credit</option><option value="cheque_payment_mode">Cheque</option></select></label>
         <label><span>Device ID</span><input value={filters.deviceId} onChange={event => setFilters(current => ({ ...current, deviceId: event.target.value }))} placeholder="All devices" /></label>

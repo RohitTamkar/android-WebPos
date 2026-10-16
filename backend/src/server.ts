@@ -1,20 +1,33 @@
 import express from "express";
+import { updateOutletProduct } from "./productUpdate.js";
+import { updateCategoryNames, CategoryUpdateError } from "./categoryUpdate.js";
+import { deleteOutletRecord, OutletDeletionError } from "./outletDeletion.js";
+import { createOutletProduct, requireProductOutlet, productTaxes, PRODUCT_UNITS, ProductCreationError } from "./productCreation.js";
 import type { Request, Response } from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import { fileURLToPath } from "node:url";
 import jwt from "jsonwebtoken";
 import type { JwtPayload } from "jsonwebtoken";
 import { z } from "zod";
 import { getFirebaseApp, getFirestoreDb, verifyFirebaseConnection } from "./firebase.js";
+import { summarizeDay } from "./daywiseSummary.js";
+import { stockDirection, stockMovementRecord } from "./stockMovementReport.js";
+import { isStockTransfer, stockTransferRecord } from "./stockTransferReport.js";
+import { checkAuthorizedProductImport, persistProductImport, nextProductCode, PRODUCT_IMPORT_WRITES_ENABLED } from "./productImportValidation.js";
+import { createProductImportChunk } from "./productImportWriter.js";
+import { createInMemoryProductImportQuota, ProductImportQuotaError } from "./productImportQuota.js";
 
-dotenv.config();
+dotenv.config({ path: fileURLToPath(new URL("../.env", import.meta.url)) });
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+// Temporary per-process restriction only; restart/multiple instances reset/isolate it.
+const productImportQuota = createInMemoryProductImportQuota();
 const JWT_SECRET = process.env.JWT_SECRET || "web-pos-secret-key-2026";
-const firebaseApp = getFirebaseApp();
 
 app.use(cors());
+app.use("/api/outlets/:outletId/products/import", express.json({ limit: "12mb" }));
 app.use(express.json());
 
 // In-memory Category Store
@@ -74,13 +87,20 @@ let categories: CategoryItem[] = [
 
 // Health check endpoint
 app.get("/api/health", (_req: Request, res: Response) => {
+  let firebase: { initialized: boolean; projectId?: string; message?: string };
+  try {
+    const firebaseApp = getFirebaseApp();
+    firebase = { initialized: true, projectId: firebaseApp.options.projectId ?? "" };
+  } catch {
+    firebase = {
+      initialized: false,
+      message: "Configure a valid Firebase service-account file in backend/.env"
+    };
+  }
   res.json({
     success: true,
     message: "Web POS API is running",
-    firebase: {
-      initialized: true,
-      projectId: firebaseApp.options.projectId
-    },
+    firebase,
     timestamp: new Date().toISOString()
   });
 });
@@ -92,7 +112,7 @@ app.get("/api/firebase/health", async (_req: Request, res: Response): Promise<vo
     res.json({
       success: true,
       message: "Firebase is connected",
-      projectId: firebaseApp.options.projectId
+      projectId: getFirebaseApp().options.projectId
     });
   } catch (error) {
     console.error("Firebase connection check failed:", error);
@@ -139,6 +159,17 @@ app.post("/api/auth/login", async (req: Request, res: Response): Promise<void> =
   }
 
   const { email, quickPin, terminal = "POS Workspace" } = parsed.data;
+
+  try {
+    getFirebaseApp();
+  } catch (error) {
+    console.error("Firebase configuration error:", error);
+    res.status(503).json({
+      success: false,
+      message: "Firebase credentials are missing or invalid. Configure the service-account file in backend/.env."
+    });
+    return;
+  }
 
   try {
     const snapshot = await getFirestoreDb()
@@ -212,6 +243,60 @@ function stringValue(value: unknown): string {
 
 function numberValue(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+// Display metadata only: retain the historical rate without recalculating sales.
+function historicalReportTaxRate(bill: Record<string, unknown>, item: Record<string, unknown>): number | null {
+  if ((stringValue(bill.taxType) || "NoTax").toLowerCase() === "notax") return 0;
+  const rate = item.taxPercentage;
+  return typeof rate === "number" && Number.isFinite(rate) && rate >= 0 ? rate : null;
+}
+
+function reportTaxRateLabel(rates: Set<number | null>): string | number {
+  const known = [...rates].filter((rate): rate is number => rate !== null);
+  if (known.length > 1) return known.sort((a, b) => a - b).map(rate => `${rate}%`).join(", ");
+  if (rates.has(null) || known.length === 0) return 0;
+  return `${known[0]}%`;
+}
+
+interface ReportTaxGroup {
+  rate: number | null;
+  quantity: number;
+  amount: number;
+  taxableValue: number;
+  taxAmount: number;
+  products: Set<string>;
+}
+
+function addReportTaxGroup(
+  groups: Map<number | null, ReportTaxGroup>, bill: Record<string, unknown>,
+  item: Record<string, unknown>, productId: string,
+): void {
+  const rate = historicalReportTaxRate(bill, item);
+  const lineTotal = numberValue(item.total);
+  const taxType = (stringValue(bill.taxType) || "NoTax").toLowerCase();
+  // Identical item-level formula to the existing GST report. Sale stays item.total.
+  const taxAmount = rate === null || rate <= 0 ? 0
+    : taxType === "inclusive" ? lineTotal - lineTotal / (1 + rate / 100)
+    : lineTotal * rate / 100;
+  const group = groups.get(rate) ?? {
+    rate, quantity: 0, amount: 0, taxableValue: 0, taxAmount: 0, products: new Set<string>(),
+  };
+  group.quantity += numberValue(item.quantity);
+  group.amount += lineTotal;
+  group.taxAmount += taxAmount;
+  group.taxableValue += taxType === "inclusive" ? lineTotal - taxAmount : lineTotal;
+  group.products.add(productId);
+  groups.set(rate, group);
+}
+
+function reportTaxBreakdown(groups: Map<number | null, ReportTaxGroup>) {
+  return [...groups.values()].sort((a, b) => (a.rate ?? Infinity) - (b.rate ?? Infinity))
+    .map(({ products, ...group }) => ({ ...group, productCount: products.size }));
+}
+
+function reportTaxAmount(groups: Map<number | null, ReportTaxGroup>): number {
+  return [...groups.values()].reduce((sum, group) => sum + group.taxAmount, 0);
 }
 
 function assignedOutletIds(profile: Record<string, unknown>): string[] {
@@ -331,7 +416,9 @@ app.get("/api/outlets/:outletId/dashboard", async (req: Request, res: Response):
       return;
     }
 
-    const shift = shiftDocument.data();
+    const shift = req.query.scope === "day"
+      ? summarizeDay(shiftSnapshot.docs.map(document => document.data()))
+      : shiftDocument.data();
     let payments: Record<string, number> = {};
     if (typeof shift.paymentJson === "string") {
       try {
@@ -412,6 +499,135 @@ function parsePayment(value: unknown): Record<string, number> {
     return {};
   }
 }
+
+// Read-only goods transactions explicitly marked as stock transfers, scoped to an assigned outlet.
+app.get("/api/outlets/:outletId/reports/stock-transfers", async (req: Request, res: Response): Promise<void> => {
+  const token = readAccessToken(req);
+  if (!token) {
+    res.status(401).json({ success: false, message: "Your session has expired. Please sign in again." });
+    return;
+  }
+  const outletParam = req.params.outletId;
+  const outletId = Array.isArray(outletParam) ? outletParam[0] : outletParam;
+  const startDate = typeof req.query.startDate === "string" ? req.query.startDate : "";
+  const endDate = typeof req.query.endDate === "string" ? req.query.endDate : startDate;
+  const validDate = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value)
+    && Number.isFinite(Date.parse(`${value}T00:00:00Z`))
+    && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
+  if (!outletId || !validDate(startDate) || !validDate(endDate) || startDate > endDate) {
+    res.status(400).json({ success: false, message: "A valid date range and outlet are required" });
+    return;
+  }
+  const days = datesBetween(startDate, endDate);
+  if (days.at(-1) !== endDate) {
+    res.status(400).json({ success: false, message: "Date range cannot exceed 31 days" });
+    return;
+  }
+  const search = typeof req.query.search === "string" ? req.query.search.trim().toLowerCase() : "";
+  try {
+    const db = getFirestoreDb();
+    const profileDocument = await db.collection("USER_PROFILE").doc(token.profileDocId).get();
+    const profile = profileDocument.data();
+    if (!profileDocument.exists || !profile || profile.active !== true) {
+      res.status(403).json({ success: false, message: "This user account is inactive or unavailable" });
+      return;
+    }
+    if (!assignedOutletIds(profile).includes(outletId)) {
+      res.status(403).json({ success: false, message: "You do not have access to this outlet" });
+      return;
+    }
+    const goods = db.collection("OUTLET").doc(outletId).collection("GOODS_RECEIVED");
+    const snapshots = await Promise.all(days.map(day => goods.where("dayID", "==", day).get()));
+    const transfers = snapshots.flatMap(snapshot => snapshot.docs)
+      .filter(document => isStockTransfer(document.data()))
+      .map(document => stockTransferRecord(document.id, document.data()))
+      .filter(entry => !search || [entry.transferNo, entry.supplier, entry.remark, ...entry.references.map(reference => reference.value),
+        ...entry.items.flatMap(item => [item.name, item.productId])]
+        .some(value => value.toLowerCase().includes(search)))
+      .sort((left, right) => right.createdDate - left.createdDate);
+    const products = new Set(transfers.flatMap(entry => entry.items.map(item => item.productId || item.name)));
+    res.json({ success: true, data: {
+      transfers,
+      summary: {
+        totalTransfers: transfers.length,
+        totalProducts: products.size,
+        totalQuantity: transfers.reduce((sum, entry) => sum + entry.quantity, 0),
+        totalAmount: transfers.reduce((sum, entry) => sum + entry.finalTotal, 0),
+      },
+    } });
+  } catch (error) {
+    console.error("Loading stock transfer report failed:", error);
+    res.status(503).json({ success: false, message: "Unable to load stock transfers right now" });
+  }
+});
+
+// Read-only explicit STOCK-IN and STOCK-OUT transactions for an assigned outlet.
+app.get("/api/outlets/:outletId/reports/stock-movements", async (req: Request, res: Response): Promise<void> => {
+  const token = readAccessToken(req);
+  if (!token) {
+    res.status(401).json({ success: false, message: "Your session has expired. Please sign in again." });
+    return;
+  }
+  const outletParam = req.params.outletId;
+  const outletId = Array.isArray(outletParam) ? outletParam[0] : outletParam;
+  const startDate = typeof req.query.startDate === "string" ? req.query.startDate : "";
+  const endDate = typeof req.query.endDate === "string" ? req.query.endDate : startDate;
+  const validDate = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value)
+    && Number.isFinite(Date.parse(`${value}T00:00:00Z`))
+    && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
+  if (!outletId || !validDate(startDate) || !validDate(endDate) || startDate > endDate) {
+    res.status(400).json({ success: false, message: "A valid date range and outlet are required" });
+    return;
+  }
+  const days = datesBetween(startDate, endDate);
+  if (days.at(-1) !== endDate) {
+    res.status(400).json({ success: false, message: "Date range cannot exceed 31 days" });
+    return;
+  }
+  const search = typeof req.query.search === "string" ? req.query.search.trim().toLowerCase() : "";
+  const direction = typeof req.query.direction === "string" ? req.query.direction : "";
+  if (direction && direction !== "in" && direction !== "out") {
+    res.status(400).json({ success: false, message: "Stock direction must be in or out" });
+    return;
+  }
+  try {
+    const db = getFirestoreDb();
+    const profileDocument = await db.collection("USER_PROFILE").doc(token.profileDocId).get();
+    const profile = profileDocument.data();
+    if (!profileDocument.exists || !profile || profile.active !== true) {
+      res.status(403).json({ success: false, message: "This user account is inactive or unavailable" });
+      return;
+    }
+    if (!assignedOutletIds(profile).includes(outletId)) {
+      res.status(403).json({ success: false, message: "You do not have access to this outlet" });
+      return;
+    }
+    const goods = db.collection("OUTLET").doc(outletId).collection("GOODS_RECEIVED");
+    const snapshots = await Promise.all(days.map(day => goods.where("dayID", "==", day).get()));
+    const movements = snapshots.flatMap(snapshot => snapshot.docs)
+      .filter(document => stockDirection(document.data()) !== null)
+      .map(document => stockMovementRecord(document.id, document.data()))
+      .filter(entry => !direction || entry.direction === direction)
+      .filter(entry => !search || [entry.transactionNo, entry.supplier, entry.remark,
+        ...entry.items.flatMap(item => [item.name, item.productId])]
+        .some(value => value.toLowerCase().includes(search)))
+      .sort((left, right) => right.createdDate - left.createdDate);
+    const summary = movements.reduce((totals, entry) => {
+      const quantity = Math.abs(entry.quantity);
+      if (entry.direction === "in") totals.stockInQuantity += quantity;
+      else totals.stockOutQuantity += quantity;
+      totals.totalAmount += entry.finalTotal;
+      return totals;
+    }, { totalTransactions: movements.length, stockInQuantity: 0, stockOutQuantity: 0, totalAmount: 0 });
+    res.json({ success: true, data: {
+      movements,
+      summary: { ...summary, netQuantity: summary.stockInQuantity - summary.stockOutQuantity },
+    } });
+  } catch (error) {
+    console.error("Loading stock in-out report failed:", error);
+    res.status(503).json({ success: false, message: "Unable to load stock movements right now" });
+  }
+});
 
 // Bill-wise sales report scoped to an outlet assigned to the authenticated user.
 app.get("/api/outlets/:outletId/reports/bills", async (req: Request, res: Response): Promise<void> => {
@@ -605,10 +821,15 @@ app.get("/api/outlets/:outletId/reports/categories", async (req: Request, res: R
       stringValue(document.data().name) || document.id
     ]));
 
-    interface ProductTotals { productId: string; name: string; quantity: number; amount: number }
+    const categoryNumbers = new Map(categorySnapshot.docs.map(document => {
+      const value = document.data().categoryNo;
+      return [document.id, typeof value === "number" && Number.isFinite(value) ? value : null] as const;
+    }));
+
+    interface ProductTotals { productId: string; name: string; quantity: number; amount: number; taxRates: Set<number | null>; taxGroups: Map<number | null, ReportTaxGroup> }
     interface CategoryTotals {
       categoryId: string; name: string; quantity: number; amount: number;
-      bills: Set<string>; products: Map<string, ProductTotals>;
+      bills: Set<string>; products: Map<string, ProductTotals>; taxRates: Set<number | null>; taxGroups: Map<number | null, ReportTaxGroup>;
     }
     const categories = new Map<string, CategoryTotals>();
     const allBills = new Set<string>();
@@ -627,12 +848,17 @@ app.get("/api/outlets/:outletId/reports/categories", async (req: Request, res: R
 
         const key = categoryId || "uncategorized";
         const totals = categories.get(key) ?? {
-          categoryId: key, name: categoryName, quantity: 0, amount: 0, bills: new Set<string>(), products: new Map()
+          categoryId: key, name: categoryName, quantity: 0, amount: 0, bills: new Set<string>(), products: new Map(), taxRates: new Set<number | null>(), taxGroups: new Map<number | null, ReportTaxGroup>()
         };
         const productName = stringValue(product.name) || stringValue(product.shortName) || "Item";
         const productId = stringValue(product.id) || productName;
-        const productTotals = totals.products.get(productId) ?? { productId, name: productName, quantity: 0, amount: 0 };
+        const productTotals = totals.products.get(productId) ?? { productId, name: productName, quantity: 0, amount: 0, taxRates: new Set<number | null>(), taxGroups: new Map<number | null, ReportTaxGroup>() };
 
+        const taxRate = historicalReportTaxRate(bill, item);
+        totals.taxRates.add(taxRate);
+        productTotals.taxRates.add(taxRate);
+        addReportTaxGroup(totals.taxGroups, bill, item, productId);
+        addReportTaxGroup(productTotals.taxGroups, bill, item, productId);
         totals.quantity += numberValue(item.quantity);
         totals.amount += numberValue(item.total);
         totals.bills.add(document.id);
@@ -648,13 +874,22 @@ app.get("/api/outlets/:outletId/reports/categories", async (req: Request, res: R
     const rows = [...categories.values()]
       .map(category => ({
         categoryId: category.categoryId,
+        categoryNo: categoryNumbers.get(category.categoryId) ?? null,
+        taxRate: reportTaxRateLabel(category.taxRates),
+        taxBreakdown: reportTaxBreakdown(category.taxGroups),
+        taxAmount: reportTaxAmount(category.taxGroups),
         name: category.name,
         billCount: category.bills.size,
         productCount: category.products.size,
         quantity: category.quantity,
         amount: category.amount,
         share: totalAmount > 0 ? (category.amount / totalAmount) * 100 : 0,
-        products: [...category.products.values()].sort((left, right) => right.amount - left.amount)
+        products: [...category.products.values()]
+          .map(({ taxRates, taxGroups, ...product }) => ({
+            ...product, taxRate: reportTaxRateLabel(taxRates),
+            taxBreakdown: reportTaxBreakdown(taxGroups), taxAmount: reportTaxAmount(taxGroups),
+          }))
+          .sort((left, right) => right.amount - left.amount)
       }))
       .sort((left, right) => right.amount - left.amount);
 
@@ -666,7 +901,8 @@ app.get("/api/outlets/:outletId/reports/categories", async (req: Request, res: R
           totalCategories: rows.length,
           totalBills: allBills.size,
           totalQuantity: rows.reduce((sum, row) => sum + row.quantity, 0),
-          totalAmount
+          totalAmount,
+          totalTax: rows.reduce((sum, row) => sum + row.taxAmount, 0),
         }
       }
     });
@@ -721,21 +957,289 @@ app.get("/api/outlets/:outletId/categories", async (req: Request, res: Response)
         const category = document.data();
         return {
           id: document.id,
-          categoryNo: numberValue(category.categoryNo),
-          name: stringValue(category.name).trim() || "Unnamed category",
-          regionalName: stringValue(category.regionalName).trim(),
-          dayType: stringValue(category.dayType).trim(),
-          active: category.inActive !== true && category.active !== false,
+          categoryNo: typeof category.categoryNo === "number" && Number.isFinite(category.categoryNo) ? category.categoryNo : null,
+          name: stringValue(category.name),
+          regionalName: stringValue(category.regionalName),
+          dayType: stringValue(category.dayType),
+          active: typeof category.inActive === "boolean" || typeof category.active === "boolean"
+            ? category.inActive !== true && category.active !== false : null,
           productCount: productCounts.get(document.id) ?? 0,
           createdAt: document.createTime?.toDate().toISOString() ?? ""
         };
       })
-      .sort((left, right) => left.categoryNo - right.categoryNo || left.name.localeCompare(right.name));
+      .sort((left, right) => (left.categoryNo ?? 0) - (right.categoryNo ?? 0) || left.name.localeCompare(right.name));
 
     res.json({ success: true, data: categories });
   } catch (error) {
     console.error("Loading outlet categories failed:", error);
     res.status(503).json({ success: false, message: "Unable to load categories right now" });
+  }
+});
+
+// Read the complete product documents without renaming fields or writing to Firestore.
+app.get("/api/outlets/:outletId/products", async (req: Request, res: Response): Promise<void> => {
+  const token = readAccessToken(req);
+  if (!token) {
+    res.status(401).json({ success: false, message: "Your session has expired. Please sign in again." });
+    return;
+  }
+
+  const outletParam = req.params.outletId;
+  const outletId = Array.isArray(outletParam) ? outletParam[0] : outletParam;
+  if (!outletId || outletId.includes("/")) {
+    res.status(400).json({ success: false, message: "A valid outlet is required" });
+    return;
+  }
+
+  try {
+    const db = getFirestoreDb();
+    const profileDocument = await db.collection("USER_PROFILE").doc(token.profileDocId).get();
+    const profile = profileDocument.data();
+    if (!profileDocument.exists || !profile || profile.active !== true) {
+      res.status(403).json({ success: false, message: "This user account is inactive or unavailable" });
+      return;
+    }
+    if (!assignedOutletIds(profile).includes(outletId)) {
+      res.status(403).json({ success: false, message: "You do not have access to this outlet" });
+      return;
+    }
+
+    const snapshot = await db.collection("OUTLET").doc(outletId).collection("PRODUCT").get();
+    // Keep the document ID separate so a stored `id` field is preserved too.
+    res.json({ success: true, data: snapshot.docs.map(document => ({
+      documentId: document.id,
+      fields: document.data()
+    })) });
+  } catch (error) {
+    console.error("Loading outlet products failed:", error);
+    res.status(503).json({ success: false, message: "Unable to load products right now" });
+  }
+});
+
+app.get("/api/outlets/:outletId/products/:documentId/edit-options", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const token = readAccessToken(req);
+    const outletId = String(req.params.outletId ?? '');
+    const id = String(req.params.documentId ?? '');
+    const deps = productImportDependencies();
+    requireProductOutlet(token?.profileDocId ?? null, outletId,
+      token ? await deps.readProfile(token.profileDocId) : undefined, assignedOutletIds);
+    if (!id || id.includes('/') || id === '.' || id === '..') throw new ProductCreationError(400, 'A valid product ID is required.');
+    const [snapshot, categories, taxes] = await Promise.all([
+      getFirestoreDb().collection('OUTLET').doc(outletId).collection('PRODUCT').doc(id).get(),
+      deps.readCategories(outletId), deps.readTaxes(),
+    ]);
+    if (!snapshot.exists) throw new ProductCreationError(404, 'This product no longer exists.');
+    const fields = snapshot.data()!;
+    res.json({ success: true, data: { code: typeof fields.code === 'string' || typeof fields.code === 'number' ? fields.code : '',
+      categories, taxes: productTaxes(taxes), units: PRODUCT_UNITS, product: { documentId: id, fields } } });
+  } catch (error) { productCreationResponse(res, error); }
+});
+
+app.patch("/api/outlets/:outletId/products/:documentId", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const data = await updateOutletProduct(getFirestoreDb(), String(req.params.outletId ?? ''),
+      String(req.params.documentId ?? ''), readAccessToken(req)?.profileDocId ?? null, assignedOutletIds, req.body);
+    res.json({ success: true, data });
+  } catch (error) { productCreationResponse(res, error); }
+});
+
+app.patch("/api/outlets/:outletId/categories/:documentId", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const data = await updateCategoryNames(getFirestoreDb(), String(req.params.outletId ?? ''),
+      String(req.params.documentId ?? ''), readAccessToken(req)?.profileDocId ?? null, assignedOutletIds, req.body);
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(error instanceof CategoryUpdateError ? error.status : 503).json({ success: false,
+      message: error instanceof CategoryUpdateError ? error.message : 'Unable to update category. Retry with the same names to confirm the outcome.' });
+  }
+});
+
+// Existing outlet master documents only; never use the legacy in-memory category API.
+for (const [route, collection] of [['categories', 'CATEGORY'], ['products', 'PRODUCT']] as const) {
+  app.delete(`/api/outlets/:outletId/${route}/:documentId`, async (req: Request, res: Response): Promise<void> => {
+    try {
+      const result = await deleteOutletRecord(getFirestoreDb(), String(req.params.outletId ?? ''), collection,
+        String(req.params.documentId ?? ''), readAccessToken(req)?.profileDocId ?? null, assignedOutletIds);
+      res.json({ success: true, data: result });
+    } catch (error) {
+      res.status(error instanceof OutletDeletionError ? error.status : 503).json({ success: false,
+        message: error instanceof OutletDeletionError ? error.message : 'Unable to delete this record. Retry to confirm the outcome.' });
+    }
+  });
+}
+
+// Form configuration is read only, scoped to the same authorized outlet as product imports.
+app.get("/api/outlets/:outletId/products/create-options", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const token = readAccessToken(req);
+    const outletId = String(req.params.outletId ?? '');
+    const deps = productImportDependencies();
+    const profile = token ? await deps.readProfile(token.profileDocId) : undefined;
+    requireProductOutlet(token?.profileDocId ?? null, outletId, profile, assignedOutletIds);
+    const [categories, taxes, products] = await Promise.all([
+      deps.readCategories(outletId), deps.readTaxes(), deps.readProducts(outletId),
+    ]);
+    res.json({ success: true, data: { code: nextProductCode(products), categories,
+      taxes: productTaxes(taxes), units: PRODUCT_UNITS } });
+  } catch (error) { productCreationResponse(res, error); }
+});
+
+app.post("/api/outlets/:outletId/products", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const product = await createOutletProduct(getFirestoreDb(), String(req.params.outletId ?? ''),
+      readAccessToken(req)?.profileDocId ?? null, assignedOutletIds, req.body);
+    res.status(201).json({ success: true, data: product });
+  } catch (error) { productCreationResponse(res, error); }
+});
+
+function productCreationResponse(res: Response, error: unknown) {
+  if (error instanceof ProductCreationError) {
+    res.status(error.status).json({ success: false, message: error.message, errors: error.errors, nextCode: error.nextCode });
+  } else {
+    res.status(409).json({ success: false, message: error instanceof Error && /^(Row \d+ already|An existing product differs|An existing numeric Search Code|No safe numeric Search Codes)/.test(error.message)
+      ? error.message.replace(/^Row \d+ already/, 'This product already') : 'Unable to save or load product details. Retry with the same form to reconcile the outcome.' });
+  }
+}
+
+// Existing readers and authentication are reused; production writes remain gated.
+function productImportDependencies() {
+  return {
+    readProfile: async (id: string) => (await getFirestoreDb().collection("USER_PROFILE").doc(id).get()).data(),
+    assignedOutlets: assignedOutletIds,
+    readCategories: async (id: string) => {
+      const snapshot = await getFirestoreDb().collection("OUTLET").doc(id).collection("CATEGORY").get();
+      return snapshot.docs.map(document => ({ id: document.id, name: stringValue(document.data().name),
+        categoryNo: typeof document.data().categoryNo === "number" ? document.data().categoryNo as number : null }));
+    },
+    readProducts: async (id: string) => (await getFirestoreDb().collection("OUTLET").doc(id).collection("PRODUCT").get()).docs
+      .map(document => ({ id: document.id, fields: document.data() })),
+    readTaxes: async () => {
+      const snapshot = await getFirestoreDb().collection("MASTERS").doc("masters").collection("TAX_MASTER").get();
+      return snapshot.docs.map(document => document.data()).filter(data =>
+        typeof data.percent === "number" && Number.isFinite(data.percent)
+        && typeof data.index === "number" && Number.isSafeInteger(data.index)
+        && typeof data.type === "number" && Number.isSafeInteger(data.type)
+      ).map(data => ({ percent: data.percent as number, index: data.index as number, type: data.type as number }));
+    },
+  };
+}
+
+app.post("/api/outlets/:outletId/products/import/validate", async (req: Request, res: Response): Promise<void> => {
+  const token = readAccessToken(req);
+  const parameter = req.params.outletId;
+  const outletId = Array.isArray(parameter) ? parameter[0] ?? "" : parameter ?? "";
+  try {
+    const result = await checkAuthorizedProductImport(token?.profileDocId ?? null, outletId, req.body?.source, productImportDependencies());
+    res.status(result.status).json({ ...result.body, writesEnabled: PRODUCT_IMPORT_WRITES_ENABLED });
+  } catch {
+    res.status(503).json({ success: false, message: "Unable to validate the import. No products were written." });
+  }
+});
+
+app.post("/api/outlets/:outletId/products/import", async (req: Request, res: Response): Promise<void> => {
+  const token = readAccessToken(req);
+  const parameter = req.params.outletId;
+  const outletId = Array.isArray(parameter) ? parameter[0] ?? "" : parameter ?? "";
+  try {
+    const checked = await checkAuthorizedProductImport(token?.profileDocId ?? null, outletId, req.body?.source, productImportDependencies());
+    if (checked.status !== 200 || !checked.body.data?.canUpload) {
+      res.status(checked.status).json(checked.body); return;
+    }
+    if (!PRODUCT_IMPORT_WRITES_ENABLED) {
+      res.status(403).json({ success: false, message: "File validated. Production upload is disabled pending review and approval. No products were saved." }); return;
+    }
+    const codes: unknown = req.body?.codes;
+    if (!Array.isArray(codes) || codes.length !== checked.body.data.documents.length
+      || codes.some((code, index) => code !== checked.body.data!.documents[index]!.fields.code)) {
+      res.status(409).json({ success: false, message: "Search Codes changed or were not previewed. Review the updated preview before uploading again." }); return;
+    }
+    const result = await productImportQuota.run(outletId, req.body.source, () => persistProductImport(outletId, checked.body.data!.documents, {
+      enabled: PRODUCT_IMPORT_WRITES_ENABLED,
+      readExisting: async id => (await getFirestoreDb().collection("OUTLET").doc(id).collection("PRODUCT").get()).docs
+        .map(document => ({ id: document.id, fields: document.data() })),
+      createChunk: (id, documents) => createProductImportChunk(getFirestoreDb(), id, documents),
+    }));
+    res.status(result.success ? 200 : 503).json({ success: result.success, data: result });
+  } catch (error) {
+    if (error instanceof ProductImportQuotaError) {
+      res.setHeader("Retry-After", String(error.retryAfterSeconds));
+      res.status(429).json({ success: false, message: error.message, nextAvailableAt: error.nextAvailableAt });
+      return;
+    }
+    res.status(409).json({ success: false, message: error instanceof Error && /^(Row \d+ already|Search Codes changed|An existing product differs|An existing numeric Search Code|No safe numeric Search Codes)/.test(error.message)
+      ? error.message : "Import could not be completed. Keep the same file for reconciliation; existing products were not overwritten." });
+  }
+});
+
+// Creates a new category document only; existing category records are never updated.
+app.post("/api/outlets/:outletId/categories", async (req: Request, res: Response): Promise<void> => {
+  const token = readAccessToken(req);
+  if (!token) {
+    res.status(401).json({ success: false, message: "Your session has expired. Please sign in again." });
+    return;
+  }
+  const outletParam = req.params.outletId;
+  const outletId = Array.isArray(outletParam) ? outletParam[0] : outletParam;
+  const input = z.object({
+    categoryNo: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    name: z.string().trim().min(1).max(200),
+    regionalName: z.string().trim().max(200).default(""),
+    dayType: z.string().trim().max(100).default(""),
+  }).safeParse(req.body);
+  if (!outletId || !input.success) {
+    res.status(400).json({ success: false, message: "A category name and positive whole category number are required." });
+    return;
+  }
+  try {
+    const db = getFirestoreDb();
+    const profileDocument = await db.collection("USER_PROFILE").doc(token.profileDocId).get();
+    const profile = profileDocument.data();
+    if (!profileDocument.exists || !profile || profile.active !== true) {
+      res.status(403).json({ success: false, message: "This user account is inactive or unavailable" });
+      return;
+    }
+    if (!assignedOutletIds(profile).includes(outletId)) {
+      res.status(403).json({ success: false, message: "You do not have access to this outlet" });
+      return;
+    }
+    const collection = db.collection("OUTLET").doc(outletId).collection("CATEGORY");
+    const reference = collection.doc();
+    const duplicate = await db.runTransaction(async transaction => {
+      const snapshot = await transaction.get(collection);
+      const exists = snapshot.docs.some(document => {
+        const category = document.data();
+        return category.categoryNo === input.data.categoryNo
+          || stringValue(category.name).trim().toLowerCase() === input.data.name.toLowerCase();
+      });
+      if (exists) return true;
+      // Match the existing CATEGORY document format; UI metadata is never stored.
+      transaction.create(reference, {
+        categoryNo: input.data.categoryNo,
+        dayType: input.data.dayType,
+        id: reference.id,
+        name: input.data.name,
+        onlineSynced: false,
+        regionalName: input.data.regionalName,
+        selected: false,
+      });
+      return false;
+    });
+    if (duplicate) {
+      res.status(409).json({ success: false, message: "A category with this number or name already exists." });
+      return;
+    }
+    const created = await reference.get();
+    res.status(201).json({ success: true, data: {
+      id: reference.id,
+      ...input.data,
+      active: null,
+      productCount: 0,
+      createdAt: created.createTime?.toDate().toISOString() ?? "",
+    } });
+  } catch (error) {
+    console.error("Creating category failed:", error);
+    res.status(503).json({ success: false, message: "Unable to add the category right now." });
   }
 });
 
@@ -1040,7 +1544,7 @@ app.get("/api/outlets/:outletId/reports/products", async (req: Request, res: Res
 
     interface ProductTotals {
       productId: string; code: string; name: string; category: string;
-      quantity: number; amount: number; bills: Set<string>;
+      quantity: number; amount: number; bills: Set<string>; taxRates: Set<number | null>; taxGroups: Map<number | null, ReportTaxGroup>;
     }
     const products = new Map<string, ProductTotals>();
     const allBills = new Set<string>();
@@ -1064,8 +1568,10 @@ app.get("/api/outlets/:outletId/reports/products", async (req: Request, res: Res
           && !category.toLowerCase().includes(search)) continue;
 
         const totals = products.get(productId) ?? {
-          productId, code, name, category, quantity: 0, amount: 0, bills: new Set<string>()
+          productId, code, name, category, quantity: 0, amount: 0, bills: new Set<string>(), taxRates: new Set<number | null>(), taxGroups: new Map<number | null, ReportTaxGroup>()
         };
+        totals.taxRates.add(historicalReportTaxRate(bill, item));
+        addReportTaxGroup(totals.taxGroups, bill, item, productId);
         totals.quantity += numberValue(item.quantity);
         totals.amount += numberValue(item.total);
         totals.bills.add(document.id);
@@ -1078,6 +1584,9 @@ app.get("/api/outlets/:outletId/reports/products", async (req: Request, res: Res
     const rows = [...products.values()]
       .map(product => ({
         productId: product.productId,
+        taxRate: reportTaxRateLabel(product.taxRates),
+        taxBreakdown: reportTaxBreakdown(product.taxGroups),
+        taxAmount: reportTaxAmount(product.taxGroups),
         code: product.code,
         name: product.name,
         category: product.category,
@@ -1097,7 +1606,8 @@ app.get("/api/outlets/:outletId/reports/products", async (req: Request, res: Res
           totalProducts: rows.length,
           totalBills: allBills.size,
           totalQuantity: rows.reduce((sum, row) => sum + row.quantity, 0),
-          totalAmount
+          totalAmount,
+          totalTax: rows.reduce((sum, row) => sum + row.taxAmount, 0),
         }
       }
     });
@@ -1326,4 +1836,9 @@ app.delete("/api/categories/:id", (req: Request, res: Response): void => {
 
 app.listen(PORT, () => {
   console.log(`Web POS API running on http://localhost:${PORT}`);
+  try {
+    getFirebaseApp();
+  } catch (error) {
+    console.error("Firebase configuration error:", error instanceof Error ? error.message : error);
+  }
 });

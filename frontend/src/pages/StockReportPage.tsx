@@ -1,3 +1,5 @@
+import { downloadReportExcel } from '../utils/reportExcel.ts';
+import { useReportSearch } from './useReportSearch.ts';
 import { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle, Boxes, ChevronLeft, ChevronRight, Download, Filter, PackageSearch,
@@ -49,6 +51,7 @@ const STATUS_CLASS: Record<StockStatus, string> = {
 
 interface StockReportPageProps {
   outlet: OutletSummary;
+  reportName?: string;
   token: string;
   onSessionExpired: () => void;
 }
@@ -61,16 +64,12 @@ function quantity(value = 0): string {
   return new Intl.NumberFormat('en-IN', { maximumFractionDigits: 3 }).format(value);
 }
 
-function csvCell(value: string | number): string {
-  return `"${String(value).replaceAll('"', '""')}"`;
-}
-
 function todayId(): string {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 }
 
-export const StockReportPage = ({ outlet, token, onSessionExpired }: StockReportPageProps) => {
+export const StockReportPage = ({ outlet, token, onSessionExpired, reportName = 'Stock Report' }: StockReportPageProps) => {
   const initialFilters = useMemo<StockFilters>(() => ({ categoryId: '', status: '', search: '' }), []);
   const [filters, setFilters] = useState(initialFilters);
   const [appliedFilters, setAppliedFilters] = useState(initialFilters);
@@ -80,6 +79,8 @@ export const StockReportPage = ({ outlet, token, onSessionExpired }: StockReport
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
+
+  useReportSearch(filters.search, appliedFilters.search, setAppliedFilters, setPage);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -137,7 +138,7 @@ export const StockReportPage = ({ outlet, token, onSessionExpired }: StockReport
 
   const applyFilters = () => {
     setPage(1);
-    setAppliedFilters({ ...filters });
+    setAppliedFilters({ ...filters, search: filters.search.trim() });
   };
 
   const resetFilters = () => {
@@ -146,8 +147,8 @@ export const StockReportPage = ({ outlet, token, onSessionExpired }: StockReport
     setAppliedFilters(initialFilters);
   };
 
-  const exportExcel = () => {
-    const csvRows: (string | number)[][] = [
+  const exportExcel = async () => {
+    const csvRows: (string | number | Date)[][] = [
       ['Product Code', 'Product', 'Category', 'Stock Tracked', 'Current Stock', 'Reorder Level', 'Status', 'Price', 'Stock Value'],
       ...rows.map(product => [
         product.code, product.name, product.category, product.tracked ? 'Yes' : 'No', product.currentStock,
@@ -155,13 +156,10 @@ export const StockReportPage = ({ outlet, token, onSessionExpired }: StockReport
       ]),
       ['', 'Total', '', summary.tracked, summary.totalStock, '', '', '', summary.stockValue],
     ];
-    const csv = `﻿${csvRows.map(row => row.map(value => csvCell(value)).join(',')).join('\n')}`;
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `stock-report-${outlet.name}-${todayId()}.csv`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+    await downloadReportExcel({
+      name: reportName, outlet, startDate: todayId(), endDate: todayId(),
+      summary: {}, rows: csvRows,
+    });
   };
 
   return (

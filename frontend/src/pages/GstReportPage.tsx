@@ -1,6 +1,11 @@
+import { gstDetailRows } from '../utils/gstExcel.ts';
+import { downloadReportExcel, billRange, gstSummary } from '../utils/reportExcel.ts';
+import { useReportSearch } from './useReportSearch.ts';
+import { ReportDateInput } from './ReportDateInput.tsx';
+import { reportDateError } from './reportDates.ts';
 import { useEffect, useMemo, useState } from 'react';
 import {
-  BadgeIndianRupee, CalendarDays, ChevronLeft, ChevronRight, Download, FileText,
+  BadgeIndianRupee, ChevronLeft, ChevronRight, Download, FileText,
   Filter, Percent, Printer, ReceiptText, RefreshCw, Search, X,
 } from 'lucide-react';
 import type { OutletSummary } from './OutletSelectionPage.tsx';
@@ -63,6 +68,7 @@ const PAGE_SIZE = 50;
 
 interface GstReportPageProps {
   outlet: OutletSummary;
+  reportName?: string;
   token: string;
   onSessionExpired: () => void;
 }
@@ -95,15 +101,7 @@ function taxTypeLabel(taxType: string): string {
   return taxType || 'No Tax';
 }
 
-function round(value: number): string {
-  return value.toFixed(2);
-}
-
-function csvCell(value: string | number): string {
-  return `"${String(value).replaceAll('"', '""')}"`;
-}
-
-export const GstReportPage = ({ outlet, token, onSessionExpired }: GstReportPageProps) => {
+export const GstReportPage = ({ outlet, token, onSessionExpired, reportName = 'GST Report' }: GstReportPageProps) => {
   const initialFilters = useMemo<GstFilters>(() => ({
     startDate: todayId(), endDate: todayId(), shiftId: '', taxType: '', search: '',
   }), []);
@@ -116,6 +114,8 @@ export const GstReportPage = ({ outlet, token, onSessionExpired }: GstReportPage
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
+
+  useReportSearch(filters.search, appliedFilters.search, setAppliedFilters, setPage);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -131,6 +131,7 @@ export const GstReportPage = ({ outlet, token, onSessionExpired }: GstReportPage
     })
       .then(async response => {
         const result = await response.json() as { success: boolean; message?: string; data?: GstReportResponse };
+        if (controller.signal.aborted) return;
         if (response.status === 401) {
           onSessionExpired();
           throw new Error('Your session has expired.');
@@ -140,7 +141,7 @@ export const GstReportPage = ({ outlet, token, onSessionExpired }: GstReportPage
         setPage(1);
       })
       .catch(requestError => {
-        if ((requestError as Error).name !== 'AbortError') setError((requestError as Error).message);
+        if (!controller.signal.aborted) setError((requestError as Error).message);
       })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
@@ -152,45 +153,27 @@ export const GstReportPage = ({ outlet, token, onSessionExpired }: GstReportPage
   const pagedBills = report?.bills.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE) ?? [];
 
   const applyFilters = () => {
-    if (filters.startDate > filters.endDate) {
-      setError('Start date must be before the end date.');
+    const dateError = reportDateError(filters.startDate, filters.endDate);
+    if (dateError) {
+      setError(dateError);
       return;
     }
-    setAppliedFilters({ ...filters });
+    setAppliedFilters({ ...filters, search: filters.search.trim() });
   };
 
   const resetFilters = () => {
-    setFilters(initialFilters);
-    setAppliedFilters(initialFilters);
+    const reset = { ...initialFilters, startDate: todayId(), endDate: todayId() };
+    setFilters(reset);
+    setAppliedFilters(reset);
   };
 
-  const exportExcel = () => {
+  const exportExcel = async () => {
     if (!report) return;
-    const { summary } = report;
-    const rows: (string | number)[][] = view === 'rate'
-      ? [
-        ['GST Rate', 'Bills', 'Item Qty', 'Taxable Value', 'CGST', 'SGST', 'IGST', 'Total GST', 'Amount incl. GST'],
-        ...report.rates.map(row => [
-          rateLabel(row.rate), row.billCount, row.itemCount, round(row.taxable), round(row.cgst),
-          round(row.sgst), round(row.igst), round(row.gst), round(row.gross),
-        ]),
-        ['Total', summary.totalBills, '', round(summary.taxable), round(summary.cgst), round(summary.sgst), round(summary.igst), round(summary.gst), round(summary.gross)],
-      ]
-      : [
-        ['Bill No', 'Date/Time', 'Day ID', 'Tax Type', 'GST Rates', 'Taxable Value', 'CGST', 'SGST', 'IGST', 'Total GST', 'Amount incl. GST', 'Bill Final Total'],
-        ...report.bills.map(bill => [
-          bill.billNo, dateTime(bill.createdDate), bill.dayId, taxTypeLabel(bill.taxType), bill.rates.map(rateLabel).join(' / '),
-          round(bill.taxable), round(bill.cgst), round(bill.sgst), round(bill.igst), round(bill.gst), round(bill.gross), round(bill.finalTotal),
-        ]),
-        ['Total', '', '', '', '', round(summary.taxable), round(summary.cgst), round(summary.sgst), round(summary.igst), round(summary.gst), round(summary.gross), ''],
-      ];
-    const csv = `﻿${rows.map(row => row.map(value => csvCell(value)).join(',')).join('\n')}`;
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `gst-${view === 'rate' ? 'rate-wise' : 'bill-wise'}-${outlet.name}-${appliedFilters.startDate}-${appliedFilters.endDate}.csv`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+    const rows = gstDetailRows(report.bills, view === 'bill' ? 'bill' : 'day');
+    await downloadReportExcel({
+      name: reportName, outlet, startDate: appliedFilters.startDate, endDate: appliedFilters.endDate,
+      summary: { ...gstSummary(report), 'Bill No Range': billRange(report.bills) }, rows,
+    });
   };
 
   const hasData = !!report && report.bills.length > 0;
@@ -206,8 +189,8 @@ export const GstReportPage = ({ outlet, token, onSessionExpired }: GstReportPage
       </div>
 
       <div className="bill-report-filters">
-        <label><span>From date</span><div><CalendarDays /><input type="date" value={filters.startDate} onChange={event => setFilters(current => ({ ...current, startDate: event.target.value }))} /></div></label>
-        <label><span>To date</span><div><CalendarDays /><input type="date" value={filters.endDate} onChange={event => setFilters(current => ({ ...current, endDate: event.target.value }))} /></div></label>
+        <label><span>From date</span><ReportDateInput aria-label="From date" value={filters.startDate} onChange={event => setFilters(current => ({ ...current, startDate: event.target.value }))} /></label>
+        <label><span>To date</span><ReportDateInput aria-label="To date" value={filters.endDate} onChange={event => setFilters(current => ({ ...current, endDate: event.target.value }))} /></label>
         <label><span>Shift</span><input value={filters.shiftId} onChange={event => setFilters(current => ({ ...current, shiftId: event.target.value }))} onKeyDown={event => { if (event.key === 'Enter') applyFilters(); }} placeholder="All shifts" /></label>
         <label><span>Tax type</span><select value={filters.taxType} onChange={event => setFilters(current => ({ ...current, taxType: event.target.value }))}><option value="">All tax types</option><option value="inclusive">Inclusive</option><option value="exclusive">Exclusive</option><option value="notax">No Tax</option></select></label>
         <label><span>Bill search</span><div><Search /><input value={filters.search} onChange={event => setFilters(current => ({ ...current, search: event.target.value }))} onKeyDown={event => { if (event.key === 'Enter') applyFilters(); }} placeholder="Bill no." /></div></label>

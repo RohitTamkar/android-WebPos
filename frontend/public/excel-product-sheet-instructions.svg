@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2288" height="700" viewBox="0 0 2288 700" role="img" aria-labelledby="title description">
+<title id="title">Product CSV sheet format and instructions</title>
+<desc id="description">Columns: Product Name | Regional Name | Default Price | Price 1 | MRP Price | Purchase Price | Category Name | Category No | Tax | Barcode | Unit Type | Stock | Weightable | Search Code. Sample: AFGHANI TAND | AFGHANI TAND | 500 | 500 | 0 | 0 | TANDDOR STASTER | 1 | 0 | 0 | number | 0 | no | 1. File format: CSV (.csv). All 14 base columns are mandatory. Numeric fields may contain zero where applicable. Category Name and Category No must match the existing category master. Tax value 0 is present in the supplied sample. Weightable uses the supplied yes/no format. Do not treat identical product names alone as duplicates when Search Codes differ. Premises 1–5 belong to the optional premises workflow and are not part of the basic 14-column preview.</desc>
+<rect width="2288" height="700" fill="#ffffff"/>
+<g font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif">
+<text x="24" y="42" font-size="28" font-weight="600" fill="#193454">Product sheet format — CSV (.csv)</text>
+<text x="24" y="74" font-size="18" fill="#64748b">Basic product workflow · 14 mandatory columns · Supplied sample row</text>
+<rect x="24" y="100" width="2240" height="30" fill="#eff4ff"/>
+<rect x="24" y="130" width="2240" height="50" fill="#f6f9fc"/>
+<rect x="24" y="180" width="2240" height="54" fill="#ffffff"/>
+<text x="104" y="121" text-anchor="middle" font-size="14" fill="#60779c">A</text>
+<text x="104" y="161" text-anchor="middle" font-size="16" font-weight="600" fill="#193454">Product Name</text>
+<text x="104" y="212" text-anchor="middle" font-size="15" fill="#334155">AFGHANI TAND</text>
+<text x="264" y="121" text-anchor="middle" font-size="14" fill="#60779c">B</text>
+<text x="264" y="161" text-anchor="middle" font-size="16" font-weight="600" fill="#193454">Regional Name</text>
+<text x="264" y="212" text-anchor="middle" font-size="15" fill="#334155">AFGHANI TAND</text>
+<text x="424" y="121" text-anchor="middle" font-size="14" fill="#60779c">C</text>
+<text x="424" y="161" text-anchor="middle" font-size="16" font-weight="600" fill="#193454">Default Price</text>
+<text x="424" y="212" text-anchor="middle" font-size="15" fill="#334155">500</text>
+<text x="584" y="121" text-anchor="middle" font-size="14" fill="#60779c">D</text>
+<text x="584" y="161" text-anchor="middle" font-size="16" font-weight="600" fill="#193454">Price 1</text>
+<text x="584" y="212" text-anchor="middle" font-size="15" fill="#334155">500</text>
+<text x="744" y="121" text-anchor="middle" font-size="14" fill="#60779c">E</text>
+<text x="744" y="161" text-anchor="middle" font-size="16" font-weight="600" fill="#193454">MRP Price</text>
+<text x="744" y="212" text-anchor="middle" font-size="15" fill="#334155">0</text>
+<text x="904" y="121" text-anchor="middle" font-size="14" fill="#60779c">F</text>
+<text x="904" y="161" text-anchor="middle" font-size="16" font-weight="600" fill="#193454">Purchase Price</text>
+<text x="904" y="212" text-anchor="middle" font-size="15" fill="#334155">0</text>
+<text x="1064" y="121" text-anchor="middle" font-size="14" fill="#60779c">G</text>
+<text x="1064" y="161" text-anchor="middle" font-size="16" font-weight="600" fill="#193454">Category Name</text>
+<text x="1064" y="212" text-anchor="middle" font-size="15" fill="#334155">TANDDOR STASTER</text>
+<text x="1224" y="121" text-anchor="middle" font-size="14" fill="#60779c">H</text>
+<text x="1224" y="161" text-anchor="middle" font-size="16" font-weight="600" fill="#193454">Category No</text>
+<text x="1224" y="212" text-anchor="middle" font-size="15" fill="#334155">1</text>
+<text x="1384" y="121" text-anchor="middle" font-size="14" fill="#60779c">I</text>
+<text x="1384" y="161" text-anchor="middle" font-size="16" font-weight="600" fill="#193454">Tax</text>
+<text x="1384" y="212" text-anchor="middle" font-size="15" fill="#334155">0</text>
+<text x="1544" y="121" text-anchor="middle" font-size="14" fill="#60779c">J</text>
+<text x="1544" y="161" text-anchor="middle" font-size="16" font-weight="600" fill="#193454">Barcode</text>
+<text x="1544" y="212" text-anchor="middle" font-size="15" fill="#334155">0</text>
+<text x="1704" y="121" text-anchor="middle" font-size="14" fill="#60779c">K</text>
+<text x="1704" y="161" text-anchor="middle" font-size="16" font-weight="600" fill="#193454">Unit Type</text>
+<text x="1704" y="212" text-anchor="middle" font-size="15" fill="#334155">number</text>
+<text x="1864" y="121" text-anchor="middle" font-size="14" fill="#60779c">L</text>
+<text x="1864" y="161" text-anchor="middle" font-size="16" font-weight="600" fill="#193454">Stock</text>
+<text x="1864" y="212" text-anchor="middle" font-size="15" fill="#334155">0</text>
+<text x="2024" y="121" text-anchor="middle" font-size="14" fill="#60779c">M</text>
+<text x="2024" y="161" text-anchor="middle" font-size="16" font-weight="600" fill="#193454">Weightable</text>
+<text x="2024" y="212" text-anchor="middle" font-size="15" fill="#334155">no</text>
+<text x="2184" y="121" text-anchor="middle" font-size="14" fill="#60779c">N</text>
+<text x="2184" y="161" text-anchor="middle" font-size="16" font-weight="600" fill="#193454">Search Code</text>
+<text x="2184" y="212" text-anchor="middle" font-size="15" fill="#334155">1</text>
+<path d="M24 100 V234" stroke="#e2e8f0"/>
+<path d="M184 100 V234" stroke="#e2e8f0"/>
+<path d="M344 100 V234" stroke="#e2e8f0"/>
+<path d="M504 100 V234" stroke="#e2e8f0"/>
+<path d="M664 100 V234" stroke="#e2e8f0"/>
+<path d="M824 100 V234" stroke="#e2e8f0"/>
+<path d="M984 100 V234" stroke="#e2e8f0"/>
+<path d="M1144 100 V234" stroke="#e2e8f0"/>
+<path d="M1304 100 V234" stroke="#e2e8f0"/>
+<path d="M1464 100 V234" stroke="#e2e8f0"/>
+<path d="M1624 100 V234" stroke="#e2e8f0"/>
+<path d="M1784 100 V234" stroke="#e2e8f0"/>
+<path d="M1944 100 V234" stroke="#e2e8f0"/>
+<path d="M2104 100 V234" stroke="#e2e8f0"/>
+<path d="M2264 100 V234" stroke="#e2e8f0"/>
+<path d="M24 100 H2264" stroke="#e2e8f0"/>
+<path d="M24 130 H2264" stroke="#e2e8f0"/>
+<path d="M24 180 H2264" stroke="#e2e8f0"/>
+<path d="M24 234 H2264" stroke="#e2e8f0"/>
+<text x="24" y="282" font-size="24" font-weight="600" fill="#193454">Sheet instructions</text>
+<text x="24" y="322" font-size="20" fill="#334155">1. File format: CSV (.csv).</text>
+<text x="24" y="366" font-size="20" fill="#334155">2. All 14 base columns are mandatory.</text>
+<text x="24" y="410" font-size="20" fill="#334155">3. Numeric fields may contain zero where applicable.</text>
+<text x="24" y="454" font-size="20" fill="#334155">4. Category Name and Category No must match the existing category master.</text>
+<text x="24" y="498" font-size="20" fill="#334155">5. Tax value 0 is present in the supplied sample.</text>
+<text x="24" y="542" font-size="20" fill="#334155">6. Weightable uses the supplied yes/no format.</text>
+<text x="24" y="586" font-size="20" fill="#334155">7. Do not treat identical product names alone as duplicates when Search Codes differ.</text>
+<text x="24" y="630" font-size="20" fill="#334155">8. Premises 1–5 belong to the optional premises workflow and are not part of the basic 14-column preview.</text>
+</g>
+</svg>

@@ -442,6 +442,14 @@
   font-family: inherit;
 }
 
+.category-modal {
+  color-scheme: light;
+}
+
+.category-modal .form-field input {
+  color: #334155;
+}
+
 .form-field input:focus,
 .form-field textarea:focus,
 .form-field select:focus {
@@ -547,10 +555,26 @@
 }
 
 
-/* Read-only mode: categories come from Firebase and cannot be changed here. */
+/* Existing records remain read-only; the add form creates new records only. */
+.category-form-error { margin: 0; color: #b91c1c; font-size: 12px; }
 .btn-primary-add:disabled { opacity: 0.55; cursor: not-allowed; transform: none; box-shadow: none; }
 .btn-primary-add:disabled:hover { background: #3567f0; transform: none; }
-.btn-icon-action:disabled { opacity: 0.4; cursor: not-allowed; }
-.btn-icon-action:disabled:hover { background: transparent; color: #64748b; border-color: transparent; }
+.btn-icon-action.edit { color: #3567f0; }
+.btn-icon-action.delete { color: #ef4444; }
+.btn-icon-action:disabled { opacity: 1; cursor: default; }
+.btn-icon-action:disabled:hover { background: transparent; border-color: transparent; }
 .category-loading-icon { animation: category-spin 0.8s linear infinite; }
 @keyframes category-spin { to { transform: rotate(360deg); } }
+
+.category-modal.category-edit-page { max-width: 520px; margin: 24px auto; }
+.category-edit-page form { display: flex; flex-direction: column; }
+.category-edit-page .modal-body { display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; }
+.category-edit-page .form-field { min-width: 0; }
+.category-edit-page .form-field input { width: 100%; min-height: 42px; }
+.category-edit-page .modal-footer { justify-content: center; }
+.category-edit-page .modal-footer .btn-primary-add { min-width: 160px; justify-content: center; }
+.category-edit-page .modal-body > p { grid-column: 1 / -1; }
+.category-modal.category-updated-popup { margin: auto; padding: 0; max-width: min(420px, calc(100vw - 32px)); color: #334155; }
+.category-updated-popup::backdrop { background: rgba(15, 23, 42, 0.5); backdrop-filter: blur(4px); }
+.category-updated-popup .modal-body { align-items: center; text-align: center; }
+@media (max-width: 700px) { .category-edit-page .modal-body { grid-template-columns: minmax(0, 1fr); } }

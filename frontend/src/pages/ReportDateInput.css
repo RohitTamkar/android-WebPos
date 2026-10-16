@@ -1,0 +1,4 @@
+.bill-report-filters .report-calendar-button { display: grid; place-items: center; flex: 0 0 auto; align-self: stretch; padding: 0; border: 0; color: inherit; background: transparent; cursor: pointer; }
+.bill-report-filters .report-calendar-button:focus-visible { outline: 2px solid #ef8589; outline-offset: 2px; border-radius: 3px; }
+.bill-report-filters .report-calendar-button:disabled { cursor: not-allowed; }
+.bill-report-filters .report-date-control input { cursor: pointer; }

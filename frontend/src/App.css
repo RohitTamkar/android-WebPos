@@ -237,6 +237,12 @@ button { font: inherit; }
 .hero-actions button { display: flex; align-items: center; gap: 7px; background: transparent; color: #fff; cursor: pointer; }
 .hero-actions button svg { width: 14px; }
 
+.hero-actions .dashboard-date-picker { display: flex; align-items: center; gap: 8px; padding: 9px 13px; border: 1px solid rgba(255,255,255,.65); border-radius: 6px; background: #fff; color: #263847; font-size: 12px; white-space: nowrap; color-scheme: light; cursor: pointer; }
+.dashboard-date-picker .report-date-control { display: flex; align-items: center; gap: 6px; }
+.dashboard-date-picker input { min-width: 0; width: 110px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.hero-actions .dashboard-date-picker .report-calendar-button { display: grid; place-items: center; padding: 0; border: 0; background: transparent; color: inherit; }
+.hero-actions .dashboard-date-picker:focus-within { outline: 2px solid #9cb0ff; outline-offset: 2px; }
+
 .dashboard-data-notice { margin: 14px 0 -2px; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 14px; border: 1px solid #d8e4ec; border-radius: 9px; color: #47657a; background: #f7fbfd; font-size: 11px; font-weight: 700; }
 .dashboard-data-notice.error { justify-content: space-between; border-color: #f1c8ca; color: #b62b32; background: #fff5f5; }
 .dashboard-data-notice svg { width: 15px; height: 15px; }

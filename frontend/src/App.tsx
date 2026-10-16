@@ -2,15 +2,22 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { LoginPage, type UserSession } from './pages/LoginPage.tsx';
 import { OutletSelectionPage, type OutletSummary } from './pages/OutletSelectionPage.tsx';
 import { CategoryPage } from './pages/CategoryPage.tsx';
+import { ReportDateInput } from './pages/ReportDateInput.tsx';
+import { ProductsPage } from './pages/ProductsPage.tsx';
+import { UploadExcelPage } from './pages/UploadExcelPage.tsx';
 import { BillWiseReportPage } from './pages/BillWiseReportPage.tsx';
 import { ShiftSummaryReportPage } from './pages/ShiftSummaryReportPage.tsx';
+import { DaywiseReportPage } from './pages/DaywiseReportPage.tsx';
 import { CategoryWiseReportPage } from './pages/CategoryWiseReportPage.tsx';
 import { ProductWiseReportPage } from './pages/ProductWiseReportPage.tsx';
 import { GstReportPage } from './pages/GstReportPage.tsx';
+import { GstDaywiseReportPage } from './pages/GstDaywiseReportPage.tsx';
 import { StockReportPage } from './pages/StockReportPage.tsx';
+import { StockInOutReportPage } from './pages/StockInOutReportPage.tsx';
+import { StockTransferReportPage } from './pages/StockTransferReportPage.tsx';
 import {
   Accessibility, BadgeIndianRupee, Banknote, Bell, Bot, Calculator,
-  CalendarCheck, CalendarDays, ChevronDown, Clock3, CircleHelp, ClipboardCheck,
+  CalendarCheck, CalendarDays, ChevronDown, CircleHelp, ClipboardCheck,
   ClipboardList, ContactRound, CreditCard, Database, Gauge, Home,
   LayoutDashboard, LogOut, Menu, MessageSquareText, Monitor, Package, Radio, ReceiptText,
   PackageSearch, RefreshCw, ShoppingCart, SlidersHorizontal, Store, TrendingUp, Upload,
@@ -163,6 +170,7 @@ export default function App() {
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [dashboardError, setDashboardError] = useState('');
   const [dashboardReloadKey, setDashboardReloadKey] = useState(0);
+  const [dashboardDay, setDashboardDay] = useState(localDayId);
   const [logoutConfirmationOpen, setLogoutConfirmationOpen] = useState(false);
 
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
@@ -231,13 +239,15 @@ export default function App() {
     const loadDashboard = async () => {
       setDashboardLoading(true);
       setDashboardError('');
+      setDashboardData(null);
       try {
-        const dayId = localDayId();
+        const dayId = dashboardDay;
         const response = await fetch(`/api/outlets/${encodeURIComponent(selectedOutlet.id)}/dashboard?dayId=${dayId}`, {
           headers: { Authorization: `Bearer ${session.token}` },
           signal: controller.signal,
         });
         const result = await response.json() as { success: boolean; message?: string; data?: ShiftDashboardData };
+        if (controller.signal.aborted) return;
         if (response.status === 401) {
           handleLogout();
           return;
@@ -249,7 +259,7 @@ export default function App() {
         }
         setDashboardData(result.data);
       } catch (requestError) {
-        if ((requestError as Error).name !== 'AbortError') {
+        if (!controller.signal.aborted && (requestError as Error).name !== 'AbortError') {
           setDashboardData(null);
           setDashboardError('Cannot reach the shift service.');
         }
@@ -260,7 +270,7 @@ export default function App() {
 
     void loadDashboard();
     return () => controller.abort();
-  }, [session, selectedOutlet, dashboardReloadKey, handleLogout]);
+  }, [session, selectedOutlet, dashboardDay, dashboardReloadKey, handleLogout]);
 
   if (!session) return <LoginPage onLoginSuccess={handleLoginSuccess} />;
   if (!selectedOutlet) return (
@@ -295,16 +305,14 @@ export default function App() {
       { label: 'Broadcast', icon: <Radio /> },
     ] },
     { label: 'Reports', icon: <ReceiptText />, items: [
+      { label: 'Day Wise Report', icon: <CalendarDays /> },
       { label: 'Category Wise', icon: <SlidersHorizontal /> },
       { label: 'Product Wise', icon: <PackageSearch /> },
       { label: 'Stock Report', icon: <ClipboardCheck /> },
       { label: 'Stock Transfer Report', icon: <Accessibility /> },
-      { label: 'Daywise Report', icon: <CalendarDays /> },
-      { label: 'Shift Summary Report', icon: <Clock3 /> },
       { label: 'GST Report', icon: <Calculator /> },
       { label: 'GST Report Day Wise', icon: <CalendarCheck /> },
       { label: 'Bill Wise Sale Report', icon: <ReceiptText /> },
-      { label: 'Stock In-Out Report', icon: <ClipboardList /> },
     ] },
   ];
 
@@ -381,24 +389,36 @@ export default function App() {
 
         <main className="dashboard-workspace">
           {activeNavigation.id === 'Reports:Bill Wise Sale Report' ? (
-            <BillWiseReportPage outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
+            <BillWiseReportPage outlet={selectedOutlet} reportName={activeNavigation.label} token={session.token} onSessionExpired={handleLogout} />
           ) : activeNavigation.id === 'Reports:Category Wise' ? (
-            <CategoryWiseReportPage outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
+            <CategoryWiseReportPage outlet={selectedOutlet} reportName={activeNavigation.label} token={session.token} onSessionExpired={handleLogout} />
           ) : activeNavigation.id === 'Reports:Product Wise' ? (
-            <ProductWiseReportPage outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
+            <ProductWiseReportPage outlet={selectedOutlet} reportName={activeNavigation.label} token={session.token} onSessionExpired={handleLogout} />
           ) : activeNavigation.id === 'Reports:Stock Report' ? (
-            <StockReportPage outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
+            <StockReportPage outlet={selectedOutlet} reportName={activeNavigation.label} token={session.token} onSessionExpired={handleLogout} />
+          ) : activeNavigation.id === 'Reports:Stock In-Out Report' ? (
+            <StockInOutReportPage outlet={selectedOutlet} reportName={activeNavigation.label} token={session.token} onSessionExpired={handleLogout} />
+          ) : activeNavigation.id === 'Reports:Stock Transfer Report' ? (
+            <StockTransferReportPage outlet={selectedOutlet} reportName={activeNavigation.label} token={session.token} onSessionExpired={handleLogout} />
           ) : activeNavigation.id === 'Reports:GST Report' ? (
-            <GstReportPage outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
+            <GstReportPage outlet={selectedOutlet} reportName={activeNavigation.label} token={session.token} onSessionExpired={handleLogout} />
+          ) : activeNavigation.id === 'Reports:GST Report Day Wise' ? (
+            <GstDaywiseReportPage outlet={selectedOutlet} reportName={activeNavigation.label} token={session.token} onSessionExpired={handleLogout} />
           ) : activeNavigation.id === 'Reports:Shift Summary Report' ? (
-            <ShiftSummaryReportPage outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
+            <ShiftSummaryReportPage outlet={selectedOutlet} reportName={activeNavigation.label} token={session.token} onSessionExpired={handleLogout} />
+          ) : activeNavigation.id === 'Reports:Day Wise Report' ? (
+            <DaywiseReportPage outlet={selectedOutlet} reportName={activeNavigation.label} token={session.token} onSessionExpired={handleLogout} />
           ) : activeNavigation.id === 'Masters:Category' ? (
             <CategoryPage outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
+          ) : activeNavigation.id === 'Masters:Products' || activeNavigation.id === 'Inventory:Products' ? (
+            <ProductsPage outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
+          ) : activeNavigation.id === 'Inventory:Upload Excel' ? (
+            <UploadExcelPage outletId={selectedOutlet.id} token={session.token} onSessionExpired={handleLogout} />
           ) : (
             <>
               <section className="page-hero">
                 <div><h1>Retail POS Dashboard</h1><p>{selectedOutlet.name} · {activeNavigation.label} · Daily sales performance</p></div>
-                <div className="hero-actions"><span>Shift {dashboardData?.shiftNo || '—'}</span><span>{dashboardData?.dayId || localDayId()}&nbsp;&nbsp; {clock}</span><button type="button"><Upload /> Export</button></div>
+                <div className="hero-actions"><span>Shift {dashboardData?.shiftNo || '—'}</span><label className="dashboard-date-picker" htmlFor="dashboard-report-date"><ReportDateInput id="dashboard-report-date" aria-label="Dashboard date" value={dashboardDay} onChange={event => { if (event.target.value) setDashboardDay(event.target.value); }} /><span>{clock}</span></label><button type="button"><Upload /> Export</button></div>
               </section>
 
               {dashboardLoading && <div className="dashboard-data-notice"><RefreshCw className="dashboard-data-spinner" /> Loading shift data…</div>}

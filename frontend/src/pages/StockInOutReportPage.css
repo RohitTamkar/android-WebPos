@@ -1,0 +1,5 @@
+/* Shared report styles are preserved; additions apply only to stock movements. */
+.stock-in-out-report-page tfoot td { border-top: 2px solid #e2e7eb; color: #173b53; background: #f6f8fa; font-weight: 800; }
+.stock-in-out-report-page tfoot td:first-child { display: table-cell; }
+.stock-in-out-report-page .bill-detail-meta strong { white-space: normal; overflow-wrap: anywhere; }
+.stock-in-out-report-page .bill-items-table td:first-child small { display: block; margin-top: 3px; color: #8a99a6; font-size: 8px; }

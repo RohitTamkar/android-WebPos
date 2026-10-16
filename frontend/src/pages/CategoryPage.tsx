@@ -1,4 +1,6 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import { EditCategoryForm, CategoryUpdatedPopup } from './EditCategoryForm.tsx';
+import { DeleteConfirmation } from './DeleteConfirmation.tsx';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   SlidersHorizontal,
   Plus,
@@ -10,6 +12,7 @@ import {
   Layers,
   FolderPlus,
   RefreshCw,
+  X,
 } from 'lucide-react';
 import type { OutletSummary } from './OutletSelectionPage.tsx';
 import './CategoryPage.css';
@@ -19,7 +22,9 @@ export interface Category {
   code: string;
   name: string;
   description: string;
-  status: 'Active' | 'Inactive';
+  regionalName: string;
+  dayType: string;
+  status: 'Active' | 'Inactive' | '—';
   productCount: number;
   color: string;
   createdAt: string;
@@ -28,11 +33,11 @@ export interface Category {
 // Shape returned by GET /api/outlets/:outletId/categories (Firestore OUTLET/{id}/CATEGORY).
 interface FirebaseCategory {
   id: string;
-  categoryNo: number;
+  categoryNo: number | null;
   name: string;
   regionalName: string;
   dayType: string;
-  active: boolean;
+  active: boolean | null;
   productCount: number;
   createdAt: string;
 }
@@ -47,15 +52,15 @@ const PRESET_COLORS = [
   '#64748b', // Slate
 ];
 
-const READ_ONLY_HINT = 'Categories are read-only here. Manage them from the POS app.';
-
 function toCategory(category: FirebaseCategory, index: number): Category {
   return {
     id: category.id,
-    code: category.categoryNo ? `CAT-${String(category.categoryNo).padStart(3, '0')}` : '—',
+    code: category.categoryNo === null ? '—' : String(category.categoryNo),
     name: category.name,
     description: category.regionalName || category.dayType,
-    status: category.active ? 'Active' : 'Inactive',
+    regionalName: category.regionalName,
+    dayType: category.dayType,
+    status: category.active === null ? '—' : category.active ? 'Active' : 'Inactive',
     productCount: category.productCount,
     color: PRESET_COLORS[index % PRESET_COLORS.length] ?? '#3567f0',
     createdAt: category.createdAt ? category.createdAt.slice(0, 10) : '—',
@@ -76,8 +81,26 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'All' | 'Active' | 'Inactive'>('All');
+  const [addOpen, setAddOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<Category | null>(null);
+  const [updatedPopup, setUpdatedPopup] = useState(false);
+  const [draft, setDraft] = useState({ name: '', regionalName: '' });
+  const [saving, setSaving] = useState(false);
+  const [addError, setAddError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [noticeIsError, setNoticeIsError] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const deleteBusy = useRef(false);
 
-  // Categories are only read from Firebase; this page never writes them back.
+  useEffect(() => {
+    if (!addOpen || saving) return;
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setAddOpen(false); };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [addOpen, saving]);
+
+  // Load existing categories without modifying their Firestore documents.
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
@@ -87,6 +110,7 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
     })
       .then(async response => {
         const result = await response.json() as { success: boolean; message?: string; data?: FirebaseCategory[] };
+        if (controller.signal.aborted) return;
         if (response.status === 401) {
           onSessionExpired();
           throw new Error('Your session has expired.');
@@ -95,7 +119,7 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
         setCategories(result.data.map(toCategory));
       })
       .catch(requestError => {
-        if ((requestError as Error).name !== 'AbortError') setError((requestError as Error).message);
+        if (!controller.signal.aborted) setError((requestError as Error).message);
       })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
@@ -105,11 +129,12 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
 
   // Filtered categories
   const filteredCategories = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
     return categories.filter((cat) => {
       const matchesSearch =
-        cat.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        cat.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        cat.description.toLowerCase().includes(searchQuery.toLowerCase());
+        cat.name.toLowerCase().includes(query) ||
+        cat.code.toLowerCase().includes(query) ||
+        cat.description.toLowerCase().includes(query);
       const matchesStatus = statusFilter === 'All' || cat.status === statusFilter;
       return matchesSearch && matchesStatus;
     });
@@ -119,12 +144,93 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
   const stats = useMemo(() => {
     const total = categories.length;
     const active = categories.filter((c) => c.status === 'Active').length;
+    const inactive = categories.filter((c) => c.status === 'Inactive').length;
     const totalItems = categories.reduce((sum, c) => sum + c.productCount, 0);
-    return { total, active, totalItems };
+    return { total, active, inactive, totalItems };
   }, [categories]);
+
+  const nextCategoryNumber = useMemo(() => {
+    const highestNumber = categories.reduce((highest, category) => {
+      const value = Number(category.code);
+      return Number.isSafeInteger(value) ? Math.max(highest, value) : highest;
+    }, 0);
+    return highestNumber + 1;
+  }, [categories]);
+
+  const openAddCategory = () => {
+    setDraft({ name: '', regionalName: '' });
+    setAddError('');
+    setNotice('');
+    setAddOpen(true);
+  };
+
+  const deleteCategory = async (id: string) => {
+    if (deleteBusy.current) return;
+    deleteBusy.current = true; setDeleting(true); setNotice(''); setNoticeIsError(false);
+    try {
+      const response = await fetch(`/api/outlets/${encodeURIComponent(outlet.id)}/categories/${encodeURIComponent(id)}`, {
+        method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+      });
+      if (response.status === 401) { onSessionExpired(); return; }
+      const result = await response.json() as { success?: boolean; message?: string };
+      if (!response.ok || !result.success) throw new Error(result.message || 'Unable to delete category.');
+      setCategories(current => current.filter(category => category.id !== id));
+      setNotice('Category deleted successfully.');
+    } catch (error) { setNoticeIsError(true); setNotice((error as Error).message); }
+    finally { deleteBusy.current = false; setDeleting(false); setDeleteTarget(null); }
+  };
+
+  const addCategory = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (saving) return;
+    const categoryNo = nextCategoryNumber;
+    const name = draft.name.trim();
+    if (!name || !Number.isSafeInteger(categoryNo) || categoryNo <= 0) {
+      setAddError('Enter a name and a positive whole category number.');
+      return;
+    }
+    if (categories.some(category => category.code === String(categoryNo) || category.name.trim().toLowerCase() === name.toLowerCase())) {
+      setAddError('A category with this number or name already exists.');
+      return;
+    }
+    setSaving(true);
+    setAddError('');
+    try {
+      const response = await fetch(`/api/outlets/${encodeURIComponent(outlet.id)}/categories`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ categoryNo, name, regionalName: draft.regionalName.trim() }),
+      });
+      const result = await response.json() as { message?: string; data?: FirebaseCategory };
+      if (response.status === 401) { onSessionExpired(); return; }
+      if (!response.ok || !result.data) throw new Error(result.message || 'Unable to add the category.');
+      const added = result.data;
+      setCategories(current => [...current, toCategory(added, current.length)]
+        .sort((left, right) => (Number(left.code) || 0) - (Number(right.code) || 0)));
+      setSearchQuery('');
+      setStatusFilter('All');
+      setAddOpen(false);
+      setNoticeIsError(false);
+      setNotice('Category added successfully.');
+    } catch (requestError) {
+      setAddError((requestError as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (editTarget) return <EditCategoryForm key={editTarget.id} category={editTarget} outletId={outlet.id} token={token}
+    onSessionExpired={onSessionExpired} onCancel={() => setEditTarget(null)} onUpdated={updated => {
+      setCategories(current => current.map(category => category.id === updated.id ? { ...category,
+        name: updated.name, regionalName: updated.regionalName, description: updated.regionalName || category.dayType } : category));
+      setEditTarget(null); setUpdatedPopup(true);
+    }} />;
 
   return (
     <div className="category-page-shell">
+      {updatedPopup && <CategoryUpdatedPopup onDismiss={() => setUpdatedPopup(false)} />}
+      {deleteTarget && <DeleteConfirmation kind="category" name={deleteTarget.name} busy={deleting}
+        onCancel={() => { if (!deleteBusy.current) setDeleteTarget(null); }} onConfirm={() => void deleteCategory(deleteTarget.id)} />}
       {/* Header Row */}
       <div className="category-header-row">
         <div className="category-title-group">
@@ -138,8 +244,8 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
           <button
             type="button"
             className="btn-primary-add"
-            disabled
-            title={READ_ONLY_HINT}
+            disabled={loading || !!error || saving}
+            onClick={openAddCategory}
           >
             <Plus size={16} />
             Add New Category
@@ -203,7 +309,7 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
           >
             <option value="All">All Statuses ({categories.length})</option>
             <option value="Active">Active ({stats.active})</option>
-            <option value="Inactive">Inactive ({stats.total - stats.active})</option>
+            <option value="Inactive">Inactive ({stats.inactive})</option>
           </select>
         </div>
       </div>
@@ -292,16 +398,20 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
                       <button
                         type="button"
                         className="btn-icon-action edit"
-                        title={READ_ONLY_HINT}
-                        disabled
+                        title="Edit category"
+                        aria-label="Edit category"
+                        disabled={deleting}
+                        onClick={() => { setNotice(''); setEditTarget(cat); }}
                       >
                         <Pencil size={15} />
                       </button>
                       <button
                         type="button"
                         className="btn-icon-action delete"
-                        title={READ_ONLY_HINT}
-                        disabled
+                        title="Delete category"
+                        aria-label="Delete category"
+                        disabled={deleting}
+                        onClick={() => setDeleteTarget({ id: cat.id, name: cat.name })}
                       >
                         <Trash2 size={15} />
                       </button>
@@ -327,6 +437,21 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
           </tbody>
         </table>
       </div>
+      {addOpen && <div className="modal-scrim" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !saving) setAddOpen(false); }}>
+        <section className="category-modal" role="dialog" aria-modal="true" aria-labelledby="add-category-title">
+          <form onSubmit={addCategory}>
+            <div className="modal-header"><h3 id="add-category-title">Add New Category</h3><button type="button" className="modal-close-btn" aria-label="Close add category" disabled={saving} onClick={() => setAddOpen(false)}><X size={18} /></button></div>
+            <div className="modal-body">
+              <div className="form-field"><label htmlFor="new-category-number">Category Number</label><input id="new-category-number" type="text" readOnly disabled={saving} value={String(nextCategoryNumber)} /></div>
+              <div className="form-field"><label htmlFor="new-category-name">Category Name</label><input id="new-category-name" required maxLength={200} autoFocus disabled={saving} value={draft.name} onChange={event => setDraft(current => ({ ...current, name: event.target.value }))} /></div>
+              <div className="form-field"><label htmlFor="new-category-regional">Regional Name</label><input id="new-category-regional" maxLength={200} disabled={saving} value={draft.regionalName} onChange={event => setDraft(current => ({ ...current, regionalName: event.target.value }))} /></div>
+              {addError && <p className="category-form-error" role="alert">{addError}</p>}
+            </div>
+            <div className="modal-footer"><button type="button" className="btn-secondary" disabled={saving} onClick={() => setAddOpen(false)}>Cancel</button><button type="submit" className="btn-primary-add" disabled={saving}>{saving ? 'Adding…' : 'Add Category'}</button></div>
+          </form>
+        </section>
+      </div>}
+      {notice && <div className="category-toast" role={noticeIsError ? 'alert' : 'status'} style={noticeIsError ? { color: '#fca5a5' } : undefined}>{noticeIsError ? <X size={18} /> : <CheckCircle2 size={18} />}{notice}<button type="button" className="modal-close-btn" aria-label="Dismiss message" onClick={() => setNotice('')}><X size={16} /></button></div>}
     </div>
   );
 };
