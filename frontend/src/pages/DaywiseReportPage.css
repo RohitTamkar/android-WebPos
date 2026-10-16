@@ -1,0 +1,60 @@
+/* Uses the shared report layout; these rules apply only to Daywise Report. */
+.daywise-report-page .bill-report-filters { grid-template-columns: minmax(180px, 240px) auto; }
+.daywise-report-page .bill-filter-buttons { justify-content: flex-start; }
+.daywise-report-page .bill-filter-buttons button { flex: 0 0 auto; height: 30px; padding: 0 9px; font-size: 9px; gap: 5px; }
+.daywise-report-page .bill-filter-buttons button svg { width: 12px; height: 12px; }
+.daywise-report-page .bill-filter-buttons button:disabled { opacity: .6; cursor: wait; }
+.daywise-bills-card h2 { display: flex; align-items: center; justify-content: space-between; margin: 0; padding: 15px 14px; color: #19384f; font-size: 13px; }
+.daywise-bills-card h2 small { color: #8191a0; font-size: 10px; }
+.daywise-bills-card td:first-child { display: table-cell; }
+.daywise-bills-card td[rowspan] { vertical-align: top; }
+.daywise-bills-card tbody tr { cursor: pointer; }
+.daywise-bill-detail .bill-detail-meta strong { overflow: visible; white-space: normal; overflow-wrap: anywhere; }
+.daywise-report-page tfoot td { border-top: 2px solid #e2e7eb; color: #173b53; background: #f6f8fa; font-weight: 800; }
+.daywise-report-page tfoot td:first-child { display: table-cell; }
+
+@media (max-width: 600px) {
+  .daywise-report-page .bill-report-filters { grid-template-columns: 1fr; }
+}
+
+/* Screen-only refinements keep the existing print layout and report colors. */
+@media screen {
+  .daywise-report-page { min-width: 0; }
+  .daywise-report-page .bill-report-heading { gap: 16px; }
+  .daywise-report-page .bill-report-heading > div:first-child > span { display: block; font-size: 11px; font-weight: 600; line-height: 1.4; letter-spacing: .1em; }
+  .daywise-report-page .bill-report-heading h1 { margin: 8px 0 7px; font-size: clamp(24px, 2.5vw, 26px); font-weight: 700; line-height: 1.25; letter-spacing: -.02em; }
+  .daywise-report-page .bill-report-heading p { margin: 0; font-size: 13px; line-height: 1.5; }
+  .daywise-report-page .bill-report-actions { flex-wrap: wrap; }
+  .daywise-report-page .bill-report-actions button { font-size: 12px; font-weight: 600; }
+
+  .daywise-report-page .bill-report-filters { margin-top: 20px; gap: 16px; align-items: end; box-shadow: 0 2px 8px rgba(29,50,69,.05); }
+  .daywise-report-page .bill-report-filters label { gap: 8px; }
+  .daywise-report-page .bill-report-filters label > span { font-size: 11px; font-weight: 600; letter-spacing: .03em; }
+  .daywise-report-page .bill-report-filters input { font-size: 13px; }
+  .daywise-report-page .bill-filter-buttons { flex-wrap: wrap; }
+  .daywise-report-page .bill-filter-buttons button { height: 38px; padding: 0 14px; font-size: 12px; font-weight: 600; gap: 7px; }
+  .daywise-report-page .bill-filter-buttons button svg { width: 14px; height: 14px; }
+
+  .daywise-report-page .bill-summary-grid { margin-top: 16px; gap: 14px; }
+  .daywise-report-page .bill-summary-grid article { min-width: 0; gap: 14px; padding: 18px 16px; box-shadow: 0 2px 8px rgba(29,50,69,.05); }
+  .daywise-report-page .bill-summary-grid article > span { flex-shrink: 0; }
+  .daywise-report-page .bill-summary-grid article div { min-width: 0; gap: 6px; }
+  .daywise-report-page .bill-summary-grid small { font-size: 11px; font-weight: 500; text-transform: none; }
+  .daywise-report-page .bill-summary-grid strong { font-size: 20px; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+
+  .daywise-report-page .bill-table-card { margin-top: 18px; box-shadow: 0 2px 8px rgba(29,50,69,.05); }
+  .daywise-report-page .bill-table-card th { padding: 13px 16px; font-size: 11px; font-weight: 600; letter-spacing: .03em; }
+  .daywise-report-page .bill-table-card td { padding: 15px 16px; font-size: 12px; line-height: 1.5; vertical-align: middle; }
+  .daywise-report-page .bill-table-card td[rowspan] { vertical-align: top; }
+  .daywise-report-page .bill-table-card td strong { font-weight: 600; }
+  .daywise-report-page .bill-table-card td:first-child small { font-size: 10px; }
+  .daywise-report-page .bill-table-card .amount { font-variant-numeric: tabular-nums; }
+  .daywise-report-page .bill-table-card .amount strong { font-size: 12px; }
+  .daywise-report-page .bill-table-card tfoot td { font-weight: 600; }
+  .daywise-report-page .daywise-bills-card h2 { padding: 17px 16px; font-size: 15px; font-weight: 600; }
+  .daywise-report-page .daywise-bills-card h2 small { font-size: 12px; font-weight: 500; }
+  .daywise-report-page .payment-tags { gap: 6px; }
+  .daywise-report-page .payment-tags span { padding: 4px 8px; font-size: 10px; font-weight: 500; }
+  .daywise-report-page .bill-report-state { padding: 24px 16px; font-size: 13px; line-height: 1.5; }
+  .daywise-report-page .bill-report-state strong { font-weight: 600; }
+}

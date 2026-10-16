@@ -1,0 +1,151 @@
+.upload-excel-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+  color: var(--ink);
+}
+
+.upload-excel-heading h1 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 6px;
+  color: #0f172a;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.upload-excel-heading h1 svg { color: var(--blue); }
+.upload-excel-heading p { margin: 0; color: #64748b; font-size: 13px; line-height: 1.5; }
+
+.upload-excel-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.upload-excel-option {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  padding: 22px 20px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  text-align: left;
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease;
+}
+
+.upload-excel-option:hover { border-color: #c7d2fe; background: #f3f5ff; }
+.upload-excel-icon { display: grid; place-items: center; flex: 0 0 44px; height: 44px; border-radius: 10px; color: var(--blue); background: #eff4ff; }
+.upload-excel-copy { display: grid; gap: 6px; min-width: 0; flex: 1; }
+.upload-excel-copy strong { color: #193454; font-size: 15px; font-weight: 600; }
+.upload-excel-copy > span { color: #64748b; font-size: 12px; line-height: 1.5; }
+.upload-excel-arrow { flex-shrink: 0; color: var(--blue); }
+.upload-excel-page button:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+
+.upload-excel-dialog {
+  width: min(440px, calc(100% - 32px));
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  margin: auto;
+  padding: 24px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: var(--card);
+  color: #193454;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, .25);
+}
+
+.upload-excel-dialog::backdrop { background: rgba(15, 23, 42, .55); backdrop-filter: blur(2px); }
+.upload-excel-dialog-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.upload-excel-dialog h2 { margin: 0; color: #1e293b; font-size: 20px; font-weight: 600; }
+.upload-excel-close-icon { display: grid; place-items: center; flex-shrink: 0; padding: 6px; border: 0; border-radius: 6px; color: #64748b; background: transparent; cursor: pointer; }
+.upload-excel-close-icon:hover { background: #f1f5f9; }
+.upload-excel-dialog p { margin: 16px 0 24px; color: #64748b; font-size: 14px; line-height: 1.6; }
+.upload-excel-dialog-actions { display: flex; justify-content: flex-end; }
+.upload-excel-dialog-actions button { padding: 9px 16px; border: 0; border-radius: 8px; background: var(--blue); color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; }
+.upload-excel-dialog-actions button:hover { background: #2554d4; }
+
+.upload-excel-dialog.csv-upload-success-dialog {
+  width: min(520px, calc(100% - 32px));
+  box-sizing: border-box;
+  padding: 36px 28px;
+  text-align: center;
+  border-radius: 18px;
+}
+.csv-upload-success-icon { display: grid; place-items: center; width: 64px; height: 64px; margin: 0 auto 20px; border-radius: 50%; color: var(--blue); background: #eff4ff; }
+.csv-upload-success-dialog h2 { font-size: 24px; line-height: 1.35; }
+.upload-excel-dialog .csv-upload-preview .csv-upload-success-dialog p { margin: 14px 0 28px; font-size: 14px; line-height: 1.6; }
+.csv-upload-success-dialog .upload-excel-dialog-actions { justify-content: center; }
+.csv-upload-success-dialog .upload-excel-dialog-actions button { min-width: 120px; padding: 11px 24px; font-size: 14px; }
+
+/* Only the instruction document uses the desktop content area. */
+.upload-excel-instruction-dialog {
+  inset: 68px 0 0 222px;
+  width: calc(100% - 270px);
+  max-width: none;
+  max-height: calc(100dvh - 100px);
+}
+
+.upload-excel-instruction-dialog::backdrop { inset: 68px 0 0 222px; }
+.upload-excel-instruction-dialog .upload-excel-dialog-actions { position: sticky; bottom: 0; z-index: 4; margin-top: 16px; padding-top: 12px; background: #fff; }
+
+@media (max-width: 820px) {
+  .upload-excel-instruction-dialog { left: 0; width: calc(100% - 28px); }
+  .upload-excel-instruction-dialog::backdrop { left: 0; }
+}
+
+@media (max-width: 600px) {
+  .upload-excel-instruction-dialog { top: 62px; max-height: calc(100dvh - 90px); }
+  .upload-excel-instruction-dialog::backdrop { top: 62px; }
+}
+
+@media (max-width: 680px) {
+  .upload-excel-options { grid-template-columns: 1fr; }
+  .upload-excel-option { padding: 18px 16px; }
+}
+
+/* Local-only spreadsheet preview. Other option dialogs keep their existing styles. */
+.upload-excel-preview-dialog { inset: 68px 0 0 222px; width: calc(100% - 270px); max-width: none; max-height: calc(100dvh - 100px); color-scheme: light; }
+.upload-excel-preview-dialog::backdrop { inset: 68px 0 0 222px; }
+.csv-upload-preview { display: grid; gap: 14px; margin-bottom: 20px; }
+.csv-upload-preview button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 9px 14px; border: 1px solid var(--blue); border-radius: 8px; background: var(--blue); color: #fff; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.csv-upload-preview button:hover:not(:disabled) { background: #2554d4; }
+.csv-upload-preview .csv-upload-secondary { background: #fff; color: #475569; border-color: #cbd5e1; }
+.csv-upload-preview button:disabled { opacity: .6; cursor: not-allowed; }
+.csv-upload-file-controls { display: flex; flex-wrap: wrap; gap: 10px; }
+.upload-excel-dialog .csv-upload-preview p { margin: 0; font-size: 12px; line-height: 1.5; }
+.csv-upload-filename { overflow-wrap: anywhere; font-size: 13px; }
+.csv-upload-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.csv-upload-summary > div { padding: 12px; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; }
+.csv-upload-summary dt { color: #64748b; font-size: 12px; }
+.csv-upload-summary dd { margin: 5px 0 0; font-size: 18px; font-weight: 600; }
+.upload-excel-dialog .csv-upload-preview .csv-upload-error { color: #b52c32; font-size: 12px; line-height: 1.5; }
+.csv-upload-error ul { margin: 8px 0 0; padding-left: 20px; }
+.csv-upload-warning { color: #9a6200; font-size: 12px; line-height: 1.5; }
+.csv-upload-table-scroll { overflow: auto; max-height: 48dvh; border: 1px solid #e2e8f0; border-radius: 8px; }
+.csv-upload-table-scroll table { border-collapse: collapse; width: max-content; min-width: 100%; font-size: 12px; }
+.csv-upload-table-scroll th { position: sticky; top: 0; z-index: 1; padding: 12px; border-bottom: 1px solid #e2e8f0; background: #f6f9fc; color: #60779c; text-align: left; white-space: nowrap; font-weight: 600; }
+.csv-upload-table-scroll td { padding: 12px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+.csv-upload-original-cell { display: block; min-width: 100px; max-width: 280px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.csv-upload-row-status { min-width: 240px; max-width: 340px; }
+.csv-upload-row-status > div { margin-top: 6px; }
+.csv-upload-pagination { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; font-size: 12px; }
+.csv-upload-import-note { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-size: 12px; color: #64748b; }
+.csv-upload-table-scroll:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+@media (max-width: 820px) {
+  .upload-excel-preview-dialog { left: 0; width: calc(100% - 28px); }
+  .upload-excel-preview-dialog::backdrop { left: 0; }
+}
+
+@media (max-width: 600px) {
+  .upload-excel-preview-dialog { top: 62px; max-height: calc(100dvh - 90px); }
+  .upload-excel-preview-dialog::backdrop { top: 62px; }
+  .csv-upload-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

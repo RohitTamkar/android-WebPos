@@ -1,0 +1,7 @@
+.category-modal.delete-confirmation { margin: auto; padding: 0; max-width: min(440px, calc(100vw - 32px)); color: #334155; }
+.delete-confirmation::backdrop { background: rgba(15, 23, 42, 0.5); backdrop-filter: blur(4px); }
+.delete-confirmation .modal-body { font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+.delete-confirmation-icon { color: #ef4444; }
+.delete-confirmation .delete-confirmation-confirm { background: #dc2626; }
+.delete-confirmation .delete-confirmation-confirm:hover { background: #b91c1c; }
+.delete-confirmation .delete-confirmation-confirm:disabled { background: #dc2626; }

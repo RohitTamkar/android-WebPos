@@ -1,0 +1,9 @@
+.gst-daywise-report-page .bill-report-filters { grid-template-columns: minmax(180px, 240px) auto; }
+.gst-daywise-report-page .bill-filter-buttons button { flex: 0 0 auto; height: 30px; padding: 0 9px; font-size: 9px; }
+.gst-daywise-report-page .bill-filter-buttons svg { width: 12px; height: 12px; }
+.gst-daywise-report-page .bill-filter-buttons button:disabled { opacity: .6; cursor: wait; }
+.gst-daywise-report-page .bill-table-card tbody tr { cursor: default; }
+
+@media (max-width: 600px) {
+  .gst-daywise-report-page .bill-report-filters { grid-template-columns: 1fr; }
+}

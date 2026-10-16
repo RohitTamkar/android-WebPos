@@ -1,0 +1,83 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap');
+
+.crm-login-page {
+  --crm-red: #f12b31;
+  --crm-navy: #12344d;
+  --crm-copy: #536b8d;
+  min-height: 100vh;
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  padding: 52px 24px 38px;
+  color: var(--crm-navy);
+  background: radial-gradient(circle at 12% 6%, rgba(252, 205, 207, .38), transparent 27%), radial-gradient(circle at 95% 95%, rgba(201, 218, 235, .55), transparent 30%), #f8f6f6;
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+}
+
+.login-orbit { position: absolute; width: 280px; height: 280px; border: 1px solid rgba(239, 64, 70, .18); border-radius: 50%; pointer-events: none; }
+.login-orbit-top { top: -164px; left: -190px; }
+.login-orbit-bottom { right: -184px; bottom: -185px; }
+.crm-login-shell { width: min(1120px, 100%); position: relative; z-index: 1; }
+.crm-login-brand { height: 90px; display: flex; align-items: center; gap: 18px; padding-left: 38px; }
+.crm-brand-crop { position: relative; width: 153px; height: 70px; overflow: hidden; display: block; }
+.crm-brand-crop img { position: absolute; width: 205px; max-width: none; top: -14px; left: -30px; }
+.crm-brand-divider { width: 1px; height: 28px; background: #d9dee5; }
+.crm-login-brand strong { color: #506887; font-size: 13px; letter-spacing: .05em; }
+
+.crm-login-card { min-height: 668px; display: grid; grid-template-columns: 1.05fr .95fr; overflow: hidden; border: 1px solid #d8dee4; border-radius: 24px; background: #fff; box-shadow: 0 28px 55px rgba(30, 48, 65, .16); }
+.crm-login-form-panel { min-width: 0; padding: 43px 45px 35px; display: flex; flex-direction: column; }
+.crm-login-heading > span { color: var(--crm-red); font-size: 12px; font-weight: 800; letter-spacing: .09em; }
+.crm-login-heading h1 { margin: 10px 0 4px; color: var(--crm-navy); font-size: clamp(31px, 2.3vw, 39px); line-height: 1.08; letter-spacing: -.04em; }
+.crm-login-heading p { margin: 0; color: var(--crm-copy); font-size: 13px; font-weight: 600; }
+.crm-password-form { padding: 38px 5px 4px; display: grid; }
+.crm-password-form label { margin: 0 0 7px; color: #28465f; font-size: 12px; font-weight: 800; }
+.crm-password-form label:not(:first-child) { margin-top: 16px; }
+.crm-input-wrap { height: 46px; position: relative; display: flex; align-items: center; border: 1px solid #d7dee5; border-radius: 10px; background: #fff; }
+.crm-input-wrap:focus-within { border-color: #f18185; box-shadow: 0 0 0 3px rgba(241,43,49,.08); }
+.crm-input-wrap > svg { width: 17px; margin-left: 13px; color: #7b8da3; }
+.crm-input-wrap input { min-width: 0; flex: 1; height: 100%; padding: 0 12px; border: 0; outline: 0; color: #183750; background: transparent; font: inherit; font-size: 12px; }
+.crm-input-wrap button { width: 42px; height: 100%; display: grid; place-items: center; border: 0; background: transparent; color: #7b8da3; cursor: pointer; }
+.crm-input-wrap button svg { width: 17px; }
+.crm-sign-in-button { height: 44px; margin-top: 21px; border: 0; border-radius: 10px; color: #fff; background: var(--crm-red); font-size: 12px; font-weight: 800; cursor: pointer; box-shadow: 0 9px 18px rgba(241,43,49,.2); }
+.crm-sign-in-button:disabled { cursor: wait; opacity: .7; }
+.crm-form-error { margin: 10px 0 -6px; color: #d6262c; font-size: 11px; font-weight: 700; }
+.crm-demo-hint { margin: 9px 0 0; color: #7d8fa2; font-size: 10px; text-align: center; }
+
+.crm-login-promo { position: relative; overflow: hidden; padding: 44px 44px 30px; background: #f8e1e3; }
+.crm-login-promo::after { content: ''; position: absolute; top: 54px; right: -101px; width: 248px; height: 248px; border: 1px solid rgba(235, 91, 96, .25); border-radius: 50%; }
+.crm-product-pill { position: relative; z-index: 1; display: inline-flex; padding: 8px 13px; border: 1px solid #f4c2c4; border-radius: 999px; color: #d91f26; background: rgba(255,255,255,.68); font-size: 10px; font-weight: 800; letter-spacing: .04em; }
+.crm-login-promo h2 { position: relative; z-index: 1; margin: 20px 0 15px; color: var(--crm-navy); font-size: clamp(31px, 2.45vw, 40px); line-height: 1.08; letter-spacing: -.045em; }
+.crm-login-promo p { position: relative; z-index: 1; margin: 0; color: #526c8a; font-size: 12px; line-height: 1.55; font-weight: 600; }
+.crm-login-promo img { position: absolute; z-index: 1; left: 50%; bottom: 12px; width: 94%; height: 300px; transform: translateX(-50%); object-fit: cover; object-position: center 58%; -webkit-mask-image: radial-gradient(ellipse 78% 78% at center, #000 62%, transparent 100%); mask-image: radial-gradient(ellipse 78% 78% at center, #000 62%, transparent 100%); }
+.crm-login-shell > footer { padding-top: 14px; color: #8295ad; font-size: 9px; font-weight: 600; text-align: center; }
+
+@media (max-width: 900px) {
+  .crm-login-page { padding: 24px 18px; overflow: auto; }
+  .crm-login-brand { height: 76px; padding-left: 10px; }
+  .crm-login-card { grid-template-columns: 1fr; }
+  .crm-login-promo { min-height: 500px; order: -1; }
+  .crm-login-promo img { height: 310px; }
+}
+
+@media (max-width: 600px) {
+  .crm-login-page { display: block; padding: 15px 12px 24px; }
+  .crm-login-brand { height: 68px; padding: 0; gap: 10px; }
+  .crm-brand-crop { width: 132px; transform: scale(.88); transform-origin: left center; }
+  .crm-login-brand strong { margin-left: -16px; font-size: 10px; }
+  .crm-login-card { min-height: 0; border-radius: 18px; }
+  .crm-login-promo { min-height: 390px; padding: 30px 25px; }
+  .crm-login-promo h2 { font-size: 30px; }
+  .crm-login-promo img { bottom: 5px; width: 108%; height: 240px; }
+  .crm-login-form-panel { padding: 32px 22px 25px; }
+  .crm-login-heading h1 { font-size: 32px; }
+  .desktop-only { display: none; }
+}
+
+@media (max-height: 790px) and (min-width: 901px) {
+  .crm-login-page { padding-top: 18px; padding-bottom: 18px; }
+  .crm-login-brand { height: 64px; }
+  .crm-login-card { min-height: 610px; }
+  .crm-login-form-panel { padding-top: 30px; }
+  .crm-login-promo { padding-top: 32px; }
+}
