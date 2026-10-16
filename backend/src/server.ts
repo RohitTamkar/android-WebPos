@@ -94,7 +94,7 @@ app.get("/api/health", (_req: Request, res: Response) => {
   } catch {
     firebase = {
       initialized: false,
-      message: "Configure a valid Firebase service-account file in backend/.env"
+      message: "Configure valid Firebase credentials and testing project isolation on the server"
     };
   }
   res.json({
@@ -166,7 +166,7 @@ app.post("/api/auth/login", async (req: Request, res: Response): Promise<void> =
     console.error("Firebase configuration error:", error);
     res.status(503).json({
       success: false,
-      message: "Firebase credentials are missing or invalid. Configure the service-account file in backend/.env."
+      message: "Firebase credentials or testing isolation are missing or invalid. Check the server configuration."
     });
     return;
   }
