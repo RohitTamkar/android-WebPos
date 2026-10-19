@@ -1,0 +1,22 @@
+.employees-selection { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 20px 0; color: var(--ink); font-size: 13px; }
+.employees-selection select { padding: 9px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--card); color: var(--ink); font: inherit; }
+.employees-selection p { color: var(--muted); }
+.employees-state { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 48px 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--muted); text-align: center; font-size: 13px; }
+.employees-state h2 { font-size: 18px; color: var(--ink); }
+.employees-table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+.employees-table-scroll table { width: 100%; border-collapse: collapse; color: var(--ink); font-size: 13px; }
+.employees-table-scroll th, .employees-table-scroll td { padding: 15px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+.employees-table-scroll th { color: var(--muted); font-size: 11px; font-weight: 600; }
+.employees-table-scroll tr.selected { background: color-mix(in srgb, var(--blue) 8%, var(--card)); }
+.employees-table-scroll input { accent-color: var(--blue); }
+.employees-notice { margin-bottom: 16px; color: var(--green); font-size: 13px; }
+.category-modal.employee-form-page { width: 100%; max-width: none; min-height: calc(100dvh - 132px); background: var(--card); }
+.employee-form-page > form { display: flex; flex-direction: column; min-height: inherit; }
+.employee-form-page .modal-footer { margin-top: auto; }
+.employee-form-page .employees-form-fields { align-content: start; }
+.employees-form-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin: 0; padding: 24px; border: 0; min-width: 0; }
+.employees-form-fields .form-field { min-width: 0; margin: 0; }
+.employees-form-fields input, .employees-form-fields select { width: 100%; min-width: 0; }
+.employees-save-error { padding: 0 24px 16px; color: var(--red); font-size: 13px; }
+@media (max-width: 820px) { .category-modal.employee-form-page { min-height: calc(100dvh - 98px); } }
+@media (max-width: 680px) { .employees-form-fields { grid-template-columns: minmax(0, 1fr); padding: 18px; } }

@@ -13,6 +13,31 @@
 .daywise-report-page tfoot td { border-top: 2px solid #e2e7eb; color: #173b53; background: #f6f8fa; font-weight: 800; }
 .daywise-report-page tfoot td:first-child { display: table-cell; }
 
+@media print {
+  .daywise-report-page { width: 100%; min-width: 0; }
+  .daywise-report-page .bill-table-card { min-height: 0; overflow: visible; border-radius: 0; }
+  .daywise-report-page .bill-table-scroll { overflow: visible; }
+  .daywise-report-page .bill-table-card table { width: 100%; min-width: 0; table-layout: fixed; }
+  .daywise-report-page .bill-table-card th,
+  .daywise-report-page .bill-table-card td { padding: 6px 3px; font-size: 8px; white-space: normal; overflow-wrap: anywhere; }
+  .daywise-report-page .bill-table-card td:first-child { display: table-cell; }
+  .daywise-report-page .bill-table-card td:first-child small { display: block; margin-top: 3px; }
+  .daywise-report-page .bill-table-card .amount strong { font-size: 8px; }
+  .daywise-report-page .payment-tags { flex-wrap: wrap; gap: 2px; }
+  .daywise-report-page .payment-tags span { padding: 2px; font-size: 8px; }
+  .daywise-report-page .daywise-bills-card th:nth-child(1) { width: 12%; }
+  .daywise-report-page .daywise-bills-card th:nth-child(2) { width: 14%; }
+  .daywise-report-page .daywise-bills-card th:nth-child(3) { width: 12%; }
+  .daywise-report-page .daywise-bills-card th:nth-child(4) { width: 26%; }
+  .daywise-report-page .daywise-bills-card th:nth-child(5) { width: 5%; }
+  .daywise-report-page .daywise-bills-card th:nth-child(6) { width: 9%; }
+  .daywise-report-page .daywise-bills-card th:nth-child(7),
+  .daywise-report-page .daywise-bills-card th:nth-child(8) { width: 11%; }
+  .daywise-report-page thead { display: table-header-group; }
+  .daywise-report-page tfoot { display: table-row-group; }
+  .daywise-report-page tr { break-inside: avoid; }
+}
+
 @media (max-width: 600px) {
   .daywise-report-page .bill-report-filters { grid-template-columns: 1fr; }
 }

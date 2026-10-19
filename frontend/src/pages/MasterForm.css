@@ -1,0 +1,62 @@
+/* Shared presentation for the full-page customer and employee forms. */
+.category-modal.master-form-page {
+  border-color: var(--line);
+  border-radius: 16px;
+  color: var(--ink);
+  box-shadow: 0 4px 20px rgba(20, 39, 65, .045);
+}
+.master-form-page .master-form-header {
+  gap: 20px;
+  padding: 26px 32px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(110deg, color-mix(in srgb, var(--blue) 4%, var(--card)), var(--card) 70%);
+}
+.master-form-title { display: flex; align-items: center; gap: 16px; min-width: 0; }
+.master-form-icon { display: grid; place-items: center; flex: 0 0 48px; width: 48px; height: 48px; border: 1px solid color-mix(in srgb, var(--blue) 14%, var(--line)); border-radius: 14px; background: color-mix(in srgb, var(--blue) 9%, var(--card)); color: var(--blue); }
+.master-form-page .master-form-title h3 { margin: 0; color: var(--ink); font-size: 22px; line-height: 1.3; letter-spacing: -.025em; }
+.master-form-title p { margin: 6px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.master-form-page .modal-close-btn { align-self: flex-start; justify-content: center; width: 34px; height: 34px; flex-shrink: 0; border: 1px solid var(--line); border-radius: 10px; color: var(--muted); }
+.master-form-page .modal-close-btn:hover { background: var(--workspace); color: var(--ink); }
+.master-form-page .modal-close-btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+.master-form-page :is(.customer-form-fields, .employees-form-fields) { width: 100%; margin: 0 auto; padding: 30px 32px 36px; gap: 22px; }
+.master-form-page .customer-form-fields { max-width: 860px; }
+.master-form-page .employees-form-fields { max-width: 1100px; }
+.master-form-section-heading { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; margin: 14px 0 0; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.master-form-section-heading:first-child { margin-top: 0; }
+.master-form-section-heading > span { display: grid; place-items: center; width: 28px; height: 28px; flex-shrink: 0; border-radius: 8px; background: color-mix(in srgb, var(--blue) 8%, var(--card)); color: var(--blue); font-size: 11px; font-weight: 700; }
+.master-form-section-heading h4 { margin: 0; color: var(--ink); font-size: 14px; font-weight: 650; line-height: 1.4; }
+.master-form-page .form-field { gap: 9px; }
+.master-form-page .form-field label { color: var(--ink); font-size: 13px; font-weight: 600; line-height: 1.4; }
+.master-form-page .form-field :is(input:not([type=checkbox]), textarea, select) {
+  min-height: 46px;
+  padding: 11px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--workspace) 24%, var(--card));
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  transition: border-color .15s, box-shadow .15s;
+}
+.master-form-page .form-field textarea { min-height: 100px; }
+.master-form-page .form-field input::placeholder, .master-form-page .form-field textarea::placeholder { color: var(--muted); opacity: .8; }
+.master-form-page .form-field :is(input, textarea, select):focus-visible { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 12%, transparent); }
+.master-form-page .report-date-trigger { height: 46px; border-radius: 10px; border-color: var(--line); background: color-mix(in srgb, var(--workspace) 24%, var(--card)); font-size: 14px; }
+.master-form-page .customer-credit-option { gap: 6px; padding: 18px; border: 1px solid color-mix(in srgb, var(--blue) 18%, var(--line)); border-radius: 12px; background: color-mix(in srgb, var(--blue) 4%, var(--card)); }
+.master-form-page .customer-credit-checkbox input { width: 18px; height: 18px; margin: 0; }
+.customer-credit-option small { margin-left: 28px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.master-form-page .modal-footer { gap: 12px; padding: 20px 32px; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--workspace) 55%, var(--card)); }
+.master-form-page .modal-footer button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 11px 20px; border-radius: 10px; font-size: 13px; font-weight: 600; }
+.master-form-page .modal-footer button:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+.master-form-page .modal-footer .btn-primary-add { min-width: 145px; box-shadow: 0 3px 8px color-mix(in srgb, var(--blue) 18%, transparent); }
+@media (max-width: 680px) {
+  .master-form-page .master-form-header { padding: 22px 18px; gap: 12px; }
+  .master-form-title { gap: 12px; align-items: flex-start; }
+  .master-form-icon { width: 40px; height: 40px; flex-basis: 40px; border-radius: 11px; }
+  .master-form-page .master-form-title h3 { font-size: 20px; }
+  .master-form-title p { font-size: 12px; }
+  .master-form-page :is(.customer-form-fields, .employees-form-fields) { padding: 24px 18px; gap: 20px; }
+  .master-form-page .modal-footer { padding: 18px; }
+  .master-form-page .modal-footer button { flex: 1; min-width: 0; }
+}

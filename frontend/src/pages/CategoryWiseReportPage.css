@@ -5,6 +5,23 @@
 .category-share small { min-width: 38px; color: #65798b; font-size: 9px; font-weight: 800; text-align: right; }
 .category-report-page tfoot td { border-top: 2px solid #e2e7eb; color: #173b53; background: #f6f8fa; font-weight: 800; }
 .category-report-page tfoot td:first-child { display: table-cell; }
+.category-report-page .category-summary-row { background: #f6f8fa; }
+.category-expand-button { display: inline-flex; align-items: center; gap: 6px; padding: 0; border: 0; color: inherit; background: transparent; font: inherit; text-align: left; cursor: pointer; }
+.category-expand-button svg { width: 14px; height: 14px; flex-shrink: 0; transform: rotate(-90deg); }
+.category-expand-button[aria-expanded="true"] svg { transform: rotate(0); }
+@media screen {
+  .category-report-page .category-product-collapsed { display: none; }
+}
+.category-report-page .category-product-row { cursor: default; }
+.category-report-page .category-product-row:hover { background: #fff; }
+.category-report-page .category-product-row td:first-child { display: table-cell; white-space: normal; }
+.category-product-name { display: block; padding-left: 18px; border-left: 2px solid #dce3e9; }
+
+@media print {
+  .category-expand-button svg { display: none; }
+  .category-report-page .category-summary-row { break-after: avoid; }
+  .category-report-page .category-product-row { break-inside: avoid; }
+}
 
 .category-report-page .category-product-search-filters { grid-template-columns: repeat(3, minmax(0, 1fr)) auto; }
 .category-report-page .category-product-search-filters .bill-search-filter { grid-column: auto; }

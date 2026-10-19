@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
+import { createRequestId } from '../utils/requestId.ts';
 import { productFormErrors, productFormPayload, productDraftFromFields, productUpdatePayload, type ProductDraft } from './productForm.ts';
 import './CategoryPage.css';
 import './AddProductForm.css';
@@ -16,7 +17,7 @@ interface Props {
 export function AddProductForm({ outletId, token, initialCategory, onCancel, onCreated, onSessionExpired, product }: Props) {
   const nameRef = useRef<HTMLInputElement>(null);
   const savingRef = useRef(false);
-  const [requestId] = useState(() => crypto.randomUUID());
+  const [requestId] = useState(createRequestId);
   const [options, setOptions] = useState<Options | null>(null);
   const originalDraft = useRef(product ? productDraftFromFields(product.fields) : null);
   const [draft, setDraft] = useState<ProductDraft>(product ? productDraftFromFields(product.fields) : { name: '', price: '', mrpPrice: '0', costPrice: '0',
@@ -52,7 +53,7 @@ export function AddProductForm({ outletId, token, initialCategory, onCancel, onC
           setDraft(originalDraft.current);
         } else setDraft(current => ({ ...current,
           taxIndex: current.taxIndex || (config.taxes.length === 1 ? String(config.taxes[0]!.index) : ''),
-          unitId: current.unitId || (config.units.length === 1 ? String(config.units[0]!.id) : ''),
+          unitId: current.unitId || (config.units.some(unit => unit.id === 2) ? '2' : config.units.length === 1 ? String(config.units[0]!.id) : ''),
         }));
         nameRef.current?.focus();
       } catch (error) { if (!controller.signal.aborted) setError((error as Error).message); }

@@ -1,0 +1,19 @@
+.user-account-page { max-width: 760px; color: var(--ink); }
+.user-account-heading > span { color: var(--red); font-size: 11px; font-weight: 600; letter-spacing: .1em; }
+.user-account-heading h1 { margin: 8px 0 7px; font-size: 26px; font-weight: 700; letter-spacing: -.02em; }
+.user-account-heading p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.user-account-card { margin-top: 20px; padding: 24px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); box-shadow: 0 2px 8px rgba(29,50,69,.05); }
+.user-account-card h2 { display: flex; align-items: center; gap: 10px; margin: 0 0 24px; font-size: 16px; }
+.user-account-card fieldset { display: grid; gap: 20px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.user-account-card label { display: grid; gap: 8px; min-width: 0; font-size: 13px; font-weight: 600; }
+.user-account-card input { width: 100%; min-width: 0; padding: 11px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--card); color: var(--ink); font: inherit; font-weight: 400; }
+.user-account-card input:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.user-account-card input[readonly] { color: var(--muted); }
+.user-account-card small { color: var(--muted); font-size: 12px; line-height: 1.5; font-weight: 400; }
+.user-account-actions { display: flex; justify-content: flex-end; margin-top: 24px; }
+.user-account-card button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 11px 16px; border: 0; border-radius: 8px; background: var(--red); color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; }
+.user-account-card button:disabled { opacity: .55; cursor: default; }
+.user-account-state { display: grid; justify-items: start; gap: 16px; color: var(--muted); font-size: 13px; }
+.user-account-error, .user-account-state [role=alert] { margin-top: 16px; color: var(--red); font-size: 13px; }
+.user-account-success { margin-top: 16px; color: var(--green); font-size: 13px; }
+@media (max-width: 680px) { .user-account-card { padding: 18px; } .user-account-actions button { width: 100%; } }

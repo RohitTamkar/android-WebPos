@@ -4,6 +4,11 @@ export const PRODUCT_COLUMNS = [
   'Unit Type', 'Stock', 'Weightable', 'Search Code',
 ] as const;
 
+export const PREMISES_PRODUCT_COLUMNS = [...PRODUCT_COLUMNS, 'Premises'] as const;
+export const PREMISES_TEMPLATE_COLUMNS = [...PRODUCT_COLUMNS, 'Premises 1', 'Premises 2', 'Premises 3'] as const;
+export type ProductUploadMode = 'standard' | 'premises';
+export const PREMISES_IMPORT_LIMITATION = 'Premises prices can be previewed, but saving is unavailable until the price columns are mapped to the outlet’s configured premises. No premises prices will be saved.';
+
 export const MAX_FILE_BYTES = 5 * 1024 * 1024;
 export const MAX_PRODUCT_ROWS = 10000;
 const MAX_CELL_LENGTH = 20000;
@@ -33,14 +38,15 @@ export interface CsvPreview {
   rows: PreviewRow[];
 }
 
-export function fileSelectionError(name: string, size: number): string | null {
-  if (!/\.(csv|tsv)$/i.test(name)) return 'Select a CSV (.csv) or tab-separated (.tsv) file. XLS and XLSX are not supported in this phase.';
+export function fileSelectionError(name: string, size: number, mode: ProductUploadMode = 'standard'): string | null {
+  if (mode === 'premises' && !/\.(csv|tsv|xlsx)$/i.test(name)) return 'Select an XLSX, CSV or TSV premises file. XLS is not supported.';
+  if (mode === 'standard' && !/\.(csv|tsv)$/i.test(name)) return 'Select a CSV (.csv) or tab-separated (.tsv) file. XLS and XLSX are not supported in this phase.';
   if (size > MAX_FILE_BYTES) return 'The file exceeds the 5 MB limit.';
   if (size === 0) return 'The selected file is empty.';
   return null;
 }
 
-function detectDelimiter(text: string): string {
+function detectDelimiter(text: string, columnCount: number): string {
   const candidates = [',', '\t', ';'];
   const counts = candidates.map(() => 0);
   let quoted = false;
@@ -58,12 +64,12 @@ function detectDelimiter(text: string): string {
       if (candidate >= 0) counts[candidate] = (counts[candidate] ?? 0) + 1;
     }
   }
-  const exact = counts.indexOf(PRODUCT_COLUMNS.length - 1);
+  const exact = counts.indexOf(columnCount - 1);
   const index = exact >= 0 ? exact : counts.indexOf(Math.max(...counts));
   return candidates[index] ?? ',';
 }
 
-function readRecords(text: string, delimiter: string): string[][] {
+function readRecords(text: string, delimiter: string, columnCount: number): string[][] {
   const records: string[][] = [];
   let record: string[] = [];
   let cell = '';
@@ -73,7 +79,7 @@ function readRecords(text: string, delimiter: string): string[][] {
 
   const finishCell = () => {
     record.push(cell);
-    if (record.length > 100) throw new Error('The file contains more than 100 columns. Use the 14-column product format.');
+    if (record.length > 100) throw new Error(`The file contains more than 100 columns. Use the ${columnCount}-column product format.`);
     cell = '';
     afterQuote = false;
   };
@@ -115,14 +121,24 @@ function readRecords(text: string, delimiter: string): string[][] {
   return records;
 }
 
-export function parseProductCsv(source: string): CsvPreview {
+export function parseProductCsv(source: string, mode: ProductUploadMode = 'standard'): CsvPreview {
+  let expectedColumns: readonly string[] = mode === 'premises' ? PREMISES_PRODUCT_COLUMNS : PRODUCT_COLUMNS;
   const text = source.replace(/^\uFEFF/, '');
   if (!text) throw new Error('The selected file is empty or contains only blank rows.');
   if (new TextEncoder().encode(text).length > MAX_FILE_BYTES) throw new Error('The file exceeds the 5 MB limit.');
-  const delimiter = detectDelimiter(text);
-  const records = readRecords(text, delimiter);
+  const delimiter = detectDelimiter(text, expectedColumns.length);
+  const records = readRecords(text, delimiter, expectedColumns.length);
   const first = records.findIndex(record => record.some(cell => cell.trim()));
   const headers = first >= 0 ? records[first]! : [];
+  const normalizeHeader = (header: string) => header.trim().replace(/\s+/gu, ' ').toLowerCase();
+  const premisesHeaders = headers.slice(PRODUCT_COLUMNS.length);
+  const numberedPremises = mode === 'premises' && premisesHeaders.length > 0
+    && premisesHeaders.every((header, index) => {
+      const match = /^premises?\s*([1-9]\d*)$/i.exec(normalizeHeader(header));
+      return match && Number(match[1]) === index + 1;
+    });
+  if (numberedPremises) expectedColumns = [...PRODUCT_COLUMNS, ...premisesHeaders.map((_, index) => `Premises ${index + 1}`)];
+
   // Check original parsed data before trimming, skipping blank rows or validating.
   // Required header labels are exempt; separators and CSV quoting are already parsed.
   for (let recordIndex = 0; recordIndex < records.length; recordIndex++) {
@@ -130,12 +146,16 @@ export function parseProductCsv(source: string): CsvPreview {
     const cells = records[recordIndex]!;
     for (let columnIndex = 0; columnIndex < cells.length; columnIndex++) {
       const cell = cells[columnIndex]!;
+      const contentStart = cell.length - cell.trimStart().length;
+      const contentEnd = cell.trimEnd().length;
       for (let characterIndex = 0; characterIndex < cell.length; characterIndex++) {
         const character = cell[characterIndex]!;
         const whitespace = /\s/u.test(character);
-        // Ordinary internal spaces are part of names, not prohibited content.
-        // Keep the original value; edge spaces and other whitespace stay restricted.
-        if (character === ' ' && NAME_COLUMNS.includes(columnIndex) && characterIndex > 0 && characterIndex < cell.length - 1) continue;
+        // Preserve original preview cells, allowing padding and ordinary name spaces.
+        if (whitespace && (characterIndex < contentStart || characterIndex >= contentEnd)) continue;
+        if (character === ' ' && (NAME_COLUMNS.includes(columnIndex) || mode === 'premises' && columnIndex >= PRODUCT_COLUMNS.length)) continue;
+        // Numbered premises columns contain prices; decimal points are valid there.
+        if (numberedPremises && columnIndex >= PRODUCT_COLUMNS.length && character === '.' && NUMBER_PATTERN.test(cell.trim())) continue;
         if (!whitespace && !PROHIBITED_CELL_CHARACTERS.has(character)) continue;
         const codePoint = `U+${character.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}`;
         const label = whitespace ? `whitespace (${codePoint})` : `prohibited character ${JSON.stringify(character)}`;
@@ -145,17 +165,24 @@ export function parseProductCsv(source: string): CsvPreview {
     }
   }
   if (first < 0) throw new Error('The selected file contains only blank rows.');
-  const trimmed = headers.map(header => header.trim());
+  const trimmed = headers.map(header => {
+    let normalized = normalizeHeader(header);
+    if (numberedPremises) normalized = normalized.replace(/^premises?\s*(\d+)$/, 'premises $1');
+    return expectedColumns.find(column => column.toLowerCase() === normalized) ?? header.trim();
+  });
   const headerErrors: string[] = [];
-  const missing = PRODUCT_COLUMNS.filter(column => !trimmed.includes(column));
-  const unexpected = trimmed.filter(header => !PRODUCT_COLUMNS.some(column => column === header));
+  if (mode === 'premises' && premisesHeaders.length > 1 && !numberedPremises) {
+    headerErrors.push('After Search Code, use Premises 1, Premises 2, Premises 3, and further columns in numbered order.');
+  }
+  const missing = expectedColumns.filter(column => !trimmed.includes(column));
+  const unexpected = trimmed.filter(header => !expectedColumns.some(column => column === header));
   const duplicate = [...new Set(trimmed.filter((header, index) => trimmed.indexOf(header) !== index))];
   if (missing.length) headerErrors.push(`Missing headers: ${missing.join(', ')}.`);
   if (unexpected.length) headerErrors.push(`Unexpected headers: ${unexpected.map(header => header || '(blank)').join(', ')}.`);
   if (duplicate.length) headerErrors.push(`Duplicate headers: ${duplicate.map(header => header || '(blank)').join(', ')}.`);
-  if (trimmed.length !== PRODUCT_COLUMNS.length) headerErrors.push(`Expected 14 headers; found ${trimmed.length}.`);
-  if (!missing.length && !unexpected.length && !duplicate.length && trimmed.some((header, index) => header !== PRODUCT_COLUMNS[index])) {
-    headerErrors.push('Headers are reordered. Use the exact 14-column order shown in Excel Sheet Instructions.');
+  if (trimmed.length !== expectedColumns.length) headerErrors.push(`Expected ${expectedColumns.length} headers; found ${trimmed.length}.`);
+  if (!missing.length && !unexpected.length && !duplicate.length && trimmed.some((header, index) => header !== expectedColumns[index])) {
+    headerErrors.push(`Headers are reordered. Use the exact ${expectedColumns.length}-column template order.`);
   }
 
   let blankRows = first;
@@ -168,18 +195,38 @@ export function parseProductCsv(source: string): CsvPreview {
     if (headerErrors.length) {
       row.errors.push({ column: 'Headers', message: 'Fix the header errors before column validation can run. Original cells are shown without remapping.' });
     } else {
-      if (cells.length !== PRODUCT_COLUMNS.length) row.errors.push({ column: 'Row structure', message: `Expected 14 cells; found ${cells.length}.` });
+      if (cells.length !== expectedColumns.length) row.errors.push({ column: 'Row structure', message: `Expected ${expectedColumns.length} cells; found ${cells.length}.` });
       if (!cells[0]?.trim()) row.errors.push({ column: 'Product Name', message: 'Product Name must not be blank.' });
       for (const columnIndex of NUMERIC_COLUMNS) {
         const value = cells[columnIndex]?.trim() ?? '';
         const column = PRODUCT_COLUMNS[columnIndex]!;
-        if (!value) row.warnings.push({ column, message: 'Blank numeric cell; its required-value rule is not confirmed.' });
+        if (!value) {
+          if (mode === 'premises') row.errors.push({ column, message: 'A numeric value is required.' });
+          else row.warnings.push({ column, message: 'Blank numeric cell; its required-value rule is not confirmed.' });
+        }
         else if (!NUMBER_PATTERN.test(value) || !Number.isFinite(Number(value))) {
           row.errors.push({ column, message: 'Enter a finite decimal number; invalid values are not converted to zero.' });
         }
       }
       const weightable = cells[12]?.trim().toLowerCase() ?? '';
       if (weightable && weightable !== 'yes' && weightable !== 'no') row.errors.push({ column: 'Weightable', message: 'Use the source yes/no format.' });
+      if (mode === 'premises') {
+        if (Number(cells[2]) !== Number(cells[3])) row.errors.push({ column: 'Price 1', message: 'Price 1 must equal Default Price.' });
+        if (cells[10]?.trim() !== 'number') row.errors.push({ column: 'Unit Type', message: 'Product imports currently support only number.' });
+        if (Number(cells[11]) !== 0) row.errors.push({ column: 'Stock', message: 'Only zero opening stock is supported.' });
+        if (!weightable) row.errors.push({ column: 'Weightable', message: 'Use YES or NO.' });
+        if (!cells[6]?.trim()) row.errors.push({ column: 'Category Name', message: 'Category Name is required.' });
+        for (let column = PRODUCT_COLUMNS.length; column < expectedColumns.length; column++) {
+          const premises = cells[column]?.trim() ?? '';
+          const label = expectedColumns[column]!;
+          if (!premises) row.errors.push({ column: label, message: `${label} must not be blank.` });
+          else if (numberedPremises && (!NUMBER_PATTERN.test(premises) || !Number.isFinite(Number(premises)) || Number(premises) < 0)) {
+            row.errors.push({ column: label, message: 'Enter a finite, non-negative selling price for this premises.' });
+          } else row.warnings.push({ column: label, message: numberedPremises
+            ? `Cannot map selling price ${JSON.stringify(premises)} in ${label} to a configured premises. Confirmation is disabled.`
+            : `Cannot verify premises ${JSON.stringify(premises)} for this outlet: no premises lookup is available. Confirmation is disabled.` });
+        }
+      }
       cells.forEach((value, columnIndex) => {
         if (/^[=+@]/.test(value.trim()) && !NUMERIC_COLUMNS.includes(columnIndex)) {
           row.warnings.push({ column: PRODUCT_COLUMNS[columnIndex] ?? `Extra column ${columnIndex + 1}`, message: 'Formula-like content is displayed as text and is never evaluated.' });

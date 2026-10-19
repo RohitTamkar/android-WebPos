@@ -1,0 +1,18 @@
+.category-modal.customer-form-page { width: 100%; max-width: none; min-height: calc(100dvh - 132px); background: var(--card); }
+.customer-form-page > form { display: flex; flex-direction: column; min-height: inherit; }
+.customer-form-page .modal-footer { margin-top: auto; }
+.customer-form-fields { display: flex; flex-direction: column; gap: 18px; margin: 0; padding: 24px; border: 0; min-width: 0; }
+.customer-form-fields .form-field { margin: 0; min-width: 0; }
+.customer-form-fields input:not([type=checkbox]), .customer-form-fields textarea { width: 100%; min-width: 0; }
+.customer-form-fields .customer-credit-checkbox { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.customer-credit-checkbox input { width: 16px; height: 16px; accent-color: var(--blue); }
+.customer-state { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 48px 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--muted); font-size: 13px; text-align: center; }
+.customer-state h2 { color: var(--ink); font-size: 18px; }
+.customer-notice { color: var(--green); font-size: 13px; }
+.customer-save-error { padding: 0 24px 16px; color: var(--red); font-size: 13px; }
+.customers-table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+.customers-table-scroll table { width: 100%; border-collapse: collapse; color: var(--ink); font-size: 13px; }
+.customers-table-scroll th, .customers-table-scroll td { padding: 15px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+.customers-table-scroll th { color: var(--muted); font-size: 11px; font-weight: 600; }
+@media (max-width: 820px) { .category-modal.customer-form-page { min-height: calc(100dvh - 98px); } }
+@media (max-width: 680px) { .customer-form-fields { padding: 18px; } }

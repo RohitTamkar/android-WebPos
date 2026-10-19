@@ -200,7 +200,7 @@ export const ShiftSummaryReportPage = ({ outlet, token, onSessionExpired, report
   return (
     <section className="bill-report-page shift-report-page">
       <div className="bill-report-heading">
-        <div><span>REPORTS</span><h1>Shift Summary Report</h1><p>{outlet.name} · Shift-wise sales by day ID.</p></div>
+        <div><strong className="report-print-shop-name">{outlet.name}</strong><span>REPORTS</span><h1>Shift Summary Report</h1><p>{outlet.name} · Shift-wise sales by day ID.</p></div>
         <div className="bill-report-actions">
           <button type="button" onClick={exportExcel} disabled={!report?.shifts.length}><Download /> Export Excel</button>
           <button type="button" onClick={() => window.print()}><Printer /> Print / PDF</button>
@@ -208,9 +208,9 @@ export const ShiftSummaryReportPage = ({ outlet, token, onSessionExpired, report
       </div>
 
       <div className="bill-report-filters">
-        <label><span>From date</span><ReportDateInput aria-label="From date" value={filters.startDate} onChange={event => setFilters(current => ({ ...current, startDate: event.target.value, dayId: '' }))} /></label>
-        <label><span>To date</span><ReportDateInput aria-label="To date" value={filters.endDate} onChange={event => setFilters(current => ({ ...current, endDate: event.target.value, dayId: '' }))} /></label>
-        <label><span>Day ID</span><ReportDateInput aria-label="Day ID" value={filters.dayId} onChange={event => setFilters(current => ({ ...current, dayId: event.target.value }))} /></label>
+        <label><span>From date</span><ReportDateInput aria-label="From date" value={filters.startDate} onChange={value => setFilters(current => ({ ...current, startDate: value, dayId: '' }))} /></label>
+        <label><span>To date</span><ReportDateInput aria-label="To date" value={filters.endDate} onChange={value => setFilters(current => ({ ...current, endDate: value, dayId: '' }))} /></label>
+        <label><span>Day ID</span><ReportDateInput aria-label="Day ID" value={filters.dayId} onChange={value => setFilters(current => ({ ...current, dayId: value }))} /></label>
         <label><span>Shift No.</span><input type="number" min="1" value={filters.shiftNo} onChange={event => setFilters(current => ({ ...current, shiftNo: event.target.value }))} onKeyDown={event => { if (event.key === 'Enter') applyFilters(); }} placeholder="All shifts" /></label>
         <label><span>Device ID</span><input value={filters.deviceId} onChange={event => setFilters(current => ({ ...current, deviceId: event.target.value }))} onKeyDown={event => { if (event.key === 'Enter') applyFilters(); }} placeholder="All devices" /></label>
         <div className="bill-filter-buttons"><button type="button" className="apply" onClick={applyFilters}><Filter /> Apply</button><button type="button" onClick={resetFilters}><X /> Reset</button></div>

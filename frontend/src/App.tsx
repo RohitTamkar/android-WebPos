@@ -1,8 +1,17 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useWebUsage } from './utils/useWebUsage.ts';
 import { LoginPage, type UserSession } from './pages/LoginPage.tsx';
 import { OutletSelectionPage, type OutletSummary } from './pages/OutletSelectionPage.tsx';
 import { CategoryPage } from './pages/CategoryPage.tsx';
 import { ReportDateInput } from './pages/ReportDateInput.tsx';
+import { ProfileMenu } from './pages/ProfileMenu.tsx';
+import { EmployeesPage } from './pages/EmployeesPage.tsx';
+import { CustomersPage } from './pages/CustomersPage.tsx';
+import { DevicesPage } from './pages/DevicesPage.tsx';
+import { BroadcastPage } from './pages/BroadcastPage.tsx';
+import { TransferPreviewPage } from './pages/TransferPreviewPage.tsx';
+import { MulticounterPage } from './pages/MulticounterPage.tsx';
+import { UserAccountPage } from './pages/UserAccountPage.tsx';
 import { ProductsPage } from './pages/ProductsPage.tsx';
 import { UploadExcelPage } from './pages/UploadExcelPage.tsx';
 import { BillWiseReportPage } from './pages/BillWiseReportPage.tsx';
@@ -16,14 +25,16 @@ import { StockReportPage } from './pages/StockReportPage.tsx';
 import { StockInOutReportPage } from './pages/StockInOutReportPage.tsx';
 import { StockTransferReportPage } from './pages/StockTransferReportPage.tsx';
 import {
-  Accessibility, BadgeIndianRupee, Banknote, Bell, Bot, Calculator,
+  Accessibility, BadgeIndianRupee, Banknote, Bot, Calculator, Download,
   CalendarCheck, CalendarDays, ChevronDown, CircleHelp, ClipboardCheck,
   ClipboardList, ContactRound, CreditCard, Database, Gauge, Home,
   LayoutDashboard, LogOut, Menu, MessageSquareText, Monitor, Package, Radio, ReceiptText,
-  PackageSearch, RefreshCw, ShoppingCart, SlidersHorizontal, Store, TrendingUp, Upload,
+  PackageSearch, RefreshCw, SlidersHorizontal, Store, TrendingUp, Upload,
   UserRoundCog, Users, UsersRound, WalletCards, X,
 } from 'lucide-react';
+import { downloadDashboardExcel, type ShiftDashboardData } from './utils/dashboardExcel.ts';
 import './App.css';
+import './Theme.css';
 
 function Sparkline({ tone = 'cyan', compact = false }: { tone?: 'cyan' | 'green' | 'muted'; compact?: boolean }) {
   return (
@@ -87,43 +98,6 @@ function LogoutConfirmation({ onCancel, onConfirm }: { onCancel: () => void; onC
   );
 }
 
-interface ShiftDashboardData {
-  id: string;
-  dayId: string;
-  shiftNo: number;
-  inActive: boolean;
-  startTime: number;
-  endTime: number;
-  startBillNo: string;
-  lastBillNo: string;
-  lastBillTime: number;
-  billCount: number;
-  billDeletesNumber: number;
-  billDeletesAmount: number;
-  openingAmt: number;
-  totalSale: number;
-  cashSale: number;
-  digitalSale: number;
-  creditSale: number;
-  subTotalBill: number;
-  discount: number;
-  tax: number;
-  gstTotal: number;
-  vatTotal: number;
-  refundAmount: number;
-  extraCharges: number;
-  serviceChargeAmount: number;
-  roundOff: number;
-  expensesAmtTotal: number;
-  expCash: number;
-  expDigital: number;
-  advanceAmtTotal: number;
-  customerReceiveAmtTotal: number;
-  receiveAmtTotal: number;
-  swiggyTotal: number;
-  zomatoTotal: number;
-  payments: Record<string, number>;
-}
 
 function localDayId(): string {
   const now = new Date();
@@ -146,6 +120,10 @@ export default function App() {
   const [activeNavigation, setActiveNavigation] = useState({ id: 'Home:Dashboard', label: 'Dashboard' });
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [clock, setClock] = useState('16:45:21');
+  const [darkMode, setDarkMode] = useState(() => {
+    try { return localStorage.getItem('pos_theme') === 'dark'; }
+    catch { return false; }
+  });
   const [session, setSession] = useState<UserSession | null>(() => {
     const saved = localStorage.getItem('pos_user_session');
     if (!saved) return null;
@@ -166,11 +144,17 @@ export default function App() {
     if (!saved) return null;
     try { return JSON.parse(saved) as OutletSummary; } catch { return null; }
   });
+  const usage = useWebUsage(session?.token, selectedOutlet?.id);
+  const releaseUsage = usage.release;
   const [dashboardData, setDashboardData] = useState<ShiftDashboardData | null>(null);
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [dashboardError, setDashboardError] = useState('');
   const [dashboardReloadKey, setDashboardReloadKey] = useState(0);
   const [dashboardDay, setDashboardDay] = useState(localDayId);
+  const [selectedShiftId, setSelectedShiftId] = useState<string>('all');
+  const [dashboardExporting, setDashboardExporting] = useState(false);
+  const [dashboardExportError, setDashboardExportError] = useState('');
+  const dashboardExportBusy = useRef(false);
   const [logoutConfirmationOpen, setLogoutConfirmationOpen] = useState(false);
 
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
@@ -189,6 +173,12 @@ export default function App() {
   };
 
   useEffect(() => {
+    document.documentElement.dataset.theme = darkMode ? 'dark' : 'light';
+    try { localStorage.setItem('pos_theme', darkMode ? 'dark' : 'light'); }
+    catch { /* The theme still works when browser storage is unavailable. */ }
+  }, [darkMode]);
+
+  useEffect(() => {
     const updateClock = () => setClock(new Date().toLocaleTimeString('en-GB', { hour12: false }));
     updateClock();
     const timer = window.setInterval(updateClock, 1000);
@@ -199,20 +189,31 @@ export default function App() {
     setSession(user);
     setSelectedOutlet(null);
     setDashboardData(null);
+    setSelectedShiftId('all');
     setDashboardError('');
     localStorage.setItem('pos_user_session', JSON.stringify(user));
     localStorage.removeItem('pos_selected_outlet');
   }, []);
 
+  const handleAccountSaved = (details: { name: string | null; email: string | null }) => {
+    if (!session) return;
+    const updated = { ...session, ...(details.name !== null ? { name: details.name } : {}),
+      ...(details.email !== null ? { email: details.email } : {}) };
+    setSession(updated);
+    localStorage.setItem('pos_user_session', JSON.stringify(updated));
+  };
+
   const handleLogout = useCallback(() => {
+    void releaseUsage().catch(() => undefined);
     setLogoutConfirmationOpen(false);
     setSession(null);
     setSelectedOutlet(null);
     setDashboardData(null);
+    setSelectedShiftId('all');
     setDashboardError('');
     localStorage.removeItem('pos_user_session');
     localStorage.removeItem('pos_selected_outlet');
-  }, []);
+  }, [releaseUsage]);
 
   const requestLogout = useCallback(() => {
     setLogoutConfirmationOpen(true);
@@ -221,29 +222,38 @@ export default function App() {
   const handleOutletSelect = useCallback((outlet: OutletSummary) => {
     setSelectedOutlet(outlet);
     setDashboardData(null);
+    setSelectedShiftId('all');
     setDashboardError('');
     localStorage.setItem('pos_selected_outlet', JSON.stringify(outlet));
   }, []);
 
   const handleChangeOutlet = useCallback(() => {
+    void releaseUsage().catch(() => undefined);
     setSelectedOutlet(null);
     setDashboardData(null);
+    setSelectedShiftId('all');
     setDashboardError('');
     localStorage.removeItem('pos_selected_outlet');
-  }, []);
+  }, [releaseUsage]);
 
   useEffect(() => {
-    if (!session || !selectedOutlet) return;
+    if (!session || !selectedOutlet || !usage.ready) return;
 
     const controller = new AbortController();
-    const loadDashboard = async () => {
-      setDashboardLoading(true);
-      setDashboardError('');
-      setDashboardData(null);
+    let inFlight = false;
+    const loadDashboard = async (background = false) => {
+      if (controller.signal.aborted || inFlight || (background && document.visibilityState === 'hidden')) return;
+      inFlight = true;
+      if (!background) {
+        setDashboardLoading(true);
+        setDashboardError('');
+        setDashboardData(null);
+      }
       try {
         const dayId = dashboardDay;
         const response = await fetch(`/api/outlets/${encodeURIComponent(selectedOutlet.id)}/dashboard?dayId=${dayId}`, {
           headers: { Authorization: `Bearer ${session.token}` },
+          cache: 'no-store',
           signal: controller.signal,
         });
         const result = await response.json() as { success: boolean; message?: string; data?: ShiftDashboardData };
@@ -253,24 +263,51 @@ export default function App() {
           return;
         }
         if (!response.ok || !result.data) {
-          setDashboardData(null);
+          if (response.status === 403 || response.status === 404) setDashboardData(null);
           setDashboardError(result.message || 'Unable to load shift data.');
           return;
         }
         setDashboardData(result.data);
+        setDashboardError('');
       } catch (requestError) {
         if (!controller.signal.aborted && (requestError as Error).name !== 'AbortError') {
-          setDashboardData(null);
           setDashboardError('Cannot reach the shift service.');
         }
       } finally {
-        if (!controller.signal.aborted) setDashboardLoading(false);
+        inFlight = false;
+        if (!controller.signal.aborted && !background) setDashboardLoading(false);
       }
     };
 
     void loadDashboard();
-    return () => controller.abort();
-  }, [session, selectedOutlet, dashboardDay, dashboardReloadKey, handleLogout]);
+    const refresh = () => { void loadDashboard(true); };
+    const timer = window.setInterval(refresh, 10_000);
+    document.addEventListener('visibilitychange', refresh);
+    window.addEventListener('focus', refresh);
+    window.addEventListener('online', refresh);
+    return () => {
+      controller.abort();
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', refresh);
+      window.removeEventListener('focus', refresh);
+      window.removeEventListener('online', refresh);
+    };
+  }, [session, selectedOutlet, dashboardDay, dashboardReloadKey, handleLogout, usage.ready]);
+
+  const exportDashboard = async () => {
+    if (!session || !selectedOutlet || !dashboardData || dashboardLoading || dashboardError
+      || dashboardData.dayId !== dashboardDay || dashboardExportBusy.current) return;
+    dashboardExportBusy.current = true;
+    setDashboardExporting(true); setDashboardExportError('');
+    try {
+      await downloadDashboardExcel({ outlet: selectedOutlet, dayId: dashboardDay,
+        cashier: session.name, terminal: session.terminal, data: dashboardData });
+    } catch {
+      setDashboardExportError('Unable to download the dashboard Excel file. Please try Export again.');
+    } finally {
+      dashboardExportBusy.current = false; setDashboardExporting(false);
+    }
+  };
 
   if (!session) return <LoginPage onLoginSuccess={handleLoginSuccess} />;
   if (!selectedOutlet) return (
@@ -280,9 +317,31 @@ export default function App() {
     </>
   );
 
-  const payments = dashboardData?.payments ?? {};
-  const cashInHand = dashboardData
-    ? dashboardData.openingAmt + dashboardData.cashSale - dashboardData.expCash
+  if (!usage.ready) return <main className="outlet-selection-page">
+    <section className="outlet-selection-content"><div className="outlet-state-card" role={usage.message ? 'alert' : 'status'}>
+      <strong>{usage.blocked ? 'Daily usage limit reached' : usage.message ? 'Web POS access paused' : 'Checking outlet access…'}</strong>
+      <p>{usage.message || `Verifying daily usage for ${selectedOutlet.name}…`}</p>
+      {!!usage.message && !usage.blocked && <button type="button" onClick={usage.retry}>Continue / Retry</button>}
+      <button type="button" onClick={handleChangeOutlet}>Change outlet</button>
+      <button type="button" onClick={handleLogout}>Sign out</button>
+    </div></section>
+  </main>;
+
+  const shifts: ShiftDashboardData[] = dashboardData?.shifts && dashboardData.shifts.length > 0
+    ? dashboardData.shifts
+    : (dashboardData ? [dashboardData] : []);
+
+  const activeShift = shifts.find(s => !s.inActive) ?? shifts.at(-1);
+
+  const displayData: ShiftDashboardData | null = selectedShiftId === 'all'
+    ? dashboardData
+    : (shifts.find(s => s.id === selectedShiftId) ?? dashboardData);
+
+  const shiftToShow = selectedShiftId === 'all' ? (activeShift ?? displayData) : displayData;
+
+  const payments = displayData?.payments ?? {};
+  const cashInHand = displayData
+    ? displayData.openingAmt + displayData.cashSale - displayData.expCash
     : 0;
 
   const navigationGroups = [
@@ -381,14 +440,27 @@ export default function App() {
             </span>
           </div>
           <div className="header-actions">
-            <button className="theme-button" type="button" aria-label="Theme"><span>☾</span></button>
-            <button className="notification-button" type="button" aria-label="Notifications"><Bell /><span>1</span></button>
-            <div className="admin-chip"><span>{session.name.split(' ').map((part) => part[0]).join('').slice(0, 2)}</span><div><strong>{session.name}</strong><small>{session.role}</small></div><ChevronDown /></div>
+            <button className="theme-button" type="button" aria-label={darkMode ? 'Switch to light mode' : 'Switch to dark mode'} aria-pressed={darkMode} title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'} onClick={() => setDarkMode(current => !current)}><span aria-hidden="true">☾</span></button>
+            <ProfileMenu key={`${session.id}:${selectedOutlet.id}`} session={session} outletId={selectedOutlet.id} onSessionExpired={handleLogout} />
           </div>
         </header>
 
         <main className="dashboard-workspace">
-          {activeNavigation.id === 'Reports:Bill Wise Sale Report' ? (
+          {activeNavigation.id === 'Operations:Multicounter' ? (
+            <MulticounterPage key={`${session.id}:${selectedOutlet.id}`} outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
+          ) : activeNavigation.id === 'Operations:Device' ? (
+            <DevicesPage key={`${session.id}:${selectedOutlet.id}`} outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
+          ) : activeNavigation.id === 'Operations:Broadcast' ? (
+            <BroadcastPage key={`${session.id}:${selectedOutlet.id}`} outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
+          ) : activeNavigation.id === 'Masters:Category & Product Transfer' ? (
+            <TransferPreviewPage key={`${session.id}:${selectedOutlet.id}`} outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
+          ) : activeNavigation.id === 'Masters:Customer' ? (
+            <CustomersPage key={`${session.id}:${selectedOutlet.id}`} outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
+          ) : activeNavigation.id === 'Masters:Employees/Captain/Salesman' ? (
+            <EmployeesPage key={`${session.id}:${selectedOutlet.id}`} outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
+          ) : activeNavigation.id === 'Masters:User Account' ? (
+            <UserAccountPage key={session.id} token={session.token} onSessionExpired={handleLogout} onSaved={handleAccountSaved} />
+          ) : activeNavigation.id === 'Reports:Bill Wise Sale Report' ? (
             <BillWiseReportPage outlet={selectedOutlet} reportName={activeNavigation.label} token={session.token} onSessionExpired={handleLogout} />
           ) : activeNavigation.id === 'Reports:Category Wise' ? (
             <CategoryWiseReportPage outlet={selectedOutlet} reportName={activeNavigation.label} token={session.token} onSessionExpired={handleLogout} />
@@ -418,52 +490,57 @@ export default function App() {
             <>
               <section className="page-hero">
                 <div><h1>Retail POS Dashboard</h1><p>{selectedOutlet.name} · {activeNavigation.label} · Daily sales performance</p></div>
-                <div className="hero-actions"><span>Shift {dashboardData?.shiftNo || '—'}</span><label className="dashboard-date-picker" htmlFor="dashboard-report-date"><ReportDateInput id="dashboard-report-date" aria-label="Dashboard date" value={dashboardDay} onChange={event => { if (event.target.value) setDashboardDay(event.target.value); }} /><span>{clock}</span></label><button type="button"><Upload /> Export</button></div>
+                <div className="hero-actions"><div className="shift-selector-bar" role="tablist" aria-label="Shift view selection">
+                  <button type="button" role="tab" aria-selected={selectedShiftId === 'all'} className={`shift-pill ${selectedShiftId === 'all' ? 'active' : ''}`} onClick={() => setSelectedShiftId('all')}>All Shifts</button>
+                  {shifts.map(shift => <button key={shift.id} type="button" role="tab" aria-selected={selectedShiftId === shift.id} className={`shift-pill ${selectedShiftId === shift.id ? 'active' : ''}`} onClick={() => setSelectedShiftId(shift.id)}>Shift {shift.shiftNo || '—'}</button>)}
+                </div><label className="dashboard-date-picker" htmlFor="dashboard-report-date"><ReportDateInput id="dashboard-report-date" aria-label="Dashboard date" value={dashboardDay} onChange={value => { if (value) { setDashboardDay(value); setSelectedShiftId('all'); } }} /><span>{clock}</span></label><button type="button" onClick={() => void exportDashboard()} disabled={!dashboardData || dashboardLoading || !!dashboardError || dashboardExporting || dashboardData.dayId !== dashboardDay}>{dashboardExporting ? <RefreshCw /> : <Download />}{dashboardExporting ? 'Exporting…' : 'Export Excel'}</button></div>
               </section>
 
               {dashboardLoading && <div className="dashboard-data-notice"><RefreshCw className="dashboard-data-spinner" /> Loading shift data…</div>}
               {!dashboardLoading && dashboardError && <div className="dashboard-data-notice error"><span>{dashboardError}</span><button type="button" onClick={() => setDashboardReloadKey(value => value + 1)}><RefreshCw /> Retry</button></div>}
 
+              {dashboardExportError && <div className="dashboard-data-notice error" role="alert">{dashboardExportError}</div>}
+
               <div className="dashboard-columns">
               <div className="dashboard-primary">
               <section className="kpi-grid" aria-label="Key sales figures">
                 <KpiCard label="Cash In Hand" value={formatMoney(cashInHand)} tone="green" icon={<Banknote />} />
-                <KpiCard label="Total Sale" value={formatMoney(dashboardData?.totalSale)} tone="cyan" icon={<TrendingUp />} />
-                <KpiCard label="Total Digital Sale" value={formatMoney(dashboardData?.digitalSale)} tone="muted" icon={<span className="upi-wordmark">UPI</span>} />
+                <KpiCard label="Total Sale" value={formatMoney(displayData?.totalSale)} tone="cyan" icon={<TrendingUp />} />
+                <KpiCard label="Total Digital Sale" value={formatMoney(displayData?.digitalSale)} tone="muted" icon={<span className="upi-wordmark">UPI</span>} />
               </section>
 
               <section className="payment-section">
-                <div className="section-heading"><div><h2>Other Sales</h2><p>Sales by payment method</p></div><SlidersHorizontal /></div>
+                <div className="section-heading"><div><h2>Other Sales</h2><p>Sales by payment method{selectedShiftId !== 'all' ? ` (Shift ${displayData?.shiftNo})` : ''}</p></div><SlidersHorizontal /></div>
                 <div className="payment-grid">
-                  <PaymentTile label="Cash" value={formatMoney(payments.cash ?? dashboardData?.cashSale)} featured brand={<Banknote />} />
+                  <PaymentTile label="Cash" value={formatMoney(payments.cash ?? displayData?.cashSale)} featured brand={<Banknote />} />
                   <PaymentTile label="Google Pay" value={formatMoney(payments.googlepay)} brand={<span className="google-pay-mark">G</span>} />
                   <PaymentTile label="PhonePe" value={formatMoney(payments.phonepe)} brand={<span className="phonepe-mark">पे</span>} />
                   <PaymentTile label="Paytm" value={formatMoney(payments.paytm)} brand={<span className="paytm-mark">paytm</span>} />
                   <PaymentTile label="Cheque" value={formatMoney(payments.cheque_payment_mode)} brand={<ReceiptText />} />
                   <PaymentTile label="Card" value={formatMoney(payments.card)} brand={<CreditCard />} />
-                  <PaymentTile label="Credit" value={formatMoney(payments.credit ?? dashboardData?.creditSale)} brand={<WalletCards />} />
+                  <PaymentTile label="Credit" value={formatMoney(payments.credit ?? displayData?.creditSale)} brand={<WalletCards />} />
                   <PaymentTile label="Other" value={formatMoney(payments.other)} brand={<SlidersHorizontal />} />
                 </div>
               </section>
 
               <section className="bottom-panels">
                 <article className="detail-panel">
-                  <h2>Operational Summary</h2>
+                  <h2>Operational Summary{selectedShiftId !== 'all' ? ` (Shift ${displayData?.shiftNo})` : ''}</h2>
                   <div className="detail-grid">
-                    <MetricRow icon={<ReceiptText />} label="No. of Bills" value={String(dashboardData?.billCount ?? 0)} />
-                    <MetricRow icon={<BadgeIndianRupee />} label="Total Discount" value={formatMoney(dashboardData?.discount)} />
-                    <MetricRow icon={<WalletCards />} label="Opening Balance" value={formatMoney(dashboardData?.openingAmt)} />
-                    <MetricRow icon={<span className="percent-icon">%</span>} label="Total Tax" value={formatMoney(dashboardData?.tax)} />
-                    <MetricRow icon={<Gauge />} label="Refund Amount" value={formatMoney(dashboardData?.refundAmount)} />
-                    <MetricRow icon={<WalletCards />} label="Extra Charge" value={formatMoney(dashboardData?.extraCharges)} />
+                    <MetricRow icon={<ReceiptText />} label="No. of Bills" value={String(displayData?.billCount ?? 0)} />
+                    <MetricRow icon={<BadgeIndianRupee />} label="Total Discount" value={formatMoney(displayData?.discount)} />
+                    <MetricRow icon={<WalletCards />} label="Opening Balance" value={formatMoney(displayData?.openingAmt)} />
+                    <MetricRow icon={<span className="percent-icon">%</span>} label="Total Tax" value={formatMoney(displayData?.tax)} />
+                    <MetricRow icon={<Gauge />} label="Refund Amount" value={formatMoney(displayData?.refundAmount)} />
+                    <MetricRow icon={<WalletCards />} label="Extra Charge" value={formatMoney(displayData?.extraCharges)} />
                   </div>
                 </article>
                 <article className="detail-panel">
-                  <h2>Expenses &amp; Credits</h2>
+                  <h2>Expenses &amp; Credits{selectedShiftId !== 'all' ? ` (Shift ${displayData?.shiftNo})` : ''}</h2>
                   <div className="detail-grid expenses-grid">
-                    <MetricRow label="Total Expenses" value={formatMoney(dashboardData?.expensesAmtTotal)} />
-                    <MetricRow label="Advance Payment" value={formatMoney(dashboardData?.advanceAmtTotal)} />
-                    <MetricRow label="Received Customer Credit" value={formatMoney(dashboardData?.customerReceiveAmtTotal)} />
+                    <MetricRow label="Total Expenses" value={formatMoney(displayData?.expensesAmtTotal)} />
+                    <MetricRow label="Advance Payment" value={formatMoney(displayData?.advanceAmtTotal)} />
+                    <MetricRow label="Received Customer Credit" value={formatMoney(displayData?.customerReceiveAmtTotal)} />
                   </div>
                 </article>
               </section>
@@ -479,18 +556,19 @@ export default function App() {
                     <SlidersHorizontal />
                     <span><strong>Category Master</strong><small>Add, update & organize</small></span>
                   </button>
-                  <button type="button"><ShoppingCart /><span><strong>New Sale</strong><small>Start a new checkout</small></span></button>
-                  <button type="button"><Upload /><span><strong>Upload Stock</strong><small>Import products from Excel</small></span></button>
-                  <button type="button"><MessageSquareText /><span><strong>Broadcast</strong><small>Send a store update</small></span></button>
+                  {/* <button type="button"><ShoppingCart /><span><strong>New Sale</strong><small>Start a new checkout</small></span></button> */}
+                  <button type="button" onClick={() => setActiveNavigation({ id: 'Inventory:Upload Excel', label: 'Upload Excel' })}><Upload /><span><strong>Upload Stock</strong><small>Import products from Excel</small></span></button>
+                  <button type="button" onClick={() => setActiveNavigation({ id: 'Operations:Broadcast', label: 'Broadcast' })}><MessageSquareText /><span><strong>Broadcast</strong><small>View devices and employees</small></span></button>
                 </article>
                 <article className="insight-card shift-card">
-                  <h2>Current Shift</h2>
+                  <h2>{selectedShiftId === 'all' ? (activeShift && !activeShift.inActive ? 'Current Active Shift' : 'Latest Shift') : `Shift ${displayData?.shiftNo || '—'}`}</h2>
                   <div><span>Outlet</span><strong>{selectedOutlet.name}</strong></div>
                   <div><span>Branch</span><strong>{selectedOutlet.branch || 'Not specified'}</strong></div>
                   <div><span>Terminal</span><strong>{session.terminal}</strong></div>
                   <div><span>Cashier</span><strong>{session.name}</strong></div>
-                  <div><span>Bills</span><strong>{dashboardData?.startBillNo || '—'} → {dashboardData?.lastBillNo || '—'}</strong></div>
-                  <div><span>Status</span><strong className="status-active">{dashboardData ? (dashboardData.inActive ? 'Closed' : 'Active') : 'Unavailable'}</strong></div>
+                  <div><span>Shift No.</span><strong>Shift {shiftToShow?.shiftNo || '—'}</strong></div>
+                  <div><span>Bills</span><strong>{shiftToShow?.startBillNo || '—'} → {shiftToShow?.lastBillNo || '—'}</strong></div>
+                  <div><span>Status</span><strong className={shiftToShow ? (shiftToShow.inActive ? 'status-closed' : 'status-active') : 'status-active'}>{shiftToShow ? (shiftToShow.inActive ? 'Closed' : 'Active') : 'Unavailable'}</strong></div>
                   <button type="button" onClick={handleChangeOutlet}>Change outlet</button>
                 </article>
                 <button type="button" className="help-card"><CircleHelp /><span><strong>Need help?</strong><small>View POS documentation</small></span></button>

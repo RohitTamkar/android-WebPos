@@ -8,7 +8,7 @@ import dotenv from "dotenv";
 import { fileURLToPath } from "node:url";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
-import { getFirebaseApp, getFirestoreDb, verifyFirebaseConnection } from "./firebase.js";
+import { FirebaseConfigurationError, getFirebaseApp, getFirestoreDb, logFirebaseConfigurationError, verifyFirebaseConnection } from "./firebase.js";
 import { summarizeDay } from "./daywiseSummary.js";
 import { stockDirection, stockMovementRecord } from "./stockMovementReport.js";
 import { isStockTransfer, stockTransferRecord } from "./stockTransferReport.js";
@@ -70,10 +70,12 @@ app.get("/api/health", (_req, res) => {
         const firebaseApp = getFirebaseApp();
         firebase = { initialized: true, projectId: firebaseApp.options.projectId ?? "" };
     }
-    catch {
+    catch (error) {
         firebase = {
             initialized: false,
-            message: "Configure valid Firebase credentials and testing project isolation on the server"
+            // Only our fixed configuration messages are safe to return; never return SDK/parser errors.
+            message: error instanceof FirebaseConfigurationError ? error.message
+                : "Configure valid Firebase credentials and testing project isolation on the server"
         };
     }
     res.json({
@@ -94,7 +96,7 @@ app.get("/api/firebase/health", async (_req, res) => {
         });
     }
     catch (error) {
-        console.error("Firebase connection check failed:", error);
+        logFirebaseConfigurationError(error, "connection");
         res.status(503).json({
             success: false,
             message: "Firebase connection failed"
@@ -129,10 +131,11 @@ app.post("/api/auth/login", async (req, res) => {
         getFirebaseApp();
     }
     catch (error) {
-        console.error("Firebase configuration error:", error);
+        logFirebaseConfigurationError(error, "login");
         res.status(503).json({
             success: false,
-            message: "Firebase credentials or testing isolation are missing or invalid. Check the server configuration."
+            message: error instanceof FirebaseConfigurationError ? error.message
+                : "Firebase credentials or testing isolation are missing or invalid. Check the server configuration."
         });
         return;
     }
@@ -1674,7 +1677,7 @@ app.listen(PORT, () => {
         getFirebaseApp();
     }
     catch (error) {
-        console.error("Firebase configuration error:", error instanceof Error ? error.message : error);
+        logFirebaseConfigurationError(error, "startup");
     }
 });
 //# sourceMappingURL=server.js.map

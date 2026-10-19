@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { Timestamp, type Firestore } from 'firebase-admin/firestore';
-import { createOutletProduct, ProductCreationError, productTaxes, validateNewProduct } from '../src/productCreation.js';
+import { PRODUCT_UNITS, createOutletProduct, ProductCreationError, productTaxes, validateNewProduct } from '../src/productCreation.js';
 import { nextProductCode } from '../src/productImportValidation.js';
 import { createProductImportChunk } from '../src/productImportWriter.js';
 import { allocateProductCodes } from '../src/productImportValidation.js';
@@ -177,4 +177,17 @@ test('manual Add Product matches the supplied Firestore document contract exactl
   assert.deepEqual(f.records.get(`OUTLET/outlet/PRODUCT/${saved.documentId}`), saved.fields);
   assert.equal(f.records.size, before.size + 1);
   for (const [path, fields] of before) assert.deepEqual(f.records.get(path), fields);
+});
+
+
+test('all supplied unit options preserve their IDs when creating products', async () => {
+  assert.deepEqual(PRODUCT_UNITS.map(unit => unit.name), [
+    'KILOGRAM', 'LITER', 'NUMBER', 'MILLILITRE', 'BOX', 'TIN', 'JAR',
+    'BOTTLE', 'GRAM', 'METER', 'DOZEN', 'BAG', 'PIECE',
+  ]);
+  for (const unit of PRODUCT_UNITS) {
+    const f = fixture();
+    const created = await createOutletProduct(f.db, 'outlet', 'user', assigned, { ...input(), unitId: unit.id });
+    assert.equal(created.fields.unitId, unit.id);
+  }
 });

@@ -53,9 +53,7 @@ interface ReportResponse {
 interface ReportFilters {
   startDate: string;
   endDate: string;
-  shiftId: string;
   paymentType: string;
-  deviceId: string;
   search: string;
 }
 
@@ -105,7 +103,7 @@ function entityLabel(value: unknown): string {
 
 export const BillWiseReportPage = ({ outlet, token, onSessionExpired, reportName = 'Bill Wise Sale Report' }: BillWiseReportPageProps) => {
   const initialFilters = useMemo<ReportFilters>(() => ({
-    startDate: todayId(), endDate: todayId(), shiftId: '', paymentType: '', deviceId: '', search: '',
+    startDate: todayId(), endDate: todayId(), paymentType: '', search: '',
   }), []);
   const [filters, setFilters] = useState(initialFilters);
   const [appliedFilters, setAppliedFilters] = useState(initialFilters);
@@ -126,9 +124,7 @@ export const BillWiseReportPage = ({ outlet, token, onSessionExpired, reportName
       page: String(targetPage),
       limit: String(limit),
     });
-    if (appliedFilters.shiftId) params.set('shiftId', appliedFilters.shiftId);
     if (appliedFilters.paymentType) params.set('paymentType', appliedFilters.paymentType);
-    if (appliedFilters.deviceId) params.set('deviceId', appliedFilters.deviceId);
     if (appliedFilters.search) params.set('search', appliedFilters.search);
     return params;
   };
@@ -214,7 +210,7 @@ export const BillWiseReportPage = ({ outlet, token, onSessionExpired, reportName
   return (
     <section className="bill-report-page">
       <div className="bill-report-heading">
-        <div><span>REPORTS</span><h1>Bill Wise Sale Report</h1><p>{outlet.name} · Review, filter and export completed bills.</p></div>
+        <div><strong className="report-print-shop-name">{outlet.name}</strong><span>REPORTS</span><h1>Bill Wise Sale Report</h1><p>{outlet.name} · Review, filter and export completed bills.</p></div>
         <div className="bill-report-actions">
           <button type="button" onClick={exportExcel} disabled={exporting}><Download /> {exporting ? 'Exporting…' : 'Export Excel'}</button>
           <button type="button" onClick={() => window.print()}><Printer /> Print / PDF</button>
@@ -222,11 +218,9 @@ export const BillWiseReportPage = ({ outlet, token, onSessionExpired, reportName
       </div>
 
       <div className="bill-report-filters">
-        <label><span>From date</span><ReportDateInput aria-label="From date" value={filters.startDate} onChange={event => setFilters(current => ({ ...current, startDate: event.target.value }))} /></label>
-        <label><span>To date</span><ReportDateInput aria-label="To date" value={filters.endDate} onChange={event => setFilters(current => ({ ...current, endDate: event.target.value }))} /></label>
-        <label><span>Shift</span><input value={filters.shiftId} onChange={event => setFilters(current => ({ ...current, shiftId: event.target.value }))} placeholder="All shifts" /></label>
+        <label><span>From date</span><ReportDateInput aria-label="From date" value={filters.startDate} onChange={value => setFilters(current => ({ ...current, startDate: value }))} /></label>
+        <label><span>To date</span><ReportDateInput aria-label="To date" value={filters.endDate} onChange={value => setFilters(current => ({ ...current, endDate: value }))} /></label>
         <label><span>Payment</span><select value={filters.paymentType} onChange={event => setFilters(current => ({ ...current, paymentType: event.target.value }))}><option value="">All payments</option><option value="cash">Cash</option><option value="card">Card</option><option value="googlepay">Google Pay</option><option value="phonepe">PhonePe</option><option value="paytm">Paytm</option><option value="credit">Credit</option><option value="cheque_payment_mode">Cheque</option></select></label>
-        <label><span>Device ID</span><input value={filters.deviceId} onChange={event => setFilters(current => ({ ...current, deviceId: event.target.value }))} placeholder="All devices" /></label>
         <label className="bill-search-filter"><span>Bill / vehicle search</span><div><Search /><input value={filters.search} onChange={event => setFilters(current => ({ ...current, search: event.target.value }))} onKeyDown={event => { if (event.key === 'Enter') applyFilters(); }} placeholder="Bill no. or vehicle no." /></div></label>
         <div className="bill-filter-buttons"><button type="button" className="apply" onClick={applyFilters}><Filter /> Apply</button><button type="button" onClick={resetFilters}><X /> Reset</button></div>
       </div>
@@ -243,12 +237,12 @@ export const BillWiseReportPage = ({ outlet, token, onSessionExpired, reportName
         {!loading && error && <div className="bill-report-state error"><strong>{error}</strong><button type="button" onClick={() => setReloadKey(value => value + 1)}><RefreshCw /> Retry</button></div>}
         {!loading && !error && report?.bills.length === 0 && <div className="bill-report-state"><ReceiptText /><strong>No bills found for these filters.</strong><p>Choose another date or clear some filters.</p></div>}
         {!loading && !error && report && report.bills.length > 0 && (
-          <div className="bill-table-scroll"><table><thead><tr><th>Bill No.</th><th>Date / Time</th><th>Payment Mode</th><th>Bill Type</th><th>Shift</th><th>Device</th><th className="amount">Amount</th></tr></thead><tbody>{report.bills.map(bill => <tr key={bill.documentId} onClick={() => setSelectedBill(bill)} tabIndex={0} onKeyDown={event => { if (event.key === 'Enter') setSelectedBill(bill); }}><td><strong>{bill.billNo}</strong><small>{bill.vehicleNo || bill.serialNo}</small></td><td>{dateTime(bill.createdDate)}</td><td><div className="payment-tags">{bill.paymentModes.length ? bill.paymentModes.map(mode => <span key={mode}>{labelPayment(mode)}</span>) : <span>Unspecified</span>}</div></td><td>{bill.billType}</td><td>{bill.shiftId || '—'}</td><td>{bill.deviceId || '—'}</td><td className="amount"><strong>{money(bill.finalTotal)}</strong></td></tr>)}</tbody></table></div>
+          <div className="bill-table-scroll"><table><thead><tr><th>Bill No.</th><th>Date / Time</th><th>Payment Mode</th><th>Bill Type</th><th>Shift</th><th className="amount">Amount</th></tr></thead><tbody>{report.bills.map(bill => <tr key={bill.documentId} onClick={() => setSelectedBill(bill)} tabIndex={0} onKeyDown={event => { if (event.key === 'Enter') setSelectedBill(bill); }}><td><strong>{bill.billNo}</strong><small>{bill.vehicleNo || bill.serialNo}</small></td><td>{dateTime(bill.createdDate)}</td><td><div className="payment-tags">{bill.paymentModes.length ? bill.paymentModes.map(mode => <span key={mode}>{labelPayment(mode)}</span>) : <span>Unspecified</span>}</div></td><td>{bill.billType}</td><td>{bill.shiftId || '—'}</td><td className="amount"><strong>{money(bill.finalTotal)}</strong></td></tr>)}</tbody></table></div>
         )}
         {!loading && !error && report && report.pagination.totalItems > 0 && <div className="bill-pagination"><span>Showing {(report.pagination.page - 1) * report.pagination.pageSize + 1}–{Math.min(report.pagination.page * report.pagination.pageSize, report.pagination.totalItems)} of {report.pagination.totalItems}</span><div><button type="button" disabled={page <= 1} onClick={() => setPage(value => value - 1)}><ChevronLeft /></button><strong>Page {page} of {report.pagination.totalPages}</strong><button type="button" disabled={page >= report.pagination.totalPages} onClick={() => setPage(value => value + 1)}><ChevronRight /></button></div></div>}
       </div>
 
-      {selectedBill && <div className="bill-detail-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setSelectedBill(null); }}><article className="bill-detail-modal" role="dialog" aria-modal="true" aria-label={`Bill ${selectedBill.billNo}`}><header><div><span>BILL DETAILS</span><h2>{selectedBill.billNo}</h2><p>{dateTime(selectedBill.createdDate)}</p></div><button type="button" onClick={() => setSelectedBill(null)} aria-label="Close bill details"><X /></button></header><div className="bill-detail-body"><div className="bill-detail-meta"><div><span>Bill type</span><strong>{selectedBill.billType}</strong></div><div><span>Shift</span><strong>{selectedBill.shiftId || '—'}</strong></div><div><span>Device</span><strong>{selectedBill.deviceId || '—'}</strong></div><div><span>Table</span><strong>{selectedBill.table || '—'}</strong></div><div><span>Customer</span><strong>{entityLabel(selectedBill.customerDetails)}</strong></div><div><span>Employee</span><strong>{entityLabel(selectedBill.employee)}</strong></div><div><span>Remark</span><strong>{entityLabel(selectedBill.remark)}</strong></div><div><span>Vehicle</span><strong>{selectedBill.vehicleNo || '—'}</strong></div></div><h3>Items</h3><div className="bill-items-table"><table><thead><tr><th>Item</th><th>Qty</th><th>Rate</th><th>Total</th></tr></thead><tbody>{selectedBill.items.length ? selectedBill.items.map((item, index) => <tr key={`${item.name}-${index}`}><td>{item.name}</td><td>{item.quantity}</td><td>{money(item.price)}</td><td>{money(item.total)}</td></tr>) : <tr><td colSpan={4}>No item details available</td></tr>}</tbody></table></div><div className="bill-payment-detail"><h3>Payments</h3>{Object.entries(selectedBill.payments).filter(([, amount]) => amount > 0).map(([mode, amount]) => <div key={mode}><span>{labelPayment(mode)}</span><strong>{money(amount)}</strong></div>)}</div><div className="bill-total-detail"><div><span>Discount</span><strong>{money(selectedBill.discount)}</strong></div><div><span>Tax</span><strong>{money(selectedBill.taxAmount)}</strong></div><div><span>Service charge</span><strong>{money(selectedBill.serviceChargeAmount)}</strong></div><div className="grand-total"><span>Grand Total</span><strong>{money(selectedBill.finalTotal)}</strong></div></div></div><footer><button type="button" onClick={() => window.print()}><Printer /> Print / Save PDF</button></footer></article></div>}
+      {selectedBill && <div className="bill-detail-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setSelectedBill(null); }}><article className="bill-detail-modal" role="dialog" aria-modal="true" aria-label={`Bill ${selectedBill.billNo}`}><header><div><span>BILL DETAILS</span><h2>{selectedBill.billNo}</h2><p>{dateTime(selectedBill.createdDate)}</p></div><button type="button" onClick={() => setSelectedBill(null)} aria-label="Close bill details"><X /></button></header><div className="bill-detail-body"><div className="bill-detail-meta"><div><span>Bill type</span><strong>{selectedBill.billType}</strong></div><div><span>Shift</span><strong>{selectedBill.shiftId || '—'}</strong></div><div><span>Table</span><strong>{selectedBill.table || '—'}</strong></div><div><span>Customer</span><strong>{entityLabel(selectedBill.customerDetails)}</strong></div><div><span>Employee</span><strong>{entityLabel(selectedBill.employee)}</strong></div><div><span>Remark</span><strong>{entityLabel(selectedBill.remark)}</strong></div><div><span>Vehicle</span><strong>{selectedBill.vehicleNo || '—'}</strong></div></div><h3>Items</h3><div className="bill-items-table"><table><thead><tr><th>Item</th><th>Qty</th><th>Rate</th><th>Total</th></tr></thead><tbody>{selectedBill.items.length ? selectedBill.items.map((item, index) => <tr key={`${item.name}-${index}`}><td>{item.name}</td><td>{item.quantity}</td><td>{money(item.price)}</td><td>{money(item.total)}</td></tr>) : <tr><td colSpan={4}>No item details available</td></tr>}</tbody></table></div><div className="bill-payment-detail"><h3>Payments</h3>{Object.entries(selectedBill.payments).filter(([, amount]) => amount > 0).map(([mode, amount]) => <div key={mode}><span>{labelPayment(mode)}</span><strong>{money(amount)}</strong></div>)}</div><div className="bill-total-detail"><div><span>Discount</span><strong>{money(selectedBill.discount)}</strong></div><div><span>Tax</span><strong>{money(selectedBill.taxAmount)}</strong></div><div><span>Service charge</span><strong>{money(selectedBill.serviceChargeAmount)}</strong></div><div className="grand-total"><span>Grand Total</span><strong>{money(selectedBill.finalTotal)}</strong></div></div></div><footer><button type="button" onClick={() => window.print()}><Printer /> Print / Save PDF</button></footer></article></div>}
     </section>
   );
 };

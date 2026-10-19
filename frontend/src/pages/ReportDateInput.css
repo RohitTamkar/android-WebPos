@@ -1,4 +1,38 @@
-.bill-report-filters .report-calendar-button { display: grid; place-items: center; flex: 0 0 auto; align-self: stretch; padding: 0; border: 0; color: inherit; background: transparent; cursor: pointer; }
-.bill-report-filters .report-calendar-button:focus-visible { outline: 2px solid #ef8589; outline-offset: 2px; border-radius: 3px; }
-.bill-report-filters .report-calendar-button:disabled { cursor: not-allowed; }
-.bill-report-filters .report-date-control input { cursor: pointer; }
+.report-date-control { min-width: 0; width: 100%; }
+.report-date-control .report-date-trigger { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; height: 40px; padding: 0 12px; border: 1px solid #d9e2ec; border-radius: 8px; background: #fff; color: #263f55; font: inherit; font-size: 13px; font-weight: 500; text-align: left; cursor: pointer; transition: border-color .15s, box-shadow .15s; }
+.report-date-trigger > span { flex: 1; white-space: nowrap; }
+.report-date-trigger > svg { width: 16px; height: 16px; flex-shrink: 0; color: #71869a; }
+.report-date-trigger > svg:last-child { width: 13px; height: 13px; }
+.report-date-control .report-date-trigger:hover { border-color: #9cabbc; }
+.report-date-control .report-date-trigger:focus-visible, .report-date-control .report-date-trigger[aria-expanded="true"] { outline: none; border-color: #ed3036; box-shadow: 0 0 0 3px rgba(237,48,54,.1); }
+.report-date-control .report-date-trigger.is-empty { color: #8493a1; }
+.report-date-control .report-date-trigger:disabled { cursor: not-allowed; opacity: .6; }
+.bill-report-filters label > .report-date-control { height: auto; padding: 0; border: 0; box-shadow: none; background: transparent; }
+.hero-actions .dashboard-date-picker .report-date-trigger { height: auto; padding: 0; border: 0; background: transparent; color: #263847; box-shadow: none; font-size: 12px; }
+
+.report-date-calendar { position: fixed; z-index: 1000; box-sizing: border-box; max-height: calc(100dvh - 24px); overflow-y: auto; padding: 16px; border: 1px solid #e0e6ed; border-radius: 16px; background: #fff; color: #263f55; font-family: inherit; color-scheme: light; box-shadow: 0 16px 48px rgba(20,45,66,.18), 0 3px 10px rgba(20,45,66,.06); }
+.report-date-calendar *, .report-date-calendar *::before, .report-date-calendar *::after { box-sizing: border-box; }
+.report-date-caption { display: flex; align-items: center; gap: 7px; padding-bottom: 13px; border-bottom: 1px solid #edf0f4; font-size: 11px; font-weight: 600; color: #708297; }
+.report-date-caption svg { width: 14px; height: 14px; color: #ed3036; }
+.report-date-caption small { margin-left: auto; color: #96a3b0; font-size: 9px; font-weight: 500; letter-spacing: .03em; }
+.report-date-navigation { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 13px 0 12px; }
+.report-date-calendar button { display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 8px; background: transparent; color: #263f55; font: inherit; font-size: 12px; cursor: pointer; }
+.report-date-navigation > button { width: 30px; height: 30px; flex-shrink: 0; border: 1px solid #e8edf2; }
+.report-date-navigation svg { width: 16px; height: 16px; }
+.report-date-month-selects { display: flex; align-items: center; justify-content: center; gap: 2px; min-width: 0; }
+.report-date-month-selects select { max-width: 130px; padding: 5px 2px; border: 0; border-radius: 5px; background: #fff; color: #203c52; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+.report-date-month-selects select:last-child { max-width: 72px; }
+.report-date-weekdays, .report-date-days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; }
+.report-date-weekdays { margin-bottom: 5px; color: #8c9aa9; font-size: 10px; font-weight: 600; text-align: center; }
+.report-date-weekdays span { padding: 4px 0; }
+.report-date-days > button { height: 34px; font-size: 12px; font-weight: 500; }
+.report-date-calendar button:hover:not(:disabled) { background: #f1f4f8; }
+.report-date-days > button.is-other-month { color: #adb7c2; }
+.report-date-days > button.is-today { box-shadow: inset 0 0 0 1px #f0a1a5; color: #d92932; }
+.report-date-days > button.is-selected, .report-date-days > button.is-selected:hover { background: #ed3036; color: #fff; box-shadow: 0 3px 8px rgba(237,48,54,.2); font-weight: 700; }
+.report-date-calendar button:focus-visible, .report-date-calendar select:focus-visible { outline: 2px solid #ed3036; outline-offset: 2px; }
+.report-date-calendar button:disabled { opacity: .3; cursor: not-allowed; }
+.report-date-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid #edf0f4; }
+.report-date-footer button { padding: 6px 8px; color: #d92932; font-size: 11px; font-weight: 600; }
+.report-date-footer > span { color: #8796a4; font-size: 10px; }
+@media print { .report-date-calendar { display: none; } }

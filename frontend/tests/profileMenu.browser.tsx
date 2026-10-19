@@ -1,0 +1,43 @@
+import { createRoot } from 'react-dom/client';
+import { ProfileMenu } from '../src/pages/ProfileMenu.tsx';
+import '../src/App.css';
+import '../src/index.css';
+const checks: string[]=[];
+const assert=(ok:unknown,message:string)=>{if(!ok)throw new Error(message);checks.push(message);};
+const pause=()=>new Promise(resolve=>setTimeout(resolve,25));
+async function until(check:()=>unknown){for(let i=0;i<120;i++){if(check())return;await pause();}throw new Error('Timed out');}
+let requests=0, expired=0, status=200;
+let mobile='+919876543210';
+window.fetch=async(input,init)=>{
+  requests++;
+  assert(String(input)==='/api/outlets/outlet/profile','requests the selected outlet profile');
+  assert(!init?.method || init.method==='GET','profile access uses GET only');
+  assert((init?.headers as Record<string,string>).Authorization==='Bearer mock-token' && init?.cache==='no-store','uses authentication and fresh data');
+  return Response.json(status===200?{success:true,data:{name:'Database User',mobile,role:'User',outletName:'Database Outlet'}}:{success:false,message:'Unable to load details'}, {status});
+};
+const root=createRoot(document.getElementById('root')!);
+root.render(<header className="retail-header"><span>Brand</span><ProfileMenu outletId="outlet" session={{name:'Existing Header',role:'Admin',token:'mock-token'}} onSessionExpired={()=>{expired++;}} /></header>);
+const button=()=>document.querySelector<HTMLButtonElement>('[aria-label="Account details"]')!;
+void(async()=>{
+  await until(()=>button());
+  assert(requests===0 && !document.querySelector('[role=dialog]'),'closed header does not fetch or display a panel');
+  const before=button().getBoundingClientRect();
+  button().click();await until(()=>document.querySelector('dd'));
+  const content=document.querySelector('[role=dialog]')!.textContent!;
+  assert(content.includes('Database Outlet')&&content.includes('Database User')&&content.includes('+919876543210')&&content.includes('User'),'shows outlet, user, mobile and role returned by the database API');
+  assert(button().textContent?.includes('Existing Header')&&button().textContent?.includes('Admin'),'existing header text remains unchanged');
+  assert(!document.querySelector('[role=dialog] input')&&!document.querySelector('[role=dialog] form'),'details contain no edit controls');
+  const after=button().getBoundingClientRect();
+  assert(before.width===after.width && before.height===after.height && before.x===after.x,'opening details preserves header layout');
+  document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));await pause();
+  assert(!document.querySelector('[role=dialog]')&&document.activeElement===button(),'Escape dismisses details and returns focus');
+  mobile='';button().click();await until(()=>document.querySelector('dd'));
+  assert(document.querySelector('[role=dialog]')!.textContent!.includes('Not provided'),'missing mobile displays Not provided rather than guessing');
+  document.body.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));await pause();
+  assert(!document.querySelector('[role=dialog]'),'outside click dismisses details');
+  status=403;button().click();await until(()=>document.querySelector('[role=alert]'));
+  assert(!document.querySelector('dd'),'an API error does not expose stale account details');
+  button().click();await pause();status=401;button().click();await until(()=>expired===1);
+  assert(expired===1,'expired authentication invokes the existing session handler');
+  root.unmount();document.getElementById('test-results')!.textContent=JSON.stringify({passed:checks.length,checks});
+})().catch(error=>{document.getElementById('test-results')!.textContent=JSON.stringify({failed:String(error),checks});});

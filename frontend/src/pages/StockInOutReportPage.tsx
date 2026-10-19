@@ -154,7 +154,7 @@ export const StockInOutReportPage = ({ outlet, token, onSessionExpired, reportNa
 
   return <section className="bill-report-page stock-in-out-report-page">
     <div className="bill-report-heading">
-      <div><span>REPORTS</span><h1>Stock In-Out Report</h1><p>{outlet.name} · Stock received, stock issued and product details.</p></div>
+      <div><strong className="report-print-shop-name">{outlet.name}</strong><span>REPORTS</span><h1>Stock In-Out Report</h1><p>{outlet.name} · Stock received, stock issued and product details.</p></div>
       <div className="bill-report-actions">
         <button type="button" onClick={() => setReloadKey(value => value + 1)} disabled={loading}><RefreshCw /> Refresh</button>
         <button type="button" onClick={exportExcel} disabled={!hasData || loading || !!error}><Download /> Export Excel</button>
@@ -162,8 +162,8 @@ export const StockInOutReportPage = ({ outlet, token, onSessionExpired, reportNa
       </div>
     </div>
     <div className="bill-report-filters">
-      <label><span>From date</span><ReportDateInput aria-label="From date" value={filters.startDate} onChange={event => setFilters(current => ({ ...current, startDate: event.target.value }))} /></label>
-      <label><span>To date</span><ReportDateInput aria-label="To date" value={filters.endDate} onChange={event => setFilters(current => ({ ...current, endDate: event.target.value }))} /></label>
+      <label><span>From date</span><ReportDateInput aria-label="From date" value={filters.startDate} onChange={value => setFilters(current => ({ ...current, startDate: value }))} /></label>
+      <label><span>To date</span><ReportDateInput aria-label="To date" value={filters.endDate} onChange={value => setFilters(current => ({ ...current, endDate: value }))} /></label>
       <label><span>Direction</span><select value={filters.direction} onChange={event => setFilters(current => ({ ...current, direction: event.target.value }))}><option value="">All movements</option><option value="in">Stock In</option><option value="out">Stock Out</option></select></label>
       <label className="bill-search-filter"><span>Transaction / product search</span><div><Search /><input value={filters.search} onChange={event => setFilters(current => ({ ...current, search: event.target.value }))} onKeyDown={event => { if (event.key === 'Enter') applyFilters(); }} placeholder="Transaction no., supplier or product" /></div></label>
       <div className="bill-filter-buttons"><button type="button" className="apply" onClick={applyFilters}><Filter /> Apply</button><button type="button" onClick={resetFilters}><X /> Reset</button></div>

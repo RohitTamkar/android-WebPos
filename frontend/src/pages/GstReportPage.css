@@ -1,5 +1,14 @@
 /* Builds on BillWiseReportPage.css and ProductWiseReportPage.css; only GST-specific additions live here. */
-.gst-report-page td.gst-plain-cell { display: table-cell; }
+.gst-report-page .bill-table-card td:first-child { display: table-cell; }
+.gst-report-page .bill-table-card td:first-child small { display: block; margin-top: 3px; }
+.gst-report-page .bill-table-card .gst-products-cell { white-space: normal; overflow-wrap: anywhere; }
+.gst-product-names { margin: 0; padding: 0; list-style: none; }
+.gst-product-names li + li { margin-top: 4px; }
+
+@media screen {
+  .gst-report-page .bill-table-card table { min-width: 1100px; }
+  .gst-report-page .gst-products-cell { min-width: 180px; max-width: 260px; }
+}
 .gst-rate { display: inline-block; min-width: 42px; padding: 4px 8px; border-radius: 999px; color: #25704f; background: #e9f7f0; font-size: 9px; font-weight: 800; text-align: center; }
 .gst-rate.zero { color: #5d6f80; background: #eef2f5; }
 .gst-report-page tfoot td { border-top: 2px solid #e2e7eb; color: #173b53; background: #f6f8fa; font-weight: 800; }
@@ -8,3 +17,41 @@
 .gst-items-table td:first-child { display: grid; gap: 2px; white-space: normal; }
 .gst-items-table td:first-child small { color: #8a99a6; font-size: 8px; }
 .gst-items-table td:last-child, .gst-items-table th:last-child { text-align: right; }
+.gst-report-page .gst-print-only-row { display: none; }
+
+@page gst-report { size: A4 landscape; margin: 10mm; }
+
+@media print {
+  html:has(.gst-report-page), body:has(.gst-report-page),
+  .retail-dashboard-shell:has(.gst-report-page) { color-scheme: light; background: #fff; }
+  /* Allow the table to paginate in normal flow, outside the dashboard flex layout. */
+  #root:has(.gst-report-page),
+  .retail-dashboard-shell:has(.gst-report-page),
+  .dashboard-stage:has(.gst-report-page) { display: block; width: 100%; min-width: 0; min-height: 0; height: auto; overflow: visible; }
+  .gst-report-page { page: gst-report; width: 100%; min-width: 0; }
+  .gst-report-page .bill-summary-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); break-inside: avoid; }
+  .gst-report-page .bill-summary-grid article { min-width: 0; padding: 10px; }
+  .gst-report-page .bill-summary-grid strong { font-size: 13px; overflow-wrap: anywhere; }
+  .gst-report-page .gst-col-bill { width: 8%; }
+  .gst-report-page .gst-col-date { width: 12%; }
+  .gst-report-page .gst-col-products { width: 20%; }
+  .gst-report-page .gst-col-type, .gst-report-page .gst-col-rates { width: 7%; }
+  .gst-report-page .gst-col-taxable { width: 9%; }
+  .gst-report-page .gst-col-tax { width: 9%; }
+  .gst-report-page .gst-col-total { width: 8%; }
+  .gst-report-page .gst-col-gross { width: 11%; }
+  .gst-report-page .bill-table-card { min-height: 0; overflow: visible; border-radius: 0; }
+  .gst-report-page .bill-table-scroll { overflow: visible; }
+  .gst-report-page .bill-table-card table { width: 100%; min-width: 0; table-layout: fixed; }
+  .gst-report-page .bill-table-card th,
+  .gst-report-page .bill-table-card td { padding: 6px 3px; font-size: 8px; white-space: normal; overflow-wrap: anywhere; }
+  .gst-report-page .bill-table-card td:first-child { display: table-cell; }
+  .gst-report-page .bill-table-card td:first-child small { display: block; margin-top: 3px; }
+  .gst-report-page .bill-table-card .amount strong { font-size: 8px; }
+  .gst-report-page .payment-tags { gap: 2px; }
+  .gst-report-page .payment-tags span { padding: 2px; font-size: 8px; }
+  .gst-report-page .gst-print-only-row { display: table-row; }
+  .gst-report-page thead { display: table-header-group; }
+  .gst-report-page tfoot { display: table-row-group; }
+  .gst-report-page tr { break-inside: avoid; }
+}

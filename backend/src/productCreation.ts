@@ -3,8 +3,22 @@ import { Timestamp, type Firestore } from 'firebase-admin/firestore';
 import { productFields } from './productDefaults.js';
 import { allocateProductCodes, nextProductCode, type ImportTax } from './productImportValidation.js';
 
-// The user confirmed number; its unitId is verified by the existing POS serializer.
-export const PRODUCT_UNITS = [{ id: 2, name: 'number' }];
+// Follow the supplied POS unit order, preserving the existing NUMBER unitId (2).
+export const PRODUCT_UNITS = [
+  { id: 0, name: 'KILOGRAM' },
+  { id: 1, name: 'LITER' },
+  { id: 2, name: 'NUMBER' },
+  { id: 3, name: 'MILLILITRE' },
+  { id: 4, name: 'BOX' },
+  { id: 5, name: 'TIN' },
+  { id: 6, name: 'JAR' },
+  { id: 7, name: 'BOTTLE' },
+  { id: 8, name: 'GRAM' },
+  { id: 9, name: 'METER' },
+  { id: 10, name: 'DOZEN' },
+  { id: 11, name: 'BAG' },
+  { id: 12, name: 'PIECE' },
+];
 const price = z.number().finite().nonnegative();
 export const newProductSchema = z.object({
   requestId: z.uuid(), code: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),

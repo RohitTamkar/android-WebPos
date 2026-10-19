@@ -39,8 +39,6 @@ interface ProductFilters {
   search: string;
 }
 
-type SortKey = 'amount' | 'code' | 'quantity';
-
 interface ProductWiseReportPageProps {
   outlet: OutletSummary;
   reportName?: string;
@@ -74,7 +72,6 @@ export const ProductWiseReportPage = ({ outlet, token, onSessionExpired, reportN
   const [filters, setFilters] = useState(initialFilters);
   const [appliedFilters, setAppliedFilters] = useState(initialFilters);
   const [report, setReport] = useState<ProductReportResponse | null>(null);
-  const [sortKey, setSortKey] = useState<SortKey>('amount');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
@@ -113,10 +110,8 @@ export const ProductWiseReportPage = ({ outlet, token, onSessionExpired, reportN
 
   const sortedProducts = useMemo(() => {
     const rows = [...(report?.products ?? [])];
-    if (sortKey === 'code') return rows.sort((left, right) => compareCodes(left.code, right.code));
-    if (sortKey === 'quantity') return rows.sort((left, right) => right.quantity - left.quantity);
-    return rows.sort((left, right) => right.amount - left.amount);
-  }, [report, sortKey]);
+    return rows.sort((left, right) => compareCodes(left.code, right.code));
+  }, [report]);
 
   const applyFilters = () => {
     const dateError = reportDateError(filters.startDate, filters.endDate);
@@ -154,7 +149,7 @@ export const ProductWiseReportPage = ({ outlet, token, onSessionExpired, reportN
   return (
     <section className="bill-report-page category-report-page product-report-page">
       <div className="bill-report-heading">
-        <div><span>REPORTS</span><h1>Product Wise Report</h1><p>{outlet.name} · Billing totals for each product, with product codes.</p></div>
+        <div><strong className="report-print-shop-name">{outlet.name}</strong><span>REPORTS</span><h1>Product Wise Report</h1><p>{outlet.name} · Billing totals for each product, with product codes.</p></div>
         <div className="bill-report-actions">
           <button type="button" onClick={exportExcel} disabled={!report?.products.length}><Download /> Export Excel</button>
           <button type="button" onClick={() => window.print()}><Printer /> Print / PDF</button>
@@ -162,8 +157,8 @@ export const ProductWiseReportPage = ({ outlet, token, onSessionExpired, reportN
       </div>
 
       <div className="bill-report-filters category-product-search-filters">
-        <label><span>From date</span><ReportDateInput aria-label="From date" value={filters.startDate} onChange={event => setFilters(current => ({ ...current, startDate: event.target.value }))} /></label>
-        <label><span>To date</span><ReportDateInput aria-label="To date" value={filters.endDate} onChange={event => setFilters(current => ({ ...current, endDate: event.target.value }))} /></label>
+        <label><span>From date</span><ReportDateInput aria-label="From date" value={filters.startDate} onChange={value => setFilters(current => ({ ...current, startDate: value }))} /></label>
+        <label><span>To date</span><ReportDateInput aria-label="To date" value={filters.endDate} onChange={value => setFilters(current => ({ ...current, endDate: value }))} /></label>
         <label className="bill-search-filter"><span>Product search</span><div><Search /><input value={filters.search} onChange={event => setFilters(current => ({ ...current, search: event.target.value }))} onKeyDown={event => { if (event.key === 'Enter') applyFilters(); }} placeholder="Product code, name or category" /></div></label>
         <div className="bill-filter-buttons"><button type="button" className="apply" onClick={applyFilters}><Filter /> Apply</button><button type="button" onClick={resetFilters}><X /> Reset</button></div>
       </div>
@@ -181,7 +176,6 @@ export const ProductWiseReportPage = ({ outlet, token, onSessionExpired, reportN
         {!loading && !error && report?.products.length === 0 && <div className="bill-report-state"><PackageSearch /><strong>No product sales found for these filters.</strong><p>Choose another date or clear some filters.</p></div>}
         {!loading && !error && report && report.products.length > 0 && (
           <>
-            <div className="product-sort-bar"><span>Sort by</span>{(['amount', 'code', 'quantity'] as SortKey[]).map(key => <button type="button" key={key} className={sortKey === key ? 'active' : ''} onClick={() => setSortKey(key)}>{key === 'amount' ? 'Amount' : key === 'code' ? 'Product code' : 'Quantity'}</button>)}</div>
             <div className="bill-table-scroll"><table><thead><tr><th>Code</th><th>Product</th><th>Category</th><th>Bills</th><th>Quantity</th><th className="amount">Avg Rate</th><th>Share</th><th className="amount">Amount</th></tr></thead><tbody>{sortedProducts.map(product => <tr key={product.productId}><td className="product-code-cell"><span className="product-code">{product.code || '—'}</span></td><td><strong>{product.name}</strong></td><td>{product.category}</td><td>{product.billCount}</td><td>{quantity(product.quantity)}</td><td className="amount">{money(product.averageRate)}</td><td><div className="category-share"><span><i style={{ width: `${Math.min(100, product.share)}%` }} /></span><small>{product.share.toFixed(1)}%</small></div></td><td className="amount"><strong>{money(product.amount)}</strong></td></tr>)}</tbody><tfoot><tr><td /><td><strong>Total</strong></td><td /><td>{report.summary.totalBills}</td><td>{quantity(report.summary.totalQuantity)}</td><td /><td>100%</td><td className="amount"><strong>{money(report.summary.totalAmount)}</strong></td></tr></tfoot></table></div>
           </>
         )}
