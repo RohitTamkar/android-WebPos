@@ -3,3 +3,52 @@
 .stock-in-out-report-page tfoot td:first-child { display: table-cell; }
 .stock-in-out-report-page .bill-detail-meta strong { white-space: normal; overflow-wrap: anywhere; }
 .stock-in-out-report-page .bill-items-table td:first-child small { display: block; margin-top: 3px; color: #8a99a6; font-size: 8px; }
+
+.stock-in-out-report-page .stock-col-products { width: 30%; }
+.stock-in-out-report-page .stock-col-type { width: 12%; }
+.stock-in-out-report-page .stock-col-quantity { width: 11%; }
+.stock-in-out-report-page .stock-col-price { width: 13%; }
+.stock-in-out-report-page .stock-col-supplier { width: 14%; }
+.stock-in-out-report-page .stock-col-date { width: 20%; }
+.stock-in-out-report-page .bill-table-card tr > :nth-child(5) { padding-left: 24px; }
+
+/* Print/PDF: let the table fit the page width instead of being clipped by its scroll container. */
+@page stock-in-out-report { size: A4; margin: 10mm; }
+@media print {
+  html:has(.stock-in-out-report-page), body:has(.stock-in-out-report-page),
+  .retail-dashboard-shell:has(.stock-in-out-report-page) { color-scheme: light; background: #fff; }
+  #root:has(.stock-in-out-report-page),
+  .retail-dashboard-shell:has(.stock-in-out-report-page),
+  .dashboard-stage:has(.stock-in-out-report-page) { display: block; width: 100%; min-width: 0; min-height: 0; height: auto; overflow: visible; }
+  .stock-in-out-report-page { page: stock-in-out-report; width: 100%; min-width: 0; }
+  .stock-in-out-report-page .bill-summary-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); break-inside: avoid; }
+  .stock-in-out-report-page .bill-summary-grid article { min-width: 0; padding: 10px; }
+  .stock-in-out-report-page .bill-summary-grid strong { font-size: 13px; overflow-wrap: anywhere; }
+  .stock-in-out-report-page .bill-table-card { min-height: 0; overflow: visible; border-radius: 0; }
+  .stock-in-out-report-page .bill-table-scroll { overflow: visible; }
+  .stock-in-out-report-page .bill-table-card table { width: 100%; min-width: 0; table-layout: fixed; }
+  .stock-in-out-report-page .bill-table-card th, .stock-in-out-report-page .bill-table-card td { padding: 6px 5px; font-size: 9px; white-space: normal; overflow-wrap: anywhere; }
+  .stock-in-out-report-page .bill-table-card tr > :nth-child(5) { padding-left: 14px; }
+  .stock-in-out-report-page .bill-table-card tr { break-inside: avoid; }
+  .stock-in-out-report-page .bill-table-card thead { display: table-header-group; }
+}
+
+/* Stock-In / Stock-Out tabs, matching the Android report: separate views with their own colours. */
+.stock-direction-tabs { display: grid; grid-template-columns: 1fr 1fr; margin-top: 18px; border-top: 3px solid #b5001f; border-radius: 10px; background: #fff; box-shadow: 0 2px 8px rgba(29,50,69,.05); overflow: hidden; }
+.stock-direction-tab { display: grid; justify-items: center; gap: 6px; padding: 12px 8px 10px; border: 0; border-bottom: 3px solid transparent; background: transparent; color: #6b7a52; font: inherit; font-size: 13px; font-weight: 500; letter-spacing: .02em; cursor: pointer; }
+.stock-direction-tab svg { width: 22px; height: 22px; }
+.stock-direction-tab.in svg { color: #16a34a; }
+.stock-direction-tab.out svg { color: #b5001f; }
+.stock-direction-tab[aria-selected="true"] { font-size: 16px; font-weight: 600; }
+.stock-direction-tab.in[aria-selected="true"] { color: #3567f0; border-bottom-color: #16a34a; background: #f2fbf5; }
+.stock-direction-tab.out[aria-selected="true"] { color: #b5001f; border-bottom-color: #b5001f; background: #fdf2f4; }
+.stock-direction-tab:hover:not([aria-selected="true"]) { background: #f7f8fa; }
+.stock-direction-tab:disabled { cursor: wait; opacity: .6; }
+.stock-in-out-report-page .stock-summary-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.stock-print-direction { display: none; }
+@media (max-width: 700px) { .stock-in-out-report-page .stock-summary-grid { grid-template-columns: 1fr; } }
+@media print {
+  .stock-direction-tabs { display: none; }
+  .stock-print-direction { display: block; margin-top: 6px; font-size: 14px; }
+  .stock-in-out-report-page .stock-summary-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}

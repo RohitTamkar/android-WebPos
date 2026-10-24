@@ -18,7 +18,7 @@ test('multiple category proposals are unique and follow highest-plus-one, not ga
 });
 test('category name matches stay visible without merging or suppressing the number proposal', () => {
   const proposal = proposeCategoryNumbers([category('source', 1, ' Meals ')], [category('different-id', 99, 'MEALS')])[0];
-  assert.equal(proposal.proposed, 100); assert.match(proposal.conflicts[0], /identity needs review/);
+  assert.equal(proposal.proposed, 100); assert.match(proposal.conflicts[0], /already present in the destination/);
   assert.ok(!Object.hasOwn(proposal, 'destinationId'));
 });
 test('product source-code collisions do not create identity conflicts or block proposals', () => {
@@ -35,7 +35,7 @@ test('product codes match the existing backend nextProductCode algorithm, includ
 test('product names and barcodes are separate warnings, not automatic identity matches', () => {
   const proposal = proposeProductCodes([product('source', 1, 'Coffee', 'BAR')], [product('dest', 10, 'Coffee', 'BAR')])[0];
   assert.equal(proposal.proposed, 11); assert.equal(proposal.conflicts.length, 2);
-  assert.match(proposal.conflicts[0], /Product name/); assert.match(proposal.conflicts[1], /Barcode/);
+  assert.match(proposal.conflicts[0], /^Product .* is already present/); assert.match(proposal.conflicts[1], /barcode .* is already present/);
 });
 test('blank and known placeholder barcodes do not create false identity warnings', () => {
   for (const code of ['', '0', ' 0 ']) assert.deepEqual(proposeProductCodes([product('a', 1, 'A', code)], [product('b', 5, 'B', code)])[0].conflicts, []);

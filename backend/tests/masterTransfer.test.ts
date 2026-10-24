@@ -215,16 +215,25 @@ test('explicit category mapping reuses an existing category without modifying it
   const result = await f.transfer({ ...f.categories, categoryIds: ['c1'], categoryMappings: { c1: 'd1' } });
   assert.equal(result.items[0]!.status, 'mapped'); assert.deepEqual(f.records, before); assert.deepEqual(f.writes, []);
 });
-test('category name conflicts and dependent products are skipped safely', async () => {
-  const f = fixture(); f.records.set('OUTLET/destination/CATEGORY/conflict', { name: 'Coffee', categoryNo: 100 });
-  const before = structuredClone(f.records); f.productRequest.categoryIds = ['c1']; f.productRequest.categoryMappings = {};
-  const result = await f.transfer(f.productRequest); assert.equal(result.skipped, 2); assert.deepEqual(f.records, before);
+test('a same-named destination category is already present; products go into it without changing it', async () => {
+  const f = fixture(); f.records.set('OUTLET/destination/CATEGORY/conflict', { name: ' coffee ', categoryNo: 100 });
+  const category = structuredClone(f.records.get('OUTLET/destination/CATEGORY/conflict')); f.productRequest.categoryIds = ['c1']; f.productRequest.categoryMappings = {};
+  const result = await f.transfer(f.productRequest);
+  assert.equal(result.items[0]!.status, 'already-transferred'); assert.equal(result.items[0]!.reason, 'Category already present in the destination.');
+  assert.equal(result.unchanged, 1); assert.equal(result.created, 1); assert.equal(newProducts(f)[0]!.category, 'conflict');
+  assert.deepEqual(f.records.get('OUTLET/destination/CATEGORY/conflict'), category); assert.ok(!f.writes.some(path => path.includes('/CATEGORY/')));
+  const ambiguous = fixture(); ambiguous.records.set('OUTLET/destination/CATEGORY/x', { name: 'Coffee' }); ambiguous.records.set('OUTLET/destination/CATEGORY/y', { name: 'Coffee' });
+  ambiguous.productRequest.categoryIds = ['c1']; ambiguous.productRequest.categoryMappings = {};
+  const before = structuredClone(ambiguous.records); const unclear = await ambiguous.transfer(ambiguous.productRequest);
+  assert.equal(unclear.skipped, 2); assert.deepEqual(ambiguous.records, before);
 });
-test('product name and barcode conflicts are review warnings, never identity matches or overwrite permission', async () => {
+test('a destination product with the same name or barcode is already present and is never overwritten', async () => {
   for (const change of [{ name: 'Coffee product' }, { barcode: 'BAR-1' }]) {
     const f = fixture(); Object.assign(f.records.get('OUTLET/destination/PRODUCT/old')!, change);
     const before = structuredClone(f.records); const result = await f.transfer(f.productRequest);
-    assert.equal(result.skipped, 1); assert.deepEqual(f.records, before); assert.equal(f.records.get('OUTLET/destination/PRODUCT/old')!.currentStock, 77);
+    assert.equal(result.skipped, 0); assert.equal(result.unchanged, 1);
+    assert.equal(result.items[0]!.status, 'already-transferred'); assert.equal(result.items[0]!.reason, 'Product already present in the destination.');
+    assert.deepEqual(f.records, before); assert.equal(f.records.get('OUTLET/destination/PRODUCT/old')!.currentStock, 77);
   }
 });
 test('repeated requests and concurrent retries do not duplicate categories or products', async () => {
@@ -317,4 +326,123 @@ test('colliding source product codes do not prevent sequential copies', async ()
 test('transaction retries recalculate sequential category numbers from concurrent changes', async () => {
   const f = fixture(); f.retry(); const result = await f.transfer(f.categories);
   assert.deepEqual(result.items.map(item => item.destinationNumber), [101, 102]);
+});
+
+const none = { stock: false, weighable: false, images: true, taxes: false, prices: false };
+const withOptions = (f: ReturnType<typeof fixture>, options: Partial<typeof none>, request: Record<string, unknown> = f.productRequest) =>
+  f.transfer({ ...request, options: { ...none, ...options } });
+
+test('transfer options: none selected keeps the original zero-stock, default-field behavior', async () => {
+  const f = fixture(); await withOptions(f, {}); const product = newProducts(f)[0]!;
+  assert.equal(product.currentStock, 0); assert.equal(product.stockable, false); assert.equal(product.weighable, false);
+  assert.equal(product.price, 0); assert.equal(product.mrpPrice, 0); assert.equal(product.hsnCode, ''); assert.equal(product.cess, 0);
+  assert.deepEqual(JSON.parse(String(product.priceTable)), { 'default price': 0 });
+});
+
+test('transfer options: each option copies only its own verified fields', async () => {
+  const stock = fixture(); await withOptions(stock, { stock: true }); let product = newProducts(stock)[0]!;
+  assert.equal(product.currentStock, 999); assert.equal(product.stockable, true); assert.equal(product.weighable, false); assert.equal(product.price, 0);
+  const weighable = fixture(); await withOptions(weighable, { weighable: true }); product = newProducts(weighable)[0]!;
+  assert.equal(product.weighable, true); assert.equal(product.currentStock, 0); assert.equal(product.stockable, false);
+  const taxes = fixture(); taxes.records.get('OUTLET/source/PRODUCT/p1')!.cess = 2; await withOptions(taxes, { taxes: true }); product = newProducts(taxes)[0]!;
+  assert.equal(product.taxIndex, 1); assert.equal(product.hsnCode, '123'); assert.equal(product.cess, 2); assert.equal(product.price, 0);
+  const prices = fixture(); Object.assign(prices.records.get('OUTLET/source/PRODUCT/p1')!, { wholeSaleAmount: 0, onlinePrice: 50 });
+  const priced = await withOptions(prices, { prices: true }); product = newProducts(prices)[0]!;
+  assert.equal(product.price, 45); assert.equal(product.mrpPrice, 60); assert.equal(product.costPrice, 20);
+  assert.equal(product.wholeSaleAmount, 0); assert.equal(product.onlinePrice, 50); assert.equal(product.currentStock, 0); assert.equal(product.hsnCode, '');
+  assert.deepEqual(JSON.parse(String(product.priceTable)), { 'default price': 45 });
+  assert.match(priced.items[0]!.reason, /premises prices not copied.*other price/);
+});
+
+test('transfer options: premises prices copy only to matching destination premises', async () => {
+  const f = fixture();
+  f.records.set('OUTLET/source/PRODUCT/p1', { ...f.records.get('OUTLET/source/PRODUCT/p1')!, priceTable: '{"default price":45,"AC Table price":30,"Garden price":25}' });
+  f.records.set('OUTLET/destination/PREMISES/ac', { name: ' ac  table ' });
+  const result = await withOptions(f, { prices: true });
+  assert.deepEqual(JSON.parse(String(newProducts(f)[0]!.priceTable)), { 'default price': 45, 'AC Table price': 30 });
+  assert.match(result.items[0]!.reason, /Garden price/);
+});
+
+test('transfer options: all five together, and missing optional source fields are handled safely', async () => {
+  const f = fixture(); f.records.get('OUTLET/source/PRODUCT/p1')!.cess = 1;
+  await withOptions(f, { stock: true, weighable: true, images: true, taxes: true, prices: true }); const product = newProducts(f)[0]!;
+  assert.deepEqual([product.currentStock, product.stockable, product.weighable, product.hsnCode, product.cess, product.price, product.mrpPrice, product.costPrice],
+    [999, true, true, '123', 1, 45, 60, 20]);
+  const sparse = fixture();
+  sparse.records.set('OUTLET/source/PRODUCT/p1', { name: 'Sparse', category: 'c1', taxIndex: 1, unitId: 2 });
+  const result = await withOptions(sparse, { stock: true, weighable: true, images: true, taxes: true, prices: true });
+  const created = newProducts(sparse)[0]!;
+  assert.equal(result.created, 1); assert.equal(created.currentStock, 0); assert.equal(created.weighable, false); assert.equal(created.price, 0);
+  assert.match(result.items[0]!.reason, /source stock unavailable/);
+});
+
+test('transfer options: price table disagreement still skips, and invalid tax references are never substituted', async () => {
+  const price = fixture(); price.records.get('OUTLET/source/PRODUCT/p1')!.priceTable = '{"default price":40}';
+  const priced = await withOptions(price, { prices: true });
+  assert.equal(priced.created, 0); assert.match(priced.items[0]!.reason, /default price table must agree/);
+  const tax = fixture(); tax.records.get('OUTLET/source/PRODUCT/p1')!.taxIndex = 77;
+  const taxed = await withOptions(tax, { taxes: true });
+  assert.equal(taxed.created, 0); assert.match(taxed.items[0]!.reason, /tax or unit reference is invalid/); assert.equal(tax.writes.length, 0);
+});
+
+test('transfer options: Images unchecked creates the product without image fields and touches no storage', async () => {
+  const f = fixture(); f.records.get('OUTLET/source/PRODUCT/p1')!.imagePath = 'sensible_images/OUTLET/source/PRODUCT_IMAGES/p1/abc123.png';
+  const { bucket, objects } = fakeStorage();
+  const result = await transferOutletMastersWithStorage(f.db, 'source', 'user', assignment, secret, f.grant, { ...f.productRequest, options: { ...none, images: false } }, bucket);
+  const product = newProducts(f)[0]!;
+  assert.equal(result.created, 1); assert.ok(!('image' in product) && !('imagePath' in product)); assert.equal(objects.size, 0);
+  const invalid = fixture(); invalid.records.get('OUTLET/source/PRODUCT/p1')!.image = 'not/a valid reference';
+  assert.equal((await withOptions(invalid, { images: false })).created, 1);
+});
+
+test('transfer options: category transfer applies options to linked products; retries never add stock twice', async () => {
+  const f = fixture();
+  const request = { ...f.categories, categoryIds: ['c1'], products: [{ sourceProductId: 'p1', fields: [...requiredFields] }] };
+  const first = await withOptions(f, { stock: true, weighable: true, prices: true }, request);
+  assert.equal(first.created, 2); const product = newProducts(f)[0]!;
+  assert.deepEqual([product.currentStock, product.weighable, product.price], [999, true, 45]);
+  f.records.get('OUTLET/source/PRODUCT/p1')!.currentStock = 5;
+  const again = await withOptions(f, { stock: true, weighable: true, prices: true }, request);
+  assert.equal(again.created, 0); assert.equal(newProducts(f).length, 1); assert.equal(f.records.get(f.writes.find(path => path.includes('/PRODUCT/'))!)!.currentStock, 999);
+  assert.equal(f.records.get('OUTLET/source/PRODUCT/p1')!.currentStock, 5, 'source stock is never changed');
+});
+
+test('transfer options: invalid option payloads and unauthorized requests are rejected without writes', async () => {
+  const f = fixture();
+  for (const options of [{ stock: 'yes' }, { ...none, extra: true }, { stock: true }, null]) {
+    await assert.rejects(f.transfer({ ...f.productRequest, options }), (error: { status?: number }) => error.status === 422);
+  }
+  await assert.rejects(f.transfer({ ...f.productRequest, options: none }, 'bad-grant'), (error: { status?: number }) => error.status === 403);
+  assert.equal(f.writes.length, 0);
+  const g = fixture();
+  await assert.rejects(g.transfer({ ...g.productRequest, options: none }, g.grant, null), (error: { status?: number }) => error.status === 401);
+  assert.equal(g.writes.length, 0);
+});
+
+test('taxes are validated against the Android tax catalog used by Add/Edit Product, not TAX_MASTER', async () => {
+  const f = fixture(); f.records.get('OUTLET/source/PRODUCT/p1')!.taxIndex = 9;
+  const result = await withOptions(f, { taxes: true });
+  assert.equal(result.created, 1); assert.equal(newProducts(f)[0]!.taxIndex, 9);
+  assert.ok(!f.reads.some(path => path.includes('TAX_MASTER')));
+  const unknown = fixture(); unknown.records.get('OUTLET/source/PRODUCT/p1')!.taxIndex = 13;
+  assert.equal((await withOptions(unknown, { taxes: true })).created, 0);
+});
+
+test('Category Transfer adds nothing to a category already present in the destination', async () => {
+  const f = fixture(); f.records.set('OUTLET/destination/CATEGORY/existing', { name: 'Coffee', categoryNo: 100 });
+  const before = structuredClone(f.records);
+  const result = await f.transfer({ ...f.categories, categoryIds: ['c1'], products: [{ sourceProductId: 'p1', fields: [...requiredFields] }] });
+  assert.equal(result.items[0]!.status, 'already-transferred'); assert.equal(result.created, 0);
+  assert.equal(result.items[1]!.status, 'skipped'); assert.match(result.items[1]!.reason, /category is already present/);
+  assert.deepEqual(f.records, before); assert.deepEqual(f.writes, []);
+});
+
+test('a repeated Category Transfer reports everything as already present and adds no new products', async () => {
+  const f = fixture(); const request = { ...f.categories, categoryIds: ['c1'], products: [{ sourceProductId: 'p1', fields: [...requiredFields] }] };
+  assert.equal((await f.transfer(request)).created, 2);
+  f.records.set('OUTLET/source/PRODUCT/p9', { name: 'New coffee', category: 'c1', taxIndex: 1, unitId: 2 });
+  const again = await f.transfer({ ...request, products: [...request.products, { sourceProductId: 'p9', fields: [...requiredFields] }] });
+  assert.equal(again.created, 0); assert.equal(again.unchanged, 2);
+  assert.match(again.items.find(item => item.sourceId === 'p9')!.reason, /category is already present/);
+  assert.equal(newProducts(f).length, 1);
 });

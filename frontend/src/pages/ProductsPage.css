@@ -211,4 +211,11 @@
 .products-options-menu button.danger .products-menu-icon { background: #fef2f2; color: #dc2626; }
 .products-options-menu button.danger:hover:not(:disabled) { background: #fef2f2; }
 .products-options-menu button:disabled { opacity: .45; cursor: not-allowed; }
+.products-sort-toggle .products-sort-current { margin-left: auto; color: var(--muted, #7188ad); font-size: 12px; font-weight: 400; }
+.products-sort-toggle .products-chevron { margin-left: 0; }
+.products-sort-toggle[aria-expanded="true"] .products-chevron { transform: rotate(180deg); }
+.products-sort-menu { display: grid; gap: 2px; margin: 2px 0 2px 42px; padding-left: 8px; border-left: 2px solid #ece9ff; }
+.products-options-menu .products-sort-menu button { padding: 8px 10px; font-weight: 400; }
+.products-options-menu .products-sort-menu button[aria-checked="true"] { background: #f1efff; color: #5547ff; font-weight: 600; }
+.products-sort-check { margin-left: auto; }
 .products-menu-divider { height: 1px; margin: 4px 6px; background: var(--line, #e2e8f0); }

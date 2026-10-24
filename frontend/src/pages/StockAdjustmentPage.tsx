@@ -3,6 +3,7 @@ import { ArrowDownToLine, ArrowLeft, ArrowUpFromLine, Package, Plus, RefreshCw, 
 import type { OutletSummary } from './OutletSelectionPage.tsx';
 import { loadProductList, ProductListRequestError } from './productListApi.ts';
 import { createRequestId } from '../utils/requestId.ts';
+import { SuccessPopup } from './SuccessPopup.tsx';
 import './DevicesPage.css';
 import './StockAdjustmentPage.css';
 
@@ -19,7 +20,7 @@ export function StockAdjustmentPage({ outlet, token, onSessionExpired }: { outle
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
+  const [success, setSuccess] = useState('');
   const [reload, setReload] = useState(0);
   const [selected, setSelected] = useState('');
   const [remark, setRemark] = useState('');
@@ -87,7 +88,7 @@ export function StockAdjustmentPage({ outlet, token, onSessionExpired }: { outle
     if (rows.length >= 100) { setError('A stock adjustment can contain up to 100 products.'); return; }
     if (mode === 'out' && !remark.trim()) { setError('Select or enter a remark before adding a product.'); return; }
     setRows(current => [...current, { productId: selected, quantity: '1', remark: mode === 'out' ? remark.trim() : '' }]);
-    setSelected(''); setError(''); setNotice(''); pending.current = null;
+    setSelected(''); setError(''); pending.current = null;
   };
   const save = async () => {
     if (busy.current || !mode) return;
@@ -107,7 +108,7 @@ export function StockAdjustmentPage({ outlet, token, onSessionExpired }: { outle
         throw new Error(result.message || 'The stock save could not be confirmed. Retry the same confirmation.');
       }
       pending.current = null; setUncertain(false); setRows([]); setSelected(''); setConfirming(false);
-      setNotice(`${mode === 'in' ? 'Stock added' : 'Stock removed'} successfully. Reference: ${result.data.documentId}`);
+      setSuccess(mode === 'in' ? 'Stock added successfully' : 'Stock removed successfully');
       setReload(value => value + 1);
     } catch (failure) {
       if (pending.current) setUncertain(true);
@@ -118,13 +119,13 @@ export function StockAdjustmentPage({ outlet, token, onSessionExpired }: { outle
 
   return <section className="devices-page stock-adjustment-page">
     <header className="devices-heading"><div><span>MASTERS</span><h1><Package />{mode ? mode === 'in' ? 'Stock In' : 'Stock Out' : 'Stock In and Out'}</h1><p>{outlet.name} · {mode ? 'Select products and quantities, then review before saving.' : 'Receive stock or record stock leaving your outlet.'}</p></div>
-      {mode && <button type="button" className="devices-refresh" disabled={locked} onClick={() => { setMode(null); setError(''); setNotice(''); }}><ArrowLeft /> Back</button>}
+      {mode && <button type="button" className="devices-refresh" disabled={locked} onClick={() => { setMode(null); setError(''); }}><ArrowLeft /> Back</button>}
     </header>
     {!mode ? <div className="stock-choice-grid">{(['in', 'out'] as const).map(direction => <article className="stock-choice-card" key={direction}>
       {direction === 'in' ? <ArrowDownToLine /> : <ArrowUpFromLine />}<h2>{direction === 'in' ? 'Stock In' : 'Stock Out'}</h2><p>{direction === 'in' ? 'Add received quantities to current stock.' : 'Record issued quantities with a remark.'}</p>
       <button type="button" className="stock-primary" aria-label={`Go ahead with Stock ${direction === 'in' ? 'In' : 'Out'}`} onClick={() => { setMode(direction); setRows([]); setSelected(''); setRemark(''); pending.current = null; }}>Go Ahead</button>
     </article>)}</div> : <>
-      {notice && <p role="status" className="stock-feedback">{notice}</p>}
+      {success && <SuccessPopup message={success} onDismiss={() => setSuccess('')} />}
       {error && !confirming && <p role="alert" className="stock-error">{error}</p>}
       {loading ? <div className="devices-state" role="status"><RefreshCw />Loading products…</div> : loadError ? <div className="devices-state"><p role="alert">{loadError}</p><button type="button" className="devices-refresh" disabled={locked} onClick={refresh}>Retry loading products</button></div> : <>
         <div className="stock-entry-toolbar"><label>Product<select aria-label="Select product" disabled={locked} value={selected} onChange={event => setSelected(event.target.value)}><option value="">Select Product</option>

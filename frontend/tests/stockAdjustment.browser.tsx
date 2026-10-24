@@ -69,7 +69,9 @@ void (async () => {
   assert(writes.length === 1 && stock === 12.5, 'Duplicate clicks are guarded and lost response is retained');
   assert(document.querySelector<HTMLButtonElement>('dialog button')!.disabled, 'Uncertain save cannot be abandoned as unsaved');
   button('Retry confirmation').click();
-  await until(() => !document.querySelector('dialog[open]') && document.querySelector('[role="status"]')?.textContent?.includes('Stock added'), 'reconciled save');
+  await until(() => document.querySelector('dialog[open]')?.textContent?.includes('Stock added successfully'), 'reconciled save');
+  assert(!document.body.textContent!.includes('Reference:'), 'No internal reference shown');
+  button('OK').click(); await until(() => !document.querySelector('dialog[open]'), 'success dismissed');
   assert(writes.length === 2 && writes[0]!.requestId === writes[1]!.requestId && stock === 12.5, 'Retry uses the same request and does not apply stock twice');
   passed.push('Stock In choices, product rows, fractional quantities, explicit confirmation and safe lost-response retry');
   button('Back').click(); await pause();
@@ -84,7 +86,8 @@ void (async () => {
   button('Cancel').click(); await pause(); assert(writes.length === 2, 'Cancel does not save');
   button('Remove Stock').click(); await until(() => document.querySelector('dialog[open]'), 'second stock out review');
   button('Confirm stock changes').click();
-  await until(() => document.querySelector('[role="status"]')?.textContent?.includes('Stock removed'), 'stock out saved');
+  await until(() => document.querySelector('dialog[open]')?.textContent?.includes('Stock removed successfully'), 'stock out saved');
+  button('OK').click(); await until(() => !document.querySelector('dialog[open]'), 'stock out success dismissed');
   assert(stock === 10.5 && writes[2]!.items[0]!.remark === 'Damaged', 'Stock out sends its remark and subtracts quantity');
   passed.push('Stock Out uses existing remark suggestions, rejects insufficient stock, and saves only after confirmation');
   await until(() => document.querySelector('select option[value="p2"]'), 'refreshed products');

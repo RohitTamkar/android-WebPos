@@ -181,6 +181,7 @@ export function AddProductForm({ outletId, token, initialCategory, onCancel, onC
           <div className="form-field"><label htmlFor="product-category">Category</label>
             <select id="product-category" disabled={saving || !options} value={draft.category} aria-invalid={!!errors.category} aria-describedby={errors.category ? 'product-category-error' : undefined} onChange={event => update('category', event.target.value)}>
               <option value="">Select Category</option>{options?.categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}
+              {options && draft.category && !options.categories.some(category => category.id === draft.category) && <option value={draft.category}>Deleted category</option>}
             </select>{issue('category')}
             {options && !options.categories.length && <span className="category-form-error">Add a category in Category Master first.</span>}
           </div>

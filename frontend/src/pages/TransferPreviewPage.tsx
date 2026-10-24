@@ -11,6 +11,12 @@ interface Category { id: string; name: string; regionalName?: string; dayType?: 
 interface Product { documentId: string; fields: Record<string, unknown> }
 interface TransferResult { created: number; unchanged: number; skipped: number; items: { type: string; sourceId: string; name: string; status: string; reason: string; destinationNumber?: number }[] }
 type Mode = 'categories' | 'products';
+type TransferOptions = { stock: boolean; weighable: boolean; images: boolean; taxes: boolean; prices: boolean };
+// Images were always copied before these options existed, so that remains the default.
+const defaultOptions: TransferOptions = { stock: false, weighable: false, images: true, taxes: false, prices: false };
+const transferOptions: [keyof TransferOptions, string][] = [
+  ['stock', 'Stock'], ['weighable', 'Weighable'], ['images', 'Images'], ['taxes', 'Assigned Taxes'], ['prices', 'Prices'],
+];
 const fields = [
   ['name', 'Product Name'], ['regionalName', 'Regional Name'], ['shortName', 'Short Name'],
   ['category', 'Category mapping'], ['price', 'Selling / Default Price'], ['mrpPrice', 'MRP Price'],
@@ -144,9 +150,10 @@ function OutletPreview({ source, destination, mode, token, grant, busy, onBusy, 
   const sourceProducts = usePreviewRead<Product[]>(`${base(source.id)}/products`, token, onSessionExpired);
   const destinationProducts = usePreviewRead<Product[]>(`${base(destination.id)}/products`, token, onSessionExpired);
   const [search, setSearch] = useState('');
-  const [selected, setSelected] = useState<string[]>([]);
+  const [rawSelected, setSelected] = useState<string[]>([]);
   const [selectedFields, setSelectedFields] = useState<Record<string, string[]>>({});
   const [confirming, setConfirming] = useState(false);
+  const [options, setOptions] = useState<TransferOptions>(defaultOptions);
   const [error, setError] = useState('');
   const [result, setResult] = useState<TransferResult | null>(null);
   const [showOutcome, setShowOutcome] = useState(false);
@@ -168,31 +175,46 @@ function OutletPreview({ source, destination, mode, token, grant, busy, onBusy, 
   const targetProducts = destinationProducts.data ?? [];
   const categoryName = (id: unknown) => categories.find(category => category.id === id)?.name || `Unavailable (${text(id)})`;
   const query = search.trim().toLowerCase();
+  // Records already in the destination (same name, or same real barcode for products) cannot be transferred again.
+  const presentCategory = (category: Category | undefined) => category && normalized(category.name)
+    ? targets.find(target => normalized(target.name) === normalized(category.name)) : undefined;
+  const realBarcode = (value: unknown) => typeof value === 'string' && value.trim() && value.trim() !== '0' ? value.trim() : '';
+  const presentProduct = (product: Product) => targetProducts.some(target => (!!normalized(product.fields.name) && normalized(target.fields.name) === normalized(product.fields.name))
+    || (!!realBarcode(product.fields.barcode) && realBarcode(target.fields.barcode) === realBarcode(product.fields.barcode)));
+  const isPresent = (id: string) => mode === 'categories' ? !!presentCategory(categories.find(category => category.id === id))
+    : products.some(product => product.documentId === id && presentProduct(product));
+  const selected = rawSelected.filter(id => !isPresent(id));
+  // Product Transfer places new products in a same-named existing category instead of duplicating it.
+  const mappingFor = (id: string) => categoryMappings[id] ?? (mode === 'products' ? presentCategory(categories.find(category => category.id === id))?.id : undefined);
   const rows = mode === 'categories' ? categories.filter(category => [category.name, category.regionalName, category.categoryNo].some(value => normalized(value).includes(query)))
     .map(category => ({ id: category.id, category })) : products.filter(product => [product.fields.name, product.fields.code, product.fields.barcode, categoryName(product.fields.category)].some(value => normalized(value).includes(query)))
       .map(product => ({ id: product.documentId, product }));
   const toggle = (id: string) => setSelected(current => current.includes(id) ? current.filter(value => value !== id) : [...current, id]);
-  const allVisible = rows.length > 0 && rows.every(row => selected.includes(row.id));
+  const selectableRows = rows.filter(row => !isPresent(row.id));
+  const allVisible = selectableRows.length > 0 && selectableRows.every(row => selected.includes(row.id));
   const chosenCategories = categories.filter(category => mode === 'categories' ? selected.includes(category.id) : products.some(product => selected.includes(product.documentId) && product.fields.category === category.id));
   const chosenProducts = products.filter(product => mode === 'categories'
     ? typeof product.fields.category === 'string' && selected.includes(product.fields.category)
     : selected.includes(product.documentId));
   const productFields = (product: Product) => selectedFields[product.documentId] ?? ['name', 'category', 'taxIndex', 'unitId'].filter(key => available(product, key));
-  const categoryProposals = proposeCategoryNumbers(chosenCategories.filter(category => !categoryMappings[category.id]), targets);
+  const categoryProposals = proposeCategoryNumbers(chosenCategories.filter(category => !mappingFor(category.id)), targets);
   const productProposals = proposeProductCodes(chosenProducts, targetProducts);
   const categoryProposal = (id: string) => categoryProposals.find(proposal => proposal.id === id);
   const productProposal = (id: string) => productProposals.find(proposal => proposal.id === id);
   const proposedNumber = (value: number | null | undefined) => value == null ? 'Unavailable' : String(value);
-  const mappedName = (id: string) => categoryMappings[id] ? `Existing category: ${targets.find(category => category.id === categoryMappings[id])?.name}` : `New category #${proposedNumber(categoryProposal(id)?.proposed)} (estimated)`;
+  const mappedName = (id: string) => mappingFor(id) ? `Existing category: ${targets.find(category => category.id === mappingFor(id))?.name}` : `New category #${proposedNumber(categoryProposal(id)?.proposed)} (estimated)`;
   const fieldValue = (product: Product, key: string) => key === 'category' ? `${categoryName(product.fields.category)} → ${mappedName(String(product.fields.category))}` : key === 'price'
     ? `${text(product.fields.price)} (price table default: ${text(defaultPrice(product))})` : text(product.fields[key]);
   const allocationErrors = [...categoryProposals, ...productProposals].filter(proposal => proposal.error);
+  const presentLinked = mode === 'categories' ? chosenProducts.filter(presentProduct) : [];
+  if (presentLinked.length) allocationErrors.push({ id: 'already-present', proposed: null, conflicts: [],
+    error: `Already present in the destination: ${presentLinked.map(product => text(product.fields.name)).join(', ')}. Duplicates are not allowed, so this category cannot be transferred. Use Product Transfer for the other products.` });
   const transferSize = selected.length + (mode === 'categories' ? chosenProducts.length : 0);
   if (transferSize > 100) allocationErrors.push({ id: 'transfer-limit', proposed: null,
     error: 'A transfer can include at most 100 categories and products. Select fewer categories or use Product Transfer for a smaller selection.', conflicts: [] });
   const chosenCategoryMappings: Record<string, string> = {};
   for (const category of chosenCategories) {
-    const destinationCategoryId = categoryMappings[category.id];
+    const destinationCategoryId = mappingFor(category.id);
     if (destinationCategoryId) chosenCategoryMappings[category.id] = destinationCategoryId;
   }
   const execute = async () => {
@@ -204,7 +226,7 @@ function OutletPreview({ source, destination, mode, token, grant, busy, onBusy, 
         body: JSON.stringify({ destinationOutletId: destination.id, mode, categoryIds: chosenCategories.map(category => category.id),
           products: chosenProducts.map(product => ({ sourceProductId: product.documentId,
             fields: mode === 'categories' ? ['name', 'category', 'taxIndex', 'unitId'] : productFields(product) })),
-          categoryMappings: chosenCategoryMappings }),
+          categoryMappings: chosenCategoryMappings, options }),
       });
       if (response.status === 401) { onSessionExpired(); return; }
       const payload = await response.json() as { success?: boolean; data?: TransferResult; message?: string };
@@ -223,79 +245,67 @@ function OutletPreview({ source, destination, mode, token, grant, busy, onBusy, 
     <div className="transfer-preview-controls"><h2>{mode === 'categories' ? 'Category Transfer' : 'Product Transfer'}</h2>
       <p><strong>{source.name}</strong> → <strong>{destination.name}</strong></p>
       <label>Search {mode}<input type="search" value={search} placeholder={`Search ${mode}…`} onChange={event => setSearch(event.target.value)} /></label>
-      <label className="transfer-preview-check"><input type="checkbox" checked={allVisible} disabled={!rows.length} ref={input => { if (input) input.indeterminate = !allVisible && rows.some(row => selected.includes(row.id)); }}
-        onChange={() => setSelected(current => allVisible ? current.filter(id => !rows.some(row => row.id === id)) : [...new Set([...current, ...rows.map(row => row.id)])])} />Select all visible {mode}</label>
+      <label className="transfer-preview-check"><input type="checkbox" checked={allVisible} disabled={!selectableRows.length} ref={input => { if (input) input.indeterminate = !allVisible && selectableRows.some(row => selected.includes(row.id)); }}
+        onChange={() => setSelected(current => allVisible ? current.filter(id => !rows.some(row => row.id === id)) : [...new Set([...current, ...selectableRows.map(row => row.id)])])} />Select all visible {mode}</label>
     </div>
     {!rows.length ? <div className="devices-state"><p>{query ? 'No matching results.' : `No source ${mode} found.`}</p></div> : <div className="devices-table-scroll"><table>
-      <thead><tr><th>Select</th><th>{mode === 'categories' ? 'Category No.' : 'Source Code (reference)'}</th><th>Name</th><th>Image</th><th>Destination number/code (estimated)</th><th>{mode === 'categories' ? 'Regional Name' : 'Source Category'}</th>{mode === 'products' && <th>Source Stock (never copied)</th>}</tr></thead>
+      <thead><tr><th>Select</th><th>{mode === 'categories' ? 'Category No.' : 'Source Code (reference)'}</th><th>Name</th>{mode === 'categories' ? <th>No. of Products</th> : <><th>Image</th><th>Destination number/code (estimated)</th></>}<th>{mode === 'categories' ? 'Regional Name' : 'Source Category'}</th>{mode === 'products' && <th>Source Stock</th>}</tr></thead>
       <tbody>{rows.map(row => {
         const category = 'category' in row ? row.category : null;
         const product = 'product' in row ? row.product : null;
         const name = category?.name ?? text(product?.fields.name);
-        return <tr key={row.id}><td><input type="checkbox" aria-label={`Select ${name}`} checked={selected.includes(row.id)} onChange={() => toggle(row.id)} /></td>
-          <td>{text(category ? category.categoryNo : product?.fields.code)}</td><td>{name}</td>
-          <td><AuthenticatedImagePreview alt={`${name} image`} imagePath={category?.imagePath ?? productImageReference(product?.fields)}
-            endpoint={masterImageUrl(source.id, category ? 'categories' : 'products', row.id)} token={token} onSessionExpired={onSessionExpired} /></td>
-          <td>{selected.includes(row.id) ? `${proposedNumber(category ? categoryProposal(row.id)?.proposed : productProposal(row.id)?.proposed)}` : 'Assigned on transfer'}</td><td>{category ? text(category.regionalName) : categoryName(product?.fields.category)}</td>
+        const present = isPresent(row.id);
+        return <tr key={row.id} className={present ? 'transfer-row-present' : undefined}><td><input type="checkbox" aria-label={`Select ${name}`} checked={selected.includes(row.id)} disabled={present} onChange={() => toggle(row.id)} /></td>
+          <td>{text(category ? category.categoryNo : product?.fields.code)}</td><td>{name}{present && <span className="transfer-present-badge">Already present</span>}</td>
+          {category ? <td>{products.filter(item => item.fields.category === category.id).length}</td> : <>
+            <td><AuthenticatedImagePreview alt={`${name} image`} imagePath={productImageReference(product?.fields)}
+              endpoint={masterImageUrl(source.id, 'products', row.id)} token={token} onSessionExpired={onSessionExpired} /></td>
+            <td>{selected.includes(row.id) ? proposedNumber(productProposal(row.id)?.proposed) : 'Assigned on transfer'}</td></>}<td>{category ? text(category.regionalName) : categoryName(product?.fields.category)}</td>
           {product && <td>{text(product.fields.currentStock)}</td>}</tr>;
       })}</tbody></table></div>}
     {mode === 'products' && chosenProducts.some(product => !categories.some(category => category.id === product.fields.category)) && <p className="transfer-preview-warning">Some selected products have an unavailable source category and have no category proposal; review is required.</p>}
     <>
       {chosenCategories.map(category => <label className="transfer-preview-controls" key={category.id}>Destination category for {category.name}
-        <select value={categoryMappings[category.id] ?? ''} onChange={event => setCategoryMappings(current => { const next = { ...current }; if (event.target.value) next[category.id] = event.target.value; else delete next[category.id]; return next; })}>
+        <select value={mappingFor(category.id) ?? ''} onChange={event => setCategoryMappings(current => { const next = { ...current }; if (event.target.value) next[category.id] = event.target.value; else delete next[category.id]; return next; })}>
           <option value="">Copy as a new category</option>{targets.map(target => <option key={target.id} value={target.id}>{target.name} · #{target.categoryNo}</option>)}
         </select></label>)}
       {mode === 'products' && chosenProducts.map(product => <section className="transfer-preview-controls" key={product.documentId} aria-label={`Fields for ${text(product.fields.name)}`}><h2>{text(product.fields.name)} — Fields to copy</h2>
-        <p>Source code: {text(product.fields.code)} (reference only; destination codes are assigned on transfer). Separate Price 1 is unsupported.</p>
         <div className="transfer-preview-fields">{fields.map(([key, label]) => <label className="transfer-preview-field" key={key}><span className="transfer-preview-check"><input type="checkbox" aria-label={`${label} for ${text(product.fields.name)}`}
           disabled={!available(product, key)} checked={available(product, key) && productFields(product).includes(key)} onChange={() => setSelectedFields(current => ({ ...current,
             [product.documentId]: productFields(product).includes(key) ? productFields(product).filter(field => field !== key) : [...productFields(product), key] }))} />{label}</span>
           <small>{available(product, key) ? fieldValue(product, key) : 'Unavailable'}</small></label>)}</div>
       </section>)}
     </>
-    {!!selected.length && <section className="transfer-preview-controls" aria-label="Transfer summary"><h2>Transfer summary</h2>
-      <p>{mode === 'categories' ? `${selected.length} categories selected · ${chosenProducts.length} linked products included automatically` : `${selected.length} products selected`} · {source.name} → {destination.name}. Selected records will be copied to the destination; the source remains unchanged.</p>
-      <ul>{chosenCategories.map(category => <li key={category.id}>
-        {category.name} · Source #{text(category.categoryNo)} → {mappedName(category.id)}
-        {mode === 'categories' && <p>{products.filter(product => product.fields.category === category.id).length} linked products included automatically.</p>}
-        {categoryProposal(category.id)?.conflicts.map(warning => <p className="transfer-preview-warning" key={warning}>{warning}</p>)}
-      </li>)}</ul>
-      {mode === 'products' && chosenProducts.map(product => <div key={product.documentId} className="transfer-preview-summary">
-        <strong>{text(product.fields.name)} · Source code {text(product.fields.code)} → Destination code {proposedNumber(productProposal(product.documentId)?.proposed)} (estimated)</strong>
-        <ul>{productFields(product).map(key => <li key={key}>{fields.find(field => field[0] === key)?.[1]}: {fieldValue(product, key)}</li>)}</ul>
-        <p>New-product stock: 0. Source stock is excluded. Existing destination stock and fields remain unchanged.</p>
-        {!productFields(product).includes('discount') && <p>Discount excluded.</p>}
-        {productProposal(product.documentId)?.conflicts.map(warning => <p className="transfer-preview-warning" key={warning}>{warning} Existing products will be retained; duplicates will not be created.</p>)}
-      </div>)}
-      <p>Final numbers are assigned sequentially from the destination’s highest number when the transfer is confirmed.</p>
-      {allocationErrors.map(proposal => <p key={proposal.id} role="alert">{proposal.error}</p>)}
-    </section>}
+    {allocationErrors.map(proposal => <p key={proposal.id} role="alert">{proposal.error}</p>)}
     <div className="transfer-action-bar">
       <div><strong>{mode === 'categories' ? `${selected.length} categories · ${chosenProducts.length} linked products` : `${selected.length} products`}</strong><p>{busy ? 'Transferring…' : 'Source records stay unchanged'}</p></div>
       <button type="button" className="transfer-action-button" disabled={busy || !selected.length || !!allocationErrors.length} onClick={() => { if (!grant) onAuthExpired(); else setConfirming(true); }}>{busy ? 'Transferring…' : 'Review & transfer'}<ArrowRight size={18} aria-hidden="true" /></button>
     </div>
     </fieldset>
     {confirming && <TransferConfirmation source={source.name} destination={destination.name} mode={mode}
-      records={mode === 'categories' ? [
-        ...chosenCategories.map(category => `${category.name} · Source #${text(category.categoryNo)} → ${mappedName(category.id)}`),
-        ...chosenProducts.map(product => `${text(product.fields.name)} · linked product · Destination code ${proposedNumber(productProposal(product.documentId)?.proposed)} (estimated)`),
-      ]
-        : chosenProducts.map(product => `${text(product.fields.name)} · Source code ${text(product.fields.code)} → Destination code ${proposedNumber(productProposal(product.documentId)?.proposed)} (estimated)`)}
+      options={options} onOptionsChange={setOptions}
       warnings={[...categoryProposals, ...productProposals].flatMap(proposal => [...proposal.conflicts, ...(proposal.error ? [proposal.error] : [])])}
       onCancel={() => setConfirming(false)} onConfirm={() => void execute()} />}
   </div>;
 }
 
-function TransferConfirmation({ source, destination, mode, records, warnings, onCancel, onConfirm }: {
-  source: string; destination: string; mode: Mode; records: string[]; warnings: string[]; onCancel: () => void; onConfirm: () => void;
+function TransferConfirmation({ source, destination, mode, options, onOptionsChange, warnings, onCancel, onConfirm }: {
+  source: string; destination: string; mode: Mode; options: TransferOptions; onOptionsChange: (options: TransferOptions) => void;
+  warnings: string[]; onCancel: () => void; onConfirm: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => { dialog.current?.showModal(); }, []);
   return <dialog ref={dialog} className="transfer-preview-pin transfer-confirmation" aria-labelledby="transfer-confirmation-title" onCancel={event => { event.preventDefault(); onCancel(); }}>
     <div className="transfer-confirmation-body"><h2 id="transfer-confirmation-title">Transfer {mode === 'categories' ? 'Categories' : 'Products'}</h2>
-      <p><strong>{source}</strong> → <strong>{destination}</strong></p><ul>{records.map((record, index) => <li key={index}>{record}</li>)}</ul>
+      <p>Source outlet: <strong>{source}</strong> → Destination outlet: <strong>{destination}</strong></p>
+      <fieldset className="transfer-options" aria-labelledby="transfer-options-title">
+        <h3 id="transfer-options-title">Select data to transfer</h3>
+        {transferOptions.map(([key, label]) => <label key={key} className="transfer-preview-check transfer-option">
+          <input type="checkbox" checked={options[key]} onChange={event => onOptionsChange({ ...options, [key]: event.target.checked })} />
+          <span><strong>{label}</strong></span></label>)}
+      </fieldset>
       {warnings.map((warning, index) => <p className="transfer-preview-warning" key={index}>{warning}</p>)}
-      <div><button type="button" className="devices-refresh" onClick={onCancel}>Cancel</button><button type="button" className="transfer-action-button" onClick={onConfirm}>Confirm transfer</button></div>
+      <div><button type="button" className="devices-refresh" onClick={onCancel}>Cancel</button><button type="button" className="transfer-action-button" onClick={onConfirm}>Continue Transfer</button></div>
     </div>
   </dialog>;
 }
@@ -311,11 +321,15 @@ function TransferOutcome({ result, destination, open, onDismiss }: {
   return <>
     <section className="transfer-preview-controls" aria-label="Transfer result" role="status">
       <h2>{title}</h2><p>{summary}</p>
-      <ul>{result.items.map(item => <li key={`${item.type}:${item.sourceId}`}>{item.name}{item.destinationNumber != null ? ` · Destination #${item.destinationNumber}` : ''}: {item.reason}</li>)}</ul>
     </section>
     <dialog ref={dialog} className="transfer-preview-pin" aria-labelledby="transfer-outcome-title" onCancel={event => { event.preventDefault(); onDismiss(); }}>
       <div className="transfer-confirmation-body"><h2 id="transfer-outcome-title">{title}</h2>
         <p>Destination: <strong>{destination}</strong></p><p>{summary}</p>
+        {result.unchanged > 0 && <div className="transfer-outcome-present"><strong>Already present:</strong>
+          <ul>{result.items.filter(item => item.status === 'already-transferred' || item.status === 'mapped').map(item => <li key={`${item.type}:${item.sourceId}`}>
+            <strong>{item.name}</strong>: {item.type === 'category' ? 'Category' : 'Product'} is already present in the destination.</li>)}</ul></div>}
+        {result.skipped > 0 && <div className="transfer-outcome-skipped"><strong>Not copied:</strong>
+          <ul>{result.items.filter(item => item.status === 'skipped').map(item => <li key={`${item.type}:${item.sourceId}`}><strong>{item.name}</strong>: {item.reason}</li>)}</ul></div>}
         <p>Source outlet records remain unchanged.</p>
         <div><button type="button" className="transfer-action-button" onClick={onDismiss}>OK</button></div>
       </div>

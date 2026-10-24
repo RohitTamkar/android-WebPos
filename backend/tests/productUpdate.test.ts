@@ -160,3 +160,13 @@ test('partial updates preserve stock or names changed since the form was opened'
   assert.equal(updated.fields.currentStock, 80); assert.equal(updated.fields.name, 'Changed elsewhere');
   assert.deepEqual(f.updates[0]!.fields, { discount: 15 });
 });
+
+test('products whose category was deleted can still update other fields but cannot move to a missing category', async () => {
+  const f = fixture(); f.records.delete('OUTLET/outlet/CATEGORY/c1');
+  const result = await updateOutletProduct(f.db, 'outlet', 'p1', 'user', assigned, { stockable: false, weighable: true });
+  assert.deepEqual(f.updates[0]!.fields, { stockable: false, weighable: true }); assert.equal(result.fields.category, 'c1');
+  await updateOutletProduct(f.db, 'outlet', 'p1', 'user', assigned, { category: 'c2' });
+  assert.equal(f.records.get(path)!.category, 'c2');
+  await assert.rejects(updateOutletProduct(f.db, 'outlet', 'p1', 'user', assigned, { category: 'c1' }),
+    error => error instanceof ProductCreationError && error.status === 422 && !!error.errors.category);
+});

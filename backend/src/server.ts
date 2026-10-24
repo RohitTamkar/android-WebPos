@@ -12,6 +12,7 @@ import { listOutletCustomers, createOutletCustomer } from "./customers.js";
 import { listOutletEmployees, createOutletEmployee } from "./employees.js";
 import { readUserAccount, updateUserAccount, UserAccountError } from "./userAccount.js";
 import { updateOutletProduct } from "./productUpdate.js";
+import { updateProductPrices } from "./productPriceUpdate.js";
 import { saveStockAdjustment } from "./stockAdjustment.js";
 import { assignProductImage } from "./productImageAssignments.js";
 import { createOutletPremise, listOutletPremises, updateOutletPremise } from "./premises.js";
@@ -19,7 +20,7 @@ import { ANDROID_TAX_OPTIONS } from "../../shared/androidTaxes.js";
 import { premisesTransactionRunner } from "./premisesFirestore.js";
 import { getFirestoreRestContext } from "./firebase.js";
 import { updateCategoryNames, CategoryUpdateError } from "./categoryUpdate.js";
-import { deleteOutletRecord, OutletDeletionError } from "./outletDeletion.js";
+import { deleteAllOutletRecords, deleteOutletRecord, OutletDeletionError } from "./outletDeletion.js";
 import { createOutletProduct, requireProductOutlet, PRODUCT_UNITS, ProductCreationError } from "./productCreation.js";
 import type { Request, RequestHandler, Response } from "express";
 import cors from "cors";
@@ -1567,6 +1568,15 @@ app.post("/api/outlets/:outletId/stock-adjustments", async (req: Request, res: R
   }
 });
 
+app.patch("/api/outlets/:outletId/products/:documentId/prices", async (req: Request, res: Response): Promise<void> => {
+  res.setHeader('Cache-Control', 'no-store');
+  try {
+    const data = await updateProductPrices(getFirestoreDb(), String(req.params.outletId ?? ''),
+      String(req.params.documentId ?? ''), readAccessToken(req)?.profileDocId ?? null, assignedOutletIds, req.body);
+    res.json({ success: true, data });
+  } catch (error) { productCreationResponse(res, error); }
+});
+
 app.patch("/api/outlets/:outletId/products/:documentId", async (req: Request, res: Response): Promise<void> => {
   try {
     const data = await updateOutletProduct(getFirestoreDb(), String(req.params.outletId ?? ''),
@@ -1585,6 +1595,21 @@ app.patch("/api/outlets/:outletId/categories/:documentId", async (req: Request, 
       message: error instanceof CategoryUpdateError ? error.message : 'Unable to update category. Retry with the same names to confirm the outcome.' });
   }
 });
+
+// Delete All for one outlet master collection; requires the explicit confirmation value in the body.
+for (const [route, collection] of [['categories', 'CATEGORY'], ['products', 'PRODUCT']] as const) {
+  app.delete(`/api/outlets/:outletId/${route}`, async (req: Request, res: Response): Promise<void> => {
+    res.setHeader('Cache-Control', 'no-store');
+    try {
+      const data = await deleteAllOutletRecords(getFirestoreDb(), String(req.params.outletId ?? ''), collection,
+        readAccessToken(req)?.profileDocId ?? null, assignedOutletIds, req.body);
+      res.json({ success: true, data });
+    } catch (error) {
+      res.status(error instanceof OutletDeletionError ? error.status : 503).json({ success: false,
+        message: error instanceof OutletDeletionError ? error.message : `Unable to delete all ${route}. Retry to remove the rest.` });
+    }
+  });
+}
 
 // Existing outlet master documents only; never use the legacy in-memory category API.
 for (const [route, collection] of [['categories', 'CATEGORY'], ['products', 'PRODUCT']] as const) {

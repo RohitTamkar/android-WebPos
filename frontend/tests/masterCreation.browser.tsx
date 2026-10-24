@@ -35,7 +35,11 @@ window.fetch = async (url, init) => {
       ? { ...category, id: 'c2', ...body }
       : { documentId: 'new-product', fields: { ...body, id: 'new-product' } } });
   }
-  assert(!init?.method || init.method === 'GET', 'Bulk list actions must not write to database');
+  if (init?.method === 'DELETE' && path === '/api/outlets/outlet/categories') {
+    mutations.push({ url: path, body: JSON.parse(String(init.body)) });
+    return Response.json({ success: true, data: { deleted: 2 } });
+  }
+  assert(!init?.method || init.method === 'GET', 'Only confirmed actions write to the database');
   if (path.endsWith('/categories')) return mode === 'category' ? categoryLoad : Response.json({ success: true, data: [category] });
   if (path.endsWith('/products/create-options')) return Response.json({ success: true, data: {
     code: 1, categories: [category], taxes: [{ percent: 5, index: 1, type: 0 }], units: [{ id: 2, name: 'NUMBER' }],
@@ -63,11 +67,17 @@ void (async () => {
   passed.push('Add Category opens during loading and retains typed names until the category number is ready');
   document.querySelector<HTMLButtonElement>('[aria-label="Category options"]')!.click(); await pause();
   assert(button('Delete All'), 'Small category menu reveals Delete All'); button('Delete All').click();
-  await until(() => document.querySelector('dialog[open]'), 'Clear confirmation');
-  button('Clear List').click(); await until(() => !document.querySelector('tbody .category-code-badge'), 'List cleared');
-  assert(mutations.length === 1, 'Clear list sends no database mutations');
-  button('Restore List').click(); await until(() => document.querySelectorAll('tbody .category-code-badge').length === 2, 'List restored');
-  passed.push('Delete All clears only the displayed list after confirmation; Restore List recovers it without database writes');
+  await until(() => document.querySelector('dialog[open]'), 'Delete all confirmation');
+  assert(document.querySelector('dialog[open]')!.textContent!.includes('Are you sure you want to delete all categories?'), 'Delete all question');
+  button('No').click(); await until(() => !document.querySelector('dialog[open]'), 'No closes');
+  assert(mutations.length === 1 && document.querySelectorAll('tbody .category-code-badge').length === 2, 'No keeps categories');
+  document.querySelector<HTMLButtonElement>('[aria-label="Category options"]')!.click(); await pause(); button('Delete All').click();
+  await until(() => button('Yes'), 'Confirmation reopened'); button('Yes').click();
+  await until(() => document.querySelector('dialog[open]')?.textContent?.includes('Categories deleted successfully'), 'Success message');
+  assert(mutations.length === 2 && mutations[1]!.url === '/api/outlets/outlet/categories' && mutations[1]!.body.confirm === 'DELETE_ALL_CATEGORIES', 'Confirmed delete-all request');
+  assert(!document.querySelector('tbody .category-code-badge'), 'Categories removed from the list');
+  button('OK').click(); await until(() => !document.querySelector('dialog[open]'), 'Success dismissed');
+  passed.push('Delete All asks Yes/No; No keeps categories; Yes deletes them all and shows a success message');
   root.unmount(); mode = 'product'; root = createRoot(document.getElementById('root')!);
   root.render(<ProductsPage outlet={outlet} token="token" onSessionExpired={expired} />);
   await until(() => button('Add New Product'), 'Product header');
@@ -84,8 +94,8 @@ void (async () => {
   const select = document.getElementById('product-category') as HTMLSelectElement;
   Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(select, 'c1');
   select.dispatchEvent(new Event('change', { bubbles: true })); await pause();
-  button('Save Product').click(); await until(() => mutations.length === 2, 'Product POST');
-  const payload = mutations[1]!.body;
+  button('Save Product').click(); await until(() => mutations.length === 3, 'Product POST');
+  const payload = mutations[2]!.body;
   assert(payload.wholeSaleAmount === 70 && payload.onlinePrice === 90, 'Existing numeric price fields submitted');
   for (const key of ['rent', 'variant', 'addon', 'discountAmount', 'kitchenId', 'recipeId', 'barcode', 'priceTable']) assert(!(key in payload), `Display-only ${key} not submitted`);
   resolveProducts(Response.json({ success: true, data: [] }));

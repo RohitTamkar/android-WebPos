@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { Plus, RefreshCw, Search, Store, X } from 'lucide-react';
+import { ArrowLeft, Plus, RefreshCw, Search, Store, X } from 'lucide-react';
 import type { OutletSummary } from './OutletSelectionPage.tsx';
 import { createRequestId } from '../utils/requestId.ts';
 import { ANDROID_TAX_OPTIONS } from '../../../shared/androidTaxes.ts';
@@ -20,8 +20,8 @@ interface Draft {
 const text = (value: unknown) => typeof value === 'string' || typeof value === 'number' ? String(value) : '—';
 const sorted = (rows: Premise[]) => [...rows].sort((a, b) => text(a.fields.code).localeCompare(text(b.fields.code), 'en', { numeric: true }));
 
-export function PremisesPage({ outlet, token, onSessionExpired }: {
-  outlet: OutletSummary; token: string; onSessionExpired: () => void;
+export function PremisesPage({ outlet, token, onSessionExpired, onClose }: {
+  outlet: OutletSummary; token: string; onSessionExpired: () => void; onClose?: () => void;
 }) {
   const [data, setData] = useState<Configuration | null>(null);
   const [error, setError] = useState('');
@@ -84,7 +84,7 @@ export function PremisesPage({ outlet, token, onSessionExpired }: {
     const body = { ...draft, name: draft.name.trim(), code: Number(draft.code), tables: Number(draft.tables),
       range: Number(draft.range), taxIndex: Number(draft.taxIndex), price: Number(draft.price) };
     if (!body.name || !draft.taxIndex || !draft.userId || ![body.code, body.tables, body.range].every(value => Number.isSafeInteger(value) && value > 0)
-      || !draft.price.trim() || !Number.isFinite(body.price) || body.price < 0) {
+      || (!onClose && (!draft.price.trim() || !Number.isFinite(body.price) || body.price < 0))) {
       setSaveError('Enter a name, positive whole code/count/range, tax, user account and a non-negative price.'); return;
     }
     const controller = requests.current;
@@ -92,7 +92,8 @@ export function PremisesPage({ outlet, token, onSessionExpired }: {
     busy.current = true; setSaving(true); setSaveError('');
     try {
       const { requestId: _requestId, ...editable } = body;
-      const payload = editing ? Object.fromEntries(Object.entries(editable).filter(([key, value]) => value !== editing.fields[key])) : body;
+      const payload = editing ? Object.fromEntries(Object.entries(editable).filter(([key, value]) =>
+        !(onClose && (key === 'price' || key === 'extraPriceFlag')) && value !== editing.fields[key])) : body;
       const response = await fetch(editing ? `${endpoint}/${encodeURIComponent(editing.documentId)}` : endpoint,
         { method: editing ? 'PATCH' : 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(payload), signal: controller.signal });
@@ -114,13 +115,13 @@ export function PremisesPage({ outlet, token, onSessionExpired }: {
       <form onSubmit={save}>
         <div className="modal-header master-form-header">
           <div className="master-form-title"><span className="master-form-icon"><Store size={24} /></span>
-            <div><h3 id="premise-title">Premise Details</h3><p>{editing ? 'Edit' : 'Create'} premises for {outlet.name}.</p></div></div>
+            <div><h3 id="premise-title">{editing ? 'Edit Premises' : 'Premise Details'}</h3><p>{editing ? 'Edit' : 'Create'} premises for {outlet.name}.</p></div></div>
           <button type="button" className="modal-close-btn" aria-label="Close premises form" disabled={saving} onClick={() => setDraft(null)}><X size={18} /></button>
         </div>
         <fieldset className="premises-fields" disabled={saving}>
           <div className="form-field premises-wide"><label htmlFor="premise-name">Premise Name</label><input id="premise-name" autoFocus required maxLength={200} value={draft.name} onChange={event => change('name', event.target.value)} /></div>
           <div className="form-field"><label htmlFor="premise-code">Code</label><input id="premise-code" type="number" min="1" max={Number.MAX_SAFE_INTEGER} step="1" required value={draft.code} onChange={event => change('code', event.target.value)} /></div>
-          <div className="form-field"><label htmlFor="premise-tax">Tax</label><select id="premise-tax" required value={draft.taxIndex} onChange={event => change('taxIndex', event.target.value)}>
+          <div className="form-field"><label htmlFor="premise-tax">GST / Tax</label><select id="premise-tax" required value={draft.taxIndex} onChange={event => change('taxIndex', event.target.value)}>
             <option value="">Select Tax</option>{ANDROID_TAX_OPTIONS.map(tax => <option key={tax.index} value={tax.index}>{tax.name}</option>)}
             {draft.taxIndex && !ANDROID_TAX_OPTIONS.some(tax => String(tax.index) === draft.taxIndex)
               && <option value={draft.taxIndex}>Saved tax ({draft.taxIndex})</option>}</select></div>
@@ -133,8 +134,8 @@ export function PremisesPage({ outlet, token, onSessionExpired }: {
           </fieldset>
           <div className="form-field"><label htmlFor="premise-tables">No. of {draft.type === 'Room' ? 'Rooms' : draft.type === 'Bill' ? 'Bills' : 'Tables'}</label><input id="premise-tables" type="number" min="1" max={Number.MAX_SAFE_INTEGER} step="1" required value={draft.tables} onChange={event => change('tables', event.target.value)} /></div>
           <div className="form-field"><label htmlFor="premise-range">Range Start With</label><input id="premise-range" type="number" min="1" max={Number.MAX_SAFE_INTEGER} step="1" required value={draft.range} onChange={event => change('range', event.target.value)} /></div>
-          <label className="premises-extra"><input type="checkbox" checked={draft.extraPriceFlag} onChange={event => change('extraPriceFlag', event.target.checked)} />Extra Price</label>
-          <div className="form-field"><label htmlFor="premise-price">Price</label><input id="premise-price" type="number" min="0" step="any" required value={draft.price} onChange={event => change('price', event.target.value)} /></div>
+          {!onClose && <><label className="premises-extra"><input type="checkbox" checked={draft.extraPriceFlag} onChange={event => change('extraPriceFlag', event.target.checked)} />Extra Price</label>
+          <div className="form-field"><label htmlFor="premise-price">Price</label><input id="premise-price" type="number" min="0" step="any" required value={draft.price} onChange={event => change('price', event.target.value)} /></div></>}
           {!data && !error && <p className="product-field-note premises-wide" role="status">Loading premises details. You can enter the information now.</p>}
           {error && <p className="category-form-error premises-wide" role="alert">{error} <button type="button" className="btn-secondary" onClick={() => setReload(value => value + 1)}>Retry</button></p>}
           {data && !data.userAccounts.length && !editing && <p className="category-form-error premises-wide">No active user accounts are assigned to this outlet.</p>}
@@ -149,7 +150,9 @@ export function PremisesPage({ outlet, token, onSessionExpired }: {
   return (
     <section className="premises-page" aria-label="Premises" aria-busy={!data && !error}>
       <div className="category-header-row"><div className="category-title-group"><h1><Store size={22} color="#3567f0" />Premises</h1><p>Manage tables, rooms and bill premises.</p></div>
-        <div className="category-header-actions"><button type="button" className="btn-primary-add" onClick={openAdd}><Plus size={16} />Add New Premises</button>
+        <div className="category-header-actions">{onClose
+          ? <button type="button" className="btn-secondary" onClick={onClose}><ArrowLeft size={16} />Back to Products</button>
+          : <button type="button" className="btn-primary-add" onClick={openAdd}><Plus size={16} />Add New Premises</button>}
           <button type="button" className="btn-secondary" onClick={() => setReload(value => value + 1)}><RefreshCw size={15} />Refresh</button></div></div>
       {notice && <p className="premises-notice" role="status">{notice}</p>}
       <div className="category-toolbar"><label className="toolbar-search-box"><span className="search-input-icon"><Search size={16} /></span>

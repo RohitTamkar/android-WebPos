@@ -36,7 +36,10 @@ export async function updateOutletProduct(db: Firestore, outletId: string, id: s
     if (parsed.data.taxIndex === stored.taxIndex && !taxChoices.some(tax => tax.index === stored.taxIndex)) {
       taxChoices.push({ index: parsed.data.taxIndex, name: 'Saved tax', percent: 0, type: 0 });
     }
-    validateProductReferences(parsed.data, categories.docs.map(doc => doc.id), taxChoices);
+    // Like the saved tax above, an unchanged category stays valid after its category was deleted.
+    const categoryChoices = categories.docs.map(doc => doc.id);
+    if (parsed.data.category === stored.category && !categoryChoices.includes(parsed.data.category)) categoryChoices.push(parsed.data.category);
+    validateProductReferences(parsed.data, categoryChoices, taxChoices);
     if ('price' in changes && changes.price !== stored.price) {
       let table: unknown;
       try { table = typeof stored.priceTable === 'string' ? JSON.parse(stored.priceTable) : null; } catch { table = null; }

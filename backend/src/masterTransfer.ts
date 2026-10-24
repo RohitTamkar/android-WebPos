@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { Timestamp, type Firestore, type Transaction } from 'firebase-admin/firestore';
 import { z } from 'zod';
-import { ProductCreationError, newProductSchema, productTaxes, requireProductOutlet, validateProductReferences } from './productCreation.js';
+import { ProductCreationError, newProductSchema, requireProductOutlet, validateProductReferences } from './productCreation.js';
+import { ANDROID_TAX_OPTIONS } from '../../shared/androidTaxes.js';
 import { productFields } from './productDefaults.js';
 import { nextProductCode } from './productImportValidation.js';
 import { getFirebaseStorageBucket } from './firebase.js';
@@ -19,7 +20,47 @@ const requestSchema = z.object({
   categoryIds: z.array(recordId).max(100),
   products: z.array(z.object({ sourceProductId: recordId, fields: z.array(copyFields).min(1).max(14) }).strict()).max(100),
   categoryMappings: z.record(recordId, recordId),
+  // Optional so older clients keep the original behavior: images copied, other data not added.
+  options: z.object({ stock: z.boolean(), weighable: z.boolean(), images: z.boolean(), taxes: z.boolean(), prices: z.boolean() }).strict()
+    .default({ stock: false, weighable: false, images: true, taxes: false, prices: false }),
 }).strict();
+export type TransferOptions = z.infer<typeof requestSchema>['options'];
+const finiteNumber = (value: unknown, max = 1e9) => typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= max;
+const premiseName = (value: string) => value.trim().replace(/\s+/g, ' ').toLowerCase();
+
+// Data added on top of the selected fields. Each value is copied only when it is valid in the source.
+function optionalProductData(product: Record<string, unknown>, options: TransferOptions, destinationPremises: Set<string>) {
+  const fields: string[] = [], extra: Record<string, unknown> = {}, candidate: Record<string, unknown> = {}, notes: string[] = [];
+  if (options.weighable && typeof product.weighable === 'boolean') fields.push('weighable');
+  if (options.stock) {
+    if (typeof product.stockable === 'boolean') fields.push('stockable');
+    if (finiteNumber(product.currentStock)) extra.currentStock = product.currentStock;
+    else notes.push('source stock unavailable, so stock starts at 0');
+  }
+  if (options.taxes) {
+    if (typeof product.hsnCode === 'string') fields.push('hsnCode');
+    if (finiteNumber(product.cess) && (product.cess as number) >= 0) extra.cess = product.cess;
+  }
+  if (options.prices) {
+    for (const key of ['price', 'mrpPrice', 'costPrice'] as const) if (finiteNumber(product[key]) && (product[key] as number) >= 0) fields.push(key);
+    for (const key of ['wholeSaleAmount', 'onlinePrice'] as const) if (finiteNumber(product[key]) && (product[key] as number) >= 0) candidate[key] = product[key];
+    let table: unknown;
+    try { table = typeof product.priceTable === 'string' ? JSON.parse(product.priceTable) : product.priceTable; } catch { table = null; }
+    const premisePrices: Record<string, unknown> = {}, dropped: string[] = [];
+    if (table && typeof table === 'object' && !Array.isArray(table)) {
+      for (const [key, value] of Object.entries(table)) {
+        if (premiseName(key) === 'default price') continue;
+        const name = premiseName(key.replace(/\s+price$/i, ''));
+        // Premises are outlet-specific: copy a premises price only when the destination has that premises.
+        if (finiteNumber(value) && (value as number) >= 0 && (destinationPremises.has(name) || destinationPremises.has(premiseName(key)))) premisePrices[key] = value;
+        else dropped.push(key);
+      }
+    }
+    if (Object.keys(premisePrices).length) extra.premisePrices = premisePrices;
+    if (dropped.length) notes.push(`premises prices not copied (no matching destination premises or invalid value): ${dropped.join(', ')}`);
+  }
+  return { fields, extra, candidate, notes };
+}
 export interface TransferItem {
   type: 'category' | 'product'; sourceId: string; name: string;
   status: 'created' | 'already-transferred' | 'mapped' | 'skipped'; reason: string; destinationId?: string; destinationNumber?: number;
@@ -82,10 +123,12 @@ async function transferOutletMastersUsingBucket(db: Firestore, sourceId: string,
     requireProductOutlet(profileId, input.destinationOutletId, profile, assigned);
     const outlets = await Promise.all([transaction.get(source), transaction.get(destination)]);
     if (outlets.some(outlet => !outlet.exists)) throw new ProductCreationError(404, 'An outlet no longer exists.');
-    const [sourceCategories, destCategories, destProducts, taxes] = await Promise.all([
+    const [sourceCategories, destCategories, destProducts, destPremises] = await Promise.all([
       transaction.get(source.collection('CATEGORY')), transaction.get(destination.collection('CATEGORY')),
-      transaction.get(destination.collection('PRODUCT')), transaction.get(db.collection('MASTERS').doc('masters').collection('TAX_MASTER')),
+      transaction.get(destination.collection('PRODUCT')),
+      input.options.prices ? transaction.get(destination.collection('PREMISES')) : Promise.resolve(null),
     ]);
+    const destinationPremises = new Set((destPremises?.docs ?? []).map(doc => doc.data().name).filter((name): name is string => typeof name === 'string' && !!name.trim()).map(premiseName));
     const sourceCategoryMap = new Map(sourceCategories.docs.map(doc => [doc.id, doc.data()]));
     const categoryMap = new Map(destCategories.docs.map(doc => [doc.id, doc.data()]));
     const productMap = new Map(destProducts.docs.map(doc => [doc.id, doc.data()]));
@@ -98,6 +141,8 @@ async function transferOutletMastersUsingBucket(db: Firestore, sourceId: string,
     const plans: TransferPlan[] = [];
     const sourceImageReferences = new Map<string, string | null>();
     const existingImageChecks: ExistingImageCheck[] = [];
+    // Category Transfer never adds products into a category that is already present in the destination.
+    const presentCategories = new Set<string>();
     const skip = (type: 'category' | 'product', id: string, name: string, reason: string) => items.push({ type, sourceId: id, name, status: 'skipped', reason });
     for (const id of input.categoryIds) {
       const category = sourceCategoryMap.get(id);
@@ -110,11 +155,20 @@ async function transferOutletMastersUsingBucket(db: Firestore, sourceId: string,
       const targetId = destinationId('category', sourceId, id, input.destinationOutletId);
       if (categoryMap.has(targetId)) {
         mappings.set(id, targetId);
+        if (input.mode === 'categories') presentCategories.add(id);
         if (typeof category.imagePath === 'string') existingImageChecks.push({ type: 'category', sourceId: id,
           sourceImagePath: category.imagePath, destinationImagePath: categoryMap.get(targetId)?.imagePath,
           destinationOutletId: input.destinationOutletId, destinationDocumentId: targetId });
         items.push({ type: 'category', sourceId: id, name, status: 'already-transferred', destinationId: targetId, reason: 'Previously transferred category retained; no fields overwritten.' }); continue;
       }
+      // A same-named destination category is already present and is never modified or duplicated.
+      // Product Transfer may place new products in it; Category Transfer adds nothing to it.
+      const sameName = [...categoryMap].filter(([, target]) => normalized(target.name) && normalized(target.name) === normalized(category.name));
+      if (sameName.length === 1) {
+        if (input.mode === 'categories') presentCategories.add(id); else mappings.set(id, sameName[0]![0]);
+        items.push({ type: 'category', sourceId: id, name, status: 'already-transferred', destinationId: sameName[0]![0], reason: 'Category already present in the destination.' }); continue;
+      }
+      if (sameName.length > 1) { skip('category', id, name, 'More than one destination category has this name. Select the destination category to use.'); continue; }
       const valid = z.object({ name: z.string().trim().min(1).max(200), categoryNo: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
         regionalName: z.string().max(200).default(''), dayType: z.string().max(100).default('') }).safeParse({
         name: category.name, categoryNo: [...categoryMap.values()].reduce((highest, target) => {
@@ -123,9 +177,6 @@ async function transferOutletMastersUsingBucket(db: Firestore, sourceId: string,
         }, 0) + 1, regionalName: category.regionalName ?? '', dayType: category.dayType ?? '',
       });
       if (!valid.success) { skip('category', id, name, 'Source category fields are not supported by the existing category model.'); continue; }
-      if ([...categoryMap.values()].some(target => normalized(target.name) === normalized(valid.data.name))) {
-        skip('category', id, name, 'A category with this name already exists. Existing category retained; no duplicate created. Select it as the destination category when copying products.'); continue;
-      }
       const fields = { ...valid.data, id: targetId, onlineSynced: false, selected: false };
       const imagePath = typeof category.imagePath === 'string' ? category.imagePath : undefined;
       if (imagePath && !isMasterImagePath(imagePath, 'categories', sourceId, id)) {
@@ -141,12 +192,13 @@ async function transferOutletMastersUsingBucket(db: Firestore, sourceId: string,
       const product = document.data();
       const name = typeof product?.name === 'string' ? product.name : id;
       if (!document.exists || !product) { skip('product', id, name, 'Source product no longer exists.'); continue; }
-      sourceImageReferences.set(`PRODUCT/${id}`, JSON.stringify([product.imagePath ?? null, product.image ?? null]));
-      const filenamePath = productImageStoragePath(product.image);
-      const imagePath = resolveProductImagePath(product, sourceId, id);
+      sourceImageReferences.set(`PRODUCT/${id}`, input.options.images ? JSON.stringify([product.imagePath ?? null, product.image ?? null]) : null);
+      // With Images unchecked the product is created without image fields; source images are never touched.
+      const filenamePath = input.options.images ? productImageStoragePath(product.image) : null;
+      const imagePath = input.options.images ? resolveProductImagePath(product, sourceId, id) : null;
       // Never silently drop an unsupported image value or replace an invalid Web path
       // with a different image. These records need review before a safe transfer.
-      if (!imagePath && ((product.image != null && product.image !== '') || (product.imagePath != null && product.imagePath !== ''))) {
+      if (input.options.images && !imagePath && ((product.image != null && product.image !== '') || (product.imagePath != null && product.imagePath !== ''))) {
         skip('product', id, name, 'Source image reference is invalid or unsupported; no destination record was created.'); continue;
       }
       const targetId = destinationId('product', sourceId, id, input.destinationOutletId);
@@ -157,43 +209,56 @@ async function transferOutletMastersUsingBucket(db: Firestore, sourceId: string,
           ...(filenamePath ? { sourceProductImage: product.image, destinationProductImage: productMap.get(targetId)?.image } : {}) });
         items.push({ type: 'product', sourceId: id, name, status: 'already-transferred', destinationId: targetId, reason: 'Previously transferred product retained. Existing fields and stock were not changed.' }); continue;
       }
-      if (!['name', 'category', 'taxIndex', 'unitId'].every(field => selection.fields.includes(field as typeof selection.fields[number]))) {
+      const optional = optionalProductData(product, input.options, destinationPremises);
+      const selectedFields = [...new Set([...selection.fields, ...optional.fields])] as typeof selection.fields;
+      if (!['name', 'category', 'taxIndex', 'unitId'].every(field => selectedFields.includes(field as typeof selection.fields[number]))) {
         skip('product', id, name, 'New products require Product Name, Category, Tax Index and Unit ID selections.'); continue;
+      }
+      if (typeof product.category === 'string' && presentCategories.has(product.category)) {
+        skip('product', id, name, 'Its category is already present in the destination, so it was not added.'); continue;
       }
       const mappedCategory = typeof product.category === 'string' ? mappings.get(product.category) : undefined;
       if (!mappedCategory || !categoryMap.has(mappedCategory)) { skip('product', id, name, 'Select a valid destination category or transfer the required category.'); continue; }
-      if (selection.fields.some(field => field !== 'category' && (product[field] === undefined || product[field] === null))) {
+      if (selectedFields.some(field => field !== 'category' && (product[field] === undefined || product[field] === null))) {
         skip('product', id, name, 'A selected source field is unavailable.'); continue;
       }
-      if (selection.fields.includes('price')) {
+      if (selectedFields.includes('price')) {
         let defaultPrice: unknown;
         try { defaultPrice = JSON.parse(String(product.priceTable))?.['default price']; } catch { defaultPrice = undefined; }
         if (defaultPrice !== product.price) { skip('product', id, name, 'Selling Price and the existing default price table must agree; separate price mappings are unsupported.'); continue; }
       }
       const candidate: Record<string, unknown> = { name: '', regionalName: '', shortName: '', category: mappedCategory, price: 0, mrpPrice: 0,
-        costPrice: 0, taxIndex: -1, unitId: -1, hsnCode: '', discount: 0, stockable: false, weighable: false };
-      for (const field of selection.fields) if (field !== 'category' && field !== 'barcode') candidate[field] = product[field];
+        costPrice: 0, taxIndex: -1, unitId: -1, hsnCode: '', discount: 0, stockable: false, weighable: false, ...optional.candidate };
+      for (const field of selectedFields) if (field !== 'category' && field !== 'barcode') candidate[field] = product[field];
       const valid = newProductSchema.omit({ requestId: true, code: true }).safeParse(candidate);
       if (!valid.success) { skip('product', id, name, 'A selected source field is missing or invalid.'); continue; }
-      try { validateProductReferences(valid.data, [...categoryMap.keys()], productTaxes(taxes.docs.map(doc => doc.data()))); }
+      // Tax IDs are the shared Android TaxTable IDs, validated exactly as Add/Edit Product does.
+      try { validateProductReferences(valid.data, [...categoryMap.keys()], ANDROID_TAX_OPTIONS); }
       catch { skip('product', id, name, 'Destination category, tax or unit reference is invalid.'); continue; }
       let barcode = '';
-      if (selection.fields.includes('barcode')) {
+      if (selectedFields.includes('barcode')) {
         if (typeof product.barcode !== 'string' || product.barcode.length > 200) { skip('product', id, name, 'Selected barcode is missing or invalid.'); continue; }
         barcode = product.barcode;
       }
-      // Name/barcode collisions are only warnings of possible identity: skip, never merge or overwrite.
-      if ([...productMap.values()].some(target => normalized(target.name) === normalized(valid.data.name)
-        || (!!usableBarcode(product.barcode) && usableBarcode(target.barcode) === usableBarcode(product.barcode)))) {
-        skip('product', id, name, 'Possible destination name or barcode conflict. Existing product and stock preserved.'); continue;
+      // A destination product with the same name or barcode is reported as already present.
+      // It is never merged or overwritten, and its stock is unchanged.
+      const existing = [...productMap].find(([, target]) => normalized(target.name) === normalized(valid.data.name)
+        || (!!usableBarcode(product.barcode) && usableBarcode(target.barcode) === usableBarcode(product.barcode)));
+      if (existing) {
+        items.push({ type: 'product', sourceId: id, name, status: 'already-transferred', destinationId: existing[0], reason: 'Product already present in the destination.' }); continue;
       }
       const code = nextProductCode([...productMap].map(([productId, fields]) => ({ id: productId, fields })));
-      const fields = { ...productFields(valid.data, code, barcode), id: targetId, dateTme: Timestamp.now() };
+      const base = productFields(valid.data, code, barcode);
+      const { premisePrices, ...extra } = optional.extra as { premisePrices?: Record<string, unknown> } & Record<string, unknown>;
+      const fields: Record<string, unknown> = { ...base, ...extra, id: targetId, dateTme: Timestamp.now() };
+      if (premisePrices) fields.priceTable = JSON.stringify({ ...JSON.parse(base.priceTable), ...premisePrices });
       plans.push({ collection: 'PRODUCT', id: targetId, fields, sourceId: id, name,
         ...(imagePath ? { sourceImagePath: imagePath } : {}),
         ...(filenamePath ? { sourceProductImage: product.image as string } : {}), destinationCategoryId: mappedCategory });
       productMap.set(targetId, fields);
-      items.push({ type: 'product', sourceId: id, name, status: 'created', destinationId: targetId, destinationNumber: code, reason: 'Product copied with zero stock.' });
+      const stockNote = 'currentStock' in fields && fields.currentStock !== 0 ? `Product copied with stock ${String(fields.currentStock)}.` : 'Product copied with zero stock.';
+      items.push({ type: 'product', sourceId: id, name, status: 'created', destinationId: targetId, destinationNumber: code,
+        reason: [stockNote, ...optional.notes.map(note => `Note: ${note}.`)].join(' ') });
     }
     return { items, plans, sourceImageReferences, existingImageChecks };
   };

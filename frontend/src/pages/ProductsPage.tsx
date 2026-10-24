@@ -1,7 +1,9 @@
 import { loadProductList, ProductListRequestError } from './productListApi.ts';
 import { DeleteConfirmation } from './DeleteConfirmation.tsx';
+import { DeleteAllError, deleteAllRecords } from './deleteAllApi.ts';
+import { SuccessPopup } from './SuccessPopup.tsx';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CheckCircle2, ChevronDown, FileSpreadsheet, ImagePlus, Images, MoreVertical, Package, PackageCheck, Pencil, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
+import { ArrowDownUp, Check, CheckCircle2, ChevronDown, FileSpreadsheet, IndianRupee, ImagePlus, Images, MoreVertical, Package, PackageCheck, Pencil, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
 import type { OutletSummary } from './OutletSelectionPage.tsx';
 import './ProductsPage.css';
 import { AddProductForm } from './AddProductForm.tsx';
@@ -11,9 +13,12 @@ import { ProductImageBatch } from './ProductImageBatch.tsx';
 import { ProductImagePinDialog, type ImageAction } from './ProductImagePinDialog.tsx';
 import { ProductImageRemoval } from './ProductImageRemoval.tsx';
 import { ProductFlagsBulkUpdate } from './ProductFlagsBulkUpdate.tsx';
+import { ProductPriceBulkUpdate } from './ProductPriceBulkUpdate.tsx';
+import { isProductSort, PRODUCT_SORTS, sortProducts, type ProductSort } from './productSort.ts';
 import { ProductExcelDialog } from './ProductExcelDialog.tsx';
 import { ProductServicePointAssignment } from './ProductServicePointAssignment.tsx';
 import { ProductTaxSettings } from './ProductTaxSettings.tsx';
+import { PremisesPage } from './PremisesPage.tsx';
 
 interface ProductDocument {
   documentId: string;
@@ -68,7 +73,17 @@ function ProductsPageContent({ outlet, token, onSessionExpired }: ProductsPagePr
     document.addEventListener('mousedown', close); document.addEventListener('keydown', close);
     return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', close); };
   }, [openMenu]);
-  const toggleMenu = (menu: 'images' | 'more') => setOpenMenu(value => value === menu ? null : menu);
+  const toggleMenu = (menu: 'images' | 'more') => { setSortOpen(false); setOpenMenu(value => value === menu ? null : menu); };
+  const sortStorageKey = `products-sort:${outlet.id}`;
+  const [sortOpen, setSortOpen] = useState(false);
+  // The chosen order is a per-browser convenience; storage may be unavailable.
+  const [sort, setSort] = useState<ProductSort>(() => {
+    try { const saved = localStorage.getItem(sortStorageKey); return isProductSort(saved) ? saved : 'code'; } catch { return 'code'; }
+  });
+  const chooseSort = (value: ProductSort) => {
+    setSort(value); setSortOpen(false); setOpenMenu(null);
+    try { localStorage.setItem(sortStorageKey, value); } catch { /* keep the in-memory choice */ }
+  };
   const [error, setError] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
   const [search, setSearch] = useState('');
@@ -81,7 +96,9 @@ function ProductsPageContent({ outlet, token, onSessionExpired }: ProductsPagePr
   };
   const [imageBatchMode, setImageBatchMode] = useState<'bulk' | 'shared' | null>(null);
   const [flagsOpen, setFlagsOpen] = useState(false);
+  const [pricesOpen, setPricesOpen] = useState(false);
   const [taxOpen, setTaxOpen] = useState(false);
+  const [premisesOpen, setPremisesOpen] = useState(false);
   const [taxSuccess, setTaxSuccess] = useState(false);
   const [assignmentOpen, setAssignmentOpen] = useState(false);
   const [excelOpen, setExcelOpen] = useState(false);
@@ -92,6 +109,22 @@ function ProductsPageContent({ outlet, token, onSessionExpired }: ProductsPagePr
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const [imageRemovalTargets, setImageRemovalTargets] = useState<ProductDocument[] | null>(null);
   const deleteBusy = useRef(false);
+  const [deleteAllOpen, setDeleteAllOpen] = useState(false);
+  const [deletingAll, setDeletingAll] = useState(false);
+  const [deleteAllError, setDeleteAllError] = useState('');
+  const [deleteAllDone, setDeleteAllDone] = useState(false);
+  const deleteAllProducts = async () => {
+    if (deleteBusy.current) return;
+    deleteBusy.current = true; setDeletingAll(true); setDeleteAllError('');
+    try {
+      await deleteAllRecords(outlet.id, token, 'products');
+      setProducts([]); setSelectedCategory(null); setDeleteAllOpen(false); setDeleteAllDone(true);
+      setReloadKey(value => value + 1);
+    } catch (error) {
+      if (error instanceof DeleteAllError && error.status === 401) { setDeleteAllOpen(false); onSessionExpired(); return; }
+      setDeleteAllError((error as Error).message);
+    } finally { deleteBusy.current = false; setDeletingAll(false); }
+  };
 
   useEffect(() => {
     const controller = new AbortController();
@@ -147,31 +180,42 @@ function ProductsPageContent({ outlet, token, onSessionExpired }: ProductsPagePr
 
   const visibleProducts = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return categoryProducts.filter(product =>
+    return sortProducts(categoryProducts.filter(product =>
       !query || ['name', 'code', 'regionalName'].some(field =>
-        productText(product.fields[field]).toLowerCase().includes(query)))
-      .sort((left, right) => productText(left.fields.code).localeCompare(
-        productText(right.fields.code), 'en', { numeric: true, sensitivity: 'base' }
-      ));
-  }, [categoryProducts, search]);
+        productText(product.fields[field]).toLowerCase().includes(query))), sort);
+  }, [categoryProducts, search, sort]);
 
   if (imageBatchMode) return <ProductImageBatch key={`${outlet.id}:${imageBatchMode}`} mode={imageBatchMode} products={products}
     outletId={outlet.id} token={token} imageGrant={imageGrant} onSessionExpired={onSessionExpired} onClose={() => { setImageBatchMode(null); setImageGrant(''); }}
     onSaved={(documentId, image) => setProducts(current => current.map(product => product.documentId === documentId
       ? { ...product, fields: { ...product.fields, image } } : product))} />;
 
-  if ((taxOpen || flagsOpen || assignmentOpen) && (loading || error)) return <section className="products-page-shell" aria-busy={loading}>
-    <div className="products-header"><h1>{taxOpen ? 'Tax Settings' : flagsOpen ? 'Update Stockable & Weighable' : 'Assign Service Point'}</h1>
-      <button type="button" className="btn-secondary" onClick={() => { setTaxOpen(false); setFlagsOpen(false); setAssignmentOpen(false); }}>Cancel</button></div>
+  if ((taxOpen || flagsOpen || pricesOpen || assignmentOpen) && (loading || error)) return <section className="products-page-shell" aria-busy={loading}>
+    <div className="products-header"><h1>{taxOpen ? 'Tax Settings' : flagsOpen ? 'Update Stockable & Weighable' : pricesOpen ? 'Update Bulk Price' : 'Assign Service Point'}</h1>
+      <button type="button" className="btn-secondary" onClick={() => { setTaxOpen(false); setFlagsOpen(false); setPricesOpen(false); setAssignmentOpen(false); }}>Cancel</button></div>
     <div className="products-empty" role={error ? 'alert' : 'status'}>{error || 'Loading products and categories…'}
       {error && <button type="button" className="btn-secondary" onClick={() => setReloadKey(value => value + 1)}>Retry</button>}</div>
   </section>;
+
+  if (premisesOpen) return <PremisesPage outlet={outlet} token={token} onSessionExpired={onSessionExpired}
+    onClose={() => setPremisesOpen(false)} />;
 
   if (taxOpen) return <ProductTaxSettings products={products} categories={categories} outletId={outlet.id} token={token} onSessionExpired={onSessionExpired}
     onSaved={updated => setProducts(current => current.map(product => product.documentId === updated.documentId ? updated : product))}
     onClose={updatedCount => {
       setTaxOpen(false);
       if (updatedCount) setTaxSuccess(true);
+    }} />;
+
+  if (pricesOpen) return <ProductPriceBulkUpdate key={outlet.id} products={products} outletId={outlet.id} token={token} onSessionExpired={onSessionExpired}
+    onSaved={updated => setProducts(current => current.map(product => product.documentId === updated.documentId ? updated : product))}
+    onClose={updatedCount => {
+      setPricesOpen(false);
+      if (updatedCount) {
+        setNoticeIsError(false);
+        setNotice(`Prices updated successfully for ${updatedCount} ${updatedCount === 1 ? 'product' : 'products'}.`);
+        setReloadKey(value => value + 1);
+      }
     }} />;
 
   if (flagsOpen) return <ProductFlagsBulkUpdate key={outlet.id} products={products} outletId={outlet.id} token={token} onSessionExpired={onSessionExpired}
@@ -233,6 +277,10 @@ function ProductsPageContent({ outlet, token, onSessionExpired }: ProductsPagePr
               : `Product images removed successfully from ${summary.removed} products.`);
           }
         }} />}
+      {deleteAllOpen && <DeleteConfirmation kind="product" name="all products" busy={deletingAll} error={deleteAllError}
+        title="Delete all products?" description={`Are you sure you want to delete all products? This will permanently remove all ${products.length} products from this outlet.`}
+        confirmLabel="Yes" cancelLabel="No" onCancel={() => { if (!deleteBusy.current) setDeleteAllOpen(false); }} onConfirm={() => void deleteAllProducts()} />}
+      {deleteAllDone && <SuccessPopup message="All products deleted successfully" onDismiss={() => setDeleteAllDone(false)} />}
       {deleteTarget && <DeleteConfirmation kind="product" name={deleteTarget.name} busy={deleting}
         onCancel={() => { if (!deleteBusy.current) setDeleteTarget(null); }} onConfirm={() => void deleteProduct(deleteTarget.id)} />}
       <div className="products-header">
@@ -264,14 +312,32 @@ function ProductsPageContent({ outlet, token, onSessionExpired }: ProductsPagePr
             <button type="button" className="products-menu-toggle" aria-label="More options" aria-haspopup="menu" aria-expanded={openMenu === 'more'}
               aria-controls="products-more-menu" onClick={() => toggleMenu('more')}><MoreVertical size={17} /></button>
             {openMenu === 'more' && <div id="products-more-menu" className="products-options-menu" role="menu">
+              <button type="button" role="menuitem" className="products-sort-toggle" aria-haspopup="menu" aria-expanded={sortOpen}
+                aria-controls="products-sort-menu" onClick={() => setSortOpen(value => !value)}>
+                <span className="products-menu-icon"><ArrowDownUp size={15} /></span>Sort
+                <span className="products-sort-current">{PRODUCT_SORTS.find(option => option.value === sort)!.label}</span>
+                <ChevronDown size={14} className="products-chevron" /></button>
+              {sortOpen && <div id="products-sort-menu" className="products-sort-menu" role="menu" aria-label="Sort products">
+                {PRODUCT_SORTS.map(option => <button key={option.value} type="button" role="menuitemradio" aria-checked={sort === option.value}
+                  onClick={() => chooseSort(option.value)}>{option.label}{sort === option.value && <Check size={14} className="products-sort-check" />}</button>)}
+              </div>}
+              <div className="products-menu-divider" role="separator" />
               <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); setNotice(''); setExcelOpen(true); }}>
                 <span className="products-menu-icon"><FileSpreadsheet size={15} /></span>Save Excel</button>
               <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); setNotice(''); setFlagsOpen(true); }}>
                 <span className="products-menu-icon"><PackageCheck size={15} /></span>Update Stockable &amp; Weighable</button>
+              <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); setNotice(''); setPricesOpen(true); }}>
+                <span className="products-menu-icon"><IndianRupee size={15} /></span>Update Bulk Price</button>
+              <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); setNotice(''); setPremisesOpen(true); }}>
+                <span className="products-menu-icon"><Pencil size={15} /></span>Update premise price</button>
               <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); setNotice(''); setAssignmentOpen(true); }}>
                 <span className="products-menu-icon"><PackageCheck size={15} /></span>Assign Service Point</button>
               <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); setNotice(''); setTaxSuccess(false); setTaxOpen(true); }}>
                 <span className="products-menu-icon"><PackageCheck size={15} /></span>Tax</button>
+              <div className="products-menu-divider" role="separator" />
+              <button type="button" role="menuitem" className="danger" disabled={loading || !!error || !products.length}
+                onClick={() => { setOpenMenu(null); setNotice(''); setDeleteAllError(''); setDeleteAllOpen(true); }}>
+                <span className="products-menu-icon"><Trash2 size={15} /></span>Delete All</button>
             </div>}
           </div>
         </div>

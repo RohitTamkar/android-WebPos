@@ -1,5 +1,7 @@
 import { EditCategoryForm, CategoryUpdatedPopup } from './EditCategoryForm.tsx';
 import { DeleteConfirmation } from './DeleteConfirmation.tsx';
+import { DeleteAllError, deleteAllRecords } from './deleteAllApi.ts';
+import { SuccessPopup } from './SuccessPopup.tsx';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   SlidersHorizontal,
@@ -97,8 +99,9 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const deleteBusy = useRef(false);
   const [categoryMenuOpen, setCategoryMenuOpen] = useState(false);
-  const [clearListOpen, setClearListOpen] = useState(false);
-  const [hiddenCategoryIds, setHiddenCategoryIds] = useState<string[]>([]);
+  const [deleteAllOpen, setDeleteAllOpen] = useState(false);
+  const [deleteAllError, setDeleteAllError] = useState('');
+  const [deleteAllDone, setDeleteAllDone] = useState(false);
 
   useEffect(() => {
     if (!addOpen || saving) return;
@@ -124,7 +127,6 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
         }
         if (!response.ok || !result.data) throw new Error(result.message || 'Unable to load categories.');
         setCategories(result.data.map(toCategory));
-        setHiddenCategoryIds([]);
       })
       .catch(requestError => {
         if (!controller.signal.aborted) setError((requestError as Error).message);
@@ -136,10 +138,9 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
   }, [outlet.id, token, reloadKey]);
 
   // Filtered categories
-  const displayedCategories = useMemo(() => categories.filter(category => !hiddenCategoryIds.includes(category.id)), [categories, hiddenCategoryIds]);
   const filteredCategories = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
-    return displayedCategories.filter((cat) => {
+    return categories.filter((cat) => {
       const matchesSearch =
         cat.name.toLowerCase().includes(query) ||
         cat.code.toLowerCase().includes(query) ||
@@ -147,16 +148,16 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
       const matchesStatus = statusFilter === 'All' || cat.status === statusFilter;
       return matchesSearch && matchesStatus;
     });
-  }, [displayedCategories, searchQuery, statusFilter]);
+  }, [categories, searchQuery, statusFilter]);
 
   // Statistics
   const stats = useMemo(() => {
-    const total = displayedCategories.length;
-    const active = displayedCategories.filter((c) => c.status === 'Active').length;
-    const inactive = displayedCategories.filter((c) => c.status === 'Inactive').length;
-    const totalItems = displayedCategories.reduce((sum, c) => sum + c.productCount, 0);
+    const total = categories.length;
+    const active = categories.filter((c) => c.status === 'Active').length;
+    const inactive = categories.filter((c) => c.status === 'Inactive').length;
+    const totalItems = categories.reduce((sum, c) => sum + c.productCount, 0);
     return { total, active, inactive, totalItems };
-  }, [displayedCategories]);
+  }, [categories]);
 
   const nextCategoryNumber = useMemo(() => {
     const highestNumber = categories.reduce((highest, category) => {
@@ -187,6 +188,19 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
       setNotice('Category deleted successfully.');
     } catch (error) { setNoticeIsError(true); setNotice((error as Error).message); }
     finally { deleteBusy.current = false; setDeleting(false); setDeleteTarget(null); }
+  };
+
+  // Products keep their stored category field and remain listed under All on the Products page.
+  const deleteAllCategories = async () => {
+    if (deleteBusy.current) return;
+    deleteBusy.current = true; setDeleting(true); setDeleteAllError(''); setNotice('');
+    try {
+      await deleteAllRecords(outlet.id, token, 'categories');
+      setCategories([]); setDeleteAllOpen(false); setDeleteAllDone(true);
+    } catch (error) {
+      if (error instanceof DeleteAllError && error.status === 401) { setDeleteAllOpen(false); onSessionExpired(); return; }
+      setDeleteAllError((error as Error).message);
+    } finally { deleteBusy.current = false; setDeleting(false); }
   };
 
   const addCategory = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -244,11 +258,10 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
   return (
     <div className="category-page-shell">
       {updatedPopup && <CategoryUpdatedPopup onDismiss={() => setUpdatedPopup(false)} />}
-      {clearListOpen && <DeleteConfirmation kind="category" displayOnly name={`${displayedCategories.length} categories`} busy={false}
-        onCancel={() => setClearListOpen(false)} onConfirm={() => {
-          setHiddenCategoryIds(categories.map(category => category.id)); setClearListOpen(false); setCategoryMenuOpen(false);
-          setNoticeIsError(false); setNotice('Displayed categories cleared. Use Restore List to show them again.');
-        }} />}
+      {deleteAllOpen && <DeleteConfirmation kind="category" name="all categories" busy={deleting} error={deleteAllError}
+        title="Delete all categories?" description={`Are you sure you want to delete all categories? This will permanently remove all ${categories.length} categories. Products are kept and stay listed under All products.`}
+        confirmLabel="Yes" cancelLabel="No" onCancel={() => { if (!deleteBusy.current) setDeleteAllOpen(false); }} onConfirm={() => void deleteAllCategories()} />}
+      {deleteAllDone && <SuccessPopup message="Categories deleted successfully" onDismiss={() => setDeleteAllDone(false)} />}
       {deleteTarget && <DeleteConfirmation kind="category" name={deleteTarget.name} busy={deleting}
         onCancel={() => { if (!deleteBusy.current) setDeleteTarget(null); }} onConfirm={() => void deleteCategory(deleteTarget.id)} />}
       {/* Header Row */}
@@ -271,11 +284,10 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
             Add New Category
           </button>
           <div className="category-more-actions">
-            {hiddenCategoryIds.length > 0 && <button type="button" className="category-restore-list" onClick={() => { setHiddenCategoryIds([]); setNotice(''); }}>Restore List</button>}
             <button type="button" className="category-menu-toggle" aria-label="Category options" aria-expanded={categoryMenuOpen}
               aria-controls="category-options-menu" onClick={() => setCategoryMenuOpen(value => !value)}><MoreVertical size={17} /></button>
             {categoryMenuOpen && <div id="category-options-menu" className="category-options-menu">
-              <button type="button" disabled={loading || deleting || !displayedCategories.length} onClick={() => { setCategoryMenuOpen(false); setClearListOpen(true); }}><Trash2 size={14} />Delete All</button>
+              <button type="button" disabled={loading || deleting || !categories.length} onClick={() => { setCategoryMenuOpen(false); setDeleteAllError(''); setDeleteAllOpen(true); }}><Trash2 size={14} />Delete All</button>
             </div>}
           </div>
         </div>
@@ -311,7 +323,7 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value as 'All' | 'Active' | 'Inactive')}
           >
-            <option value="All">All Statuses ({displayedCategories.length})</option>
+            <option value="All">All Statuses ({categories.length})</option>
             <option value="Active">Active ({stats.active})</option>
             <option value="Inactive">Inactive ({stats.inactive})</option>
           </select>
@@ -422,7 +434,7 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
                     <p>
                       {searchQuery || statusFilter !== 'All'
                         ? 'Try adjusting your search query or status filter.'
-                        : hiddenCategoryIds.length ? 'Use Restore List to display the saved categories.' : 'This outlet has no categories in Firebase yet.'}
+                        : 'This outlet has no categories in Firebase yet.'}
                     </p>
                   </div>
                 </td>

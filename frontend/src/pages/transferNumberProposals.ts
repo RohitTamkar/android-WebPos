@@ -46,13 +46,13 @@ function allocate<T>(selected: readonly T[], id: (record: T) => string, highest:
 export function proposeCategoryNumbers(selected: readonly ProposalCategory[], destination: readonly ProposalCategory[]) {
   return allocate(selected, record => record.id, () => highestCategoryNumber(destination), category => destination
     .filter(target => !!normalized(category.name) && normalized(target.name) === normalized(category.name))
-    .map(target => `Category name matches ${target.name}; identity needs review. No merge or save.`));
+    .map(target => `Category ${target.name} is already present in the destination; its products will be added to it.`));
 }
 export function proposeProductCodes(selected: readonly ProposalProduct[], destination: readonly ProposalProduct[]) {
   return allocate(selected, record => record.documentId, () => highestProductCode(destination), product => destination.flatMap(target => {
     const warnings: string[] = [];
-    if (normalized(product.fields.name) && normalized(product.fields.name) === normalized(target.fields.name)) warnings.push(`Product name matches ${String(target.fields.name)}; identity needs review.`);
-    if (barcode(product.fields.barcode) && barcode(product.fields.barcode) === barcode(target.fields.barcode)) warnings.push(`Barcode matches ${String(target.fields.name ?? target.documentId)}; identity needs review.`);
+    if (normalized(product.fields.name) && normalized(product.fields.name) === normalized(target.fields.name)) warnings.push(`Product ${String(target.fields.name)} is already present in the destination and will not be copied again.`);
+    if (barcode(product.fields.barcode) && barcode(product.fields.barcode) === barcode(target.fields.barcode)) warnings.push(`A product with this barcode (${String(target.fields.name ?? target.documentId)}) is already present in the destination and will not be copied again.`);
     return warnings;
   }));
 }
