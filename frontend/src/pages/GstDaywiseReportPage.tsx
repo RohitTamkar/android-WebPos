@@ -91,7 +91,7 @@ export const GstDaywiseReportPage = ({ outlet, token, onSessionExpired, reportNa
   return (
     <section className="bill-report-page gst-report-page gst-daywise-report-page">
       <div className="bill-report-heading">
-        <div><span>REPORTS</span><h1>GST Report Day Wise</h1><p>{outlet.name} · GST summary across all bills and shifts for the selected date.</p></div>
+        <div><strong className="report-print-shop-name">{outlet.name}</strong><span>REPORTS</span><h1>GST Report Day Wise</h1><p>{outlet.name} · GST summary across all bills and shifts for the selected date.</p></div>
         <div className="bill-report-actions">
           <button type="button" onClick={exportExcel} disabled={!hasData || loading || !!error}><Download /> Export Excel</button>
           <button type="button" onClick={() => window.print()}><Printer /> Print / PDF</button>
@@ -99,7 +99,7 @@ export const GstDaywiseReportPage = ({ outlet, token, onSessionExpired, reportNa
       </div>
 
       <div className="bill-report-filters">
-        <label><span>Report date</span><ReportDateInput aria-label="Report date" value={dayId} onChange={event => { if (event.target.value) setDayId(event.target.value); }} /></label>
+        <label><span>Report date</span><ReportDateInput aria-label="Report date" value={dayId} onChange={value => { if (value) setDayId(value); }} /></label>
         <div className="bill-filter-buttons"><button type="button" className="apply" disabled={loading} onClick={() => setReloadKey(value => value + 1)}><RefreshCw /> Refresh</button></div>
       </div>
 

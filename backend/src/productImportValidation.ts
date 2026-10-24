@@ -23,7 +23,7 @@ export function validateProductImport(source: string, categories: ImportCategory
   }
   const identities = new Map<string, number>();
   preview.rows.forEach((row, index) => {
-    const c = row.cells;
+    const c = row.cells.map(cell => cell.trim());
     const errors = rows[index]!.errors;
     for (const column of [2, 3, 4, 5, 7, 8, 11]) {
       if (!c[column]?.trim() || !Number.isFinite(Number(c[column]))) errors.push({ column: preview.headers[column]!, message: 'A finite numeric value is required to construct the product.' });
@@ -69,12 +69,13 @@ export interface ImportValidationDependencies {
   readTaxes: () => Promise<ImportTax[]>;
   readProducts: (outletId: string) => Promise<StoredImportProduct[]>;
 }
-export async function checkAuthorizedProductImport(profileId: string | null, outletId: string, source: unknown, deps: ImportValidationDependencies) {
+export async function checkAuthorizedProductImport(profileId: string | null, outletId: string, source: unknown, deps: ImportValidationDependencies, acceptAttempt?: () => void) {
   if (!profileId) return { status: 401, body: { success: false, message: 'Your session has expired. Please sign in again.' } };
   if (!outletId || outletId.includes('/')) return { status: 400, body: { success: false, message: 'A valid outlet is required.' } };
   const profile = await deps.readProfile(profileId);
   if (!profile || profile.active !== true) return { status: 403, body: { success: false, message: 'This user account is inactive or unavailable.' } };
   if (!deps.assignedOutlets(profile).includes(outletId)) return { status: 403, body: { success: false, message: 'You do not have access to this outlet.' } };
+  acceptAttempt?.();
   if (typeof source !== 'string') return { status: 400, body: { success: false, message: 'The original spreadsheet text is required.' } };
   let local: ReturnType<typeof validateProductImport>;
   try { local = validateProductImport(source, []); }

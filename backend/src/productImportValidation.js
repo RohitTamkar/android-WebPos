@@ -17,7 +17,7 @@ export function validateProductImport(source, categories, taxes = []) {
     }
     const identities = new Map();
     preview.rows.forEach((row, index) => {
-        const c = row.cells;
+        const c = row.cells.map(cell => cell.trim());
         const errors = rows[index].errors;
         for (const column of [2, 3, 4, 5, 7, 8, 11]) {
             if (!c[column]?.trim() || !Number.isFinite(Number(c[column])))
@@ -62,7 +62,7 @@ export function validateProductImport(source, categories, taxes = []) {
     const canUpload = rows.every(row => !row.errors.length);
     return { canUpload, categoryChecked: true, headerErrors: [], rows, documents: canUpload ? documents : [] };
 }
-export async function checkAuthorizedProductImport(profileId, outletId, source, deps) {
+export async function checkAuthorizedProductImport(profileId, outletId, source, deps, acceptAttempt) {
     if (!profileId)
         return { status: 401, body: { success: false, message: 'Your session has expired. Please sign in again.' } };
     if (!outletId || outletId.includes('/'))
@@ -72,6 +72,7 @@ export async function checkAuthorizedProductImport(profileId, outletId, source, 
         return { status: 403, body: { success: false, message: 'This user account is inactive or unavailable.' } };
     if (!deps.assignedOutlets(profile).includes(outletId))
         return { status: 403, body: { success: false, message: 'You do not have access to this outlet.' } };
+    acceptAttempt?.();
     if (typeof source !== 'string')
         return { status: 400, body: { success: false, message: 'The original spreadsheet text is required.' } };
     let local;

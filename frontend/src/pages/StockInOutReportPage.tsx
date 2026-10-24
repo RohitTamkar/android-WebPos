@@ -3,7 +3,7 @@ import { useReportSearch } from './useReportSearch.ts';
 import { ReportDateInput } from './ReportDateInput.tsx';
 import { reportDateError } from './reportDates.ts';
 import { useEffect, useMemo, useState } from 'react';
-import { Boxes, ChevronLeft, ChevronRight, Download, FileText, Filter, Package, Printer, RefreshCw, Search, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Boxes, ChevronLeft, ChevronRight, Download, FileText, Filter, Package, Printer, RefreshCw, Search, X } from 'lucide-react';
 import type { OutletSummary } from './OutletSelectionPage.tsx';
 import './BillWiseReportPage.css';
 import './StockInOutReportPage.css';
@@ -68,7 +68,7 @@ function dateTime(value: number): string {
 const PAGE_SIZE = 50;
 
 export const StockInOutReportPage = ({ outlet, token, onSessionExpired, reportName = 'Stock In-Out Report' }: StockInOutReportPageProps) => {
-  const initialFilters = useMemo(() => ({ startDate: todayId(), endDate: todayId(), direction: '', search: '' }), []);
+  const initialFilters = useMemo(() => ({ startDate: todayId(), endDate: todayId(), direction: 'in' as 'in' | 'out', search: '' }), []);
   const [filters, setFilters] = useState(initialFilters);
   const [appliedFilters, setAppliedFilters] = useState(initialFilters);
   const [report, setReport] = useState<MovementReport | null>(null);
@@ -126,12 +126,21 @@ export const StockInOutReportPage = ({ outlet, token, onSessionExpired, reportNa
   };
 
   const resetFilters = () => {
-    const reset = { startDate: todayId(), endDate: todayId(), direction: '', search: '' };
+    const reset = { startDate: todayId(), endDate: todayId(), direction: appliedFilters.direction, search: '' };
     setFilters(reset);
     setAppliedFilters(reset);
     setPage(1);
   };
 
+  // Stock-In and Stock-Out are separate views; switching loads only that direction.
+  const showDirection = (direction: 'in' | 'out') => {
+    if (direction === appliedFilters.direction) return;
+    setFilters(current => ({ ...current, direction }));
+    setAppliedFilters(current => ({ ...current, direction }));
+    setPage(1);
+  };
+  const isIn = appliedFilters.direction === 'in';
+  const directionLabel = isIn ? 'Stock-In' : 'Stock-Out';
   const totalPages = Math.max(1, Math.ceil((report?.movements.length ?? 0) / PAGE_SIZE));
   const rows = report?.movements.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE) ?? [];
   const hasData = !!report?.movements.length;
@@ -144,47 +153,51 @@ export const StockInOutReportPage = ({ outlet, token, onSessionExpired, reportNa
         item?.productId ?? '', item?.name ?? 'No product details available', item?.quantity ?? '',
         item?.price ?? '', item?.cost ?? '', item?.total ?? '', entry.finalTotal, entry.remark,
       ])),
-      ['Net movement / total amount', '', '', '', '', '', '', '', report.summary.netQuantity, '', '', '', report.summary.totalAmount, ''],
+      [`Total ${directionLabel} / total amount`, '', '', '', '', '', '', '', isIn ? report.summary.stockInQuantity : report.summary.stockOutQuantity, '', '', '', report.summary.totalAmount, ''],
     ];
     await downloadReportExcel({
-      name: reportName, outlet, startDate: appliedFilters.startDate, endDate: appliedFilters.endDate,
+      name: `${reportName} - ${directionLabel}`, outlet, startDate: appliedFilters.startDate, endDate: appliedFilters.endDate,
       summary: {}, rows: csvRows,
     });
   };
 
   return <section className="bill-report-page stock-in-out-report-page">
     <div className="bill-report-heading">
-      <div><span>REPORTS</span><h1>Stock In-Out Report</h1><p>{outlet.name} · Stock received, stock issued and product details.</p></div>
+      <div><strong className="report-print-shop-name">{outlet.name}</strong><span>REPORTS</span><h1>Stock In-Out Report</h1><p>{outlet.name} · {isIn ? 'Stock received' : 'Stock issued'} and product details.</p><strong className="stock-print-direction">{directionLabel}</strong></div>
       <div className="bill-report-actions">
         <button type="button" onClick={() => setReloadKey(value => value + 1)} disabled={loading}><RefreshCw /> Refresh</button>
         <button type="button" onClick={exportExcel} disabled={!hasData || loading || !!error}><Download /> Export Excel</button>
         <button type="button" onClick={() => window.print()}><Printer /> Print / PDF</button>
       </div>
     </div>
+    <div className="stock-direction-tabs" role="tablist" aria-label="Stock direction">
+      {(['in', 'out'] as const).map(direction => <button key={direction} type="button" role="tab" aria-selected={appliedFilters.direction === direction}
+        className={`stock-direction-tab ${direction}`} disabled={loading && appliedFilters.direction !== direction} onClick={() => showDirection(direction)}>
+        {direction === 'in' ? <ArrowDown aria-hidden="true" /> : <ArrowUp aria-hidden="true" />}<span>{direction === 'in' ? 'STOCK-IN' : 'STOCK-OUT'}</span></button>)}
+    </div>
     <div className="bill-report-filters">
-      <label><span>From date</span><ReportDateInput aria-label="From date" value={filters.startDate} onChange={event => setFilters(current => ({ ...current, startDate: event.target.value }))} /></label>
-      <label><span>To date</span><ReportDateInput aria-label="To date" value={filters.endDate} onChange={event => setFilters(current => ({ ...current, endDate: event.target.value }))} /></label>
-      <label><span>Direction</span><select value={filters.direction} onChange={event => setFilters(current => ({ ...current, direction: event.target.value }))}><option value="">All movements</option><option value="in">Stock In</option><option value="out">Stock Out</option></select></label>
+      <label><span>From date</span><ReportDateInput aria-label="From date" value={filters.startDate} onChange={value => setFilters(current => ({ ...current, startDate: value }))} /></label>
+      <label><span>To date</span><ReportDateInput aria-label="To date" value={filters.endDate} onChange={value => setFilters(current => ({ ...current, endDate: value }))} /></label>
       <label className="bill-search-filter"><span>Transaction / product search</span><div><Search /><input value={filters.search} onChange={event => setFilters(current => ({ ...current, search: event.target.value }))} onKeyDown={event => { if (event.key === 'Enter') applyFilters(); }} placeholder="Transaction no., supplier or product" /></div></label>
       <div className="bill-filter-buttons"><button type="button" className="apply" onClick={applyFilters}><Filter /> Apply</button><button type="button" onClick={resetFilters}><X /> Reset</button></div>
     </div>
-    <div className="bill-summary-grid">
-      <article><span><FileText /></span><div><small>Transactions</small><strong>{report?.summary.totalTransactions ?? 0}</strong></div></article>
-      <article><span><Package /></span><div><small>Stock In Quantity</small><strong>{quantity(report?.summary.stockInQuantity)}</strong></div></article>
-      <article><span><Boxes /></span><div><small>Stock Out Quantity</small><strong>{quantity(report?.summary.stockOutQuantity)}</strong></div></article>
-      <article><span><FileText /></span><div><small>Net Quantity</small><strong>{quantity(report?.summary.netQuantity)}</strong></div></article>
+    <div className="bill-summary-grid stock-summary-grid">
+      <article><span><FileText /></span><div><small>{directionLabel} Transactions</small><strong>{report?.summary.totalTransactions ?? 0}</strong></div></article>
+      <article><span>{isIn ? <Package /> : <Boxes />}</span><div><small>{isIn ? 'Stock In Quantity' : 'Stock Out Quantity'}</small><strong>{quantity(isIn ? report?.summary.stockInQuantity : report?.summary.stockOutQuantity)}</strong></div></article>
+      <article><span><FileText /></span><div><small>Total Amount</small><strong>{money(report?.summary.totalAmount)}</strong></div></article>
     </div>
     <div className="bill-table-card">
       {loading && <div className="bill-report-state"><RefreshCw className="bill-report-spinner" /><strong>Loading stock movements…</strong></div>}
       {!loading && error && <div className="bill-report-state error"><strong>{error}</strong><button type="button" onClick={() => setReloadKey(value => value + 1)}><RefreshCw /> Retry</button></div>}
-      {!loading && !error && !hasData && <div className="bill-report-state"><Package /><strong>No stock in-out transactions found for these filters.</strong><p>Choose another date range or clear the search.</p></div>}
+      {!loading && !error && !hasData && <div className="bill-report-state"><Package /><strong>No {directionLabel.toLowerCase()} transactions found for these filters.</strong><p>Choose another date range or clear the search.</p></div>}
       {!loading && !error && hasData && report && <>
         <div className="bill-table-scroll"><table>
-          <thead><tr><th>Transaction No.</th><th>Date / Time</th><th>Type</th><th>Supplier</th><th>Products</th><th className="amount">Quantity</th><th className="amount">Amount</th></tr></thead>
+          <colgroup><col className="stock-col-products" /><col className="stock-col-type" /><col className="stock-col-quantity" /><col className="stock-col-price" /><col className="stock-col-supplier" /><col className="stock-col-date" /></colgroup>
+          <thead><tr><th>Product Name</th><th>Type</th><th className="amount">Quantity</th><th className="amount">Price</th><th>Supplier</th><th>Date / Time</th></tr></thead>
           <tbody>{rows.map(entry => <tr key={entry.documentId} tabIndex={0} aria-label={`View stock transaction ${entry.transactionNo}`} onClick={() => setSelectedMovement(entry)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedMovement(entry); } }}>
-            <td><strong>{entry.transactionNo}</strong><small>{entry.dayId}</small></td><td>{dateTime(entry.createdDate)}</td><td>{entry.type}</td><td>{entry.supplier || '—'}</td><td>{entry.items.map(item => item.name).join(', ') || '—'}</td><td className="amount">{quantity(entry.quantity)}</td><td className="amount"><strong>{money(entry.finalTotal)}</strong></td>
+            <td><strong>{entry.items.map(item => item.name).join(', ') || '—'}</strong></td><td>{entry.type}</td><td className="amount">{quantity(entry.quantity)}</td><td className="amount"><strong>{money(entry.finalTotal)}</strong></td><td>{entry.supplier || '—'}</td><td>{dateTime(entry.createdDate)}</td>
           </tr>)}</tbody>
-          <tfoot><tr><td><strong>Net movement</strong></td><td colSpan={4}>{report.summary.totalTransactions} transactions</td><td className="amount">{quantity(report.summary.netQuantity)}</td><td className="amount"><strong>{money(report.summary.totalAmount)}</strong></td></tr></tfoot>
+          <tfoot><tr><td><strong>Total {directionLabel}</strong></td><td>{report.summary.totalTransactions} transactions</td><td className="amount">{quantity(isIn ? report.summary.stockInQuantity : report.summary.stockOutQuantity)}</td><td className="amount"><strong>{money(report.summary.totalAmount)}</strong></td><td colSpan={2} /></tr></tfoot>
         </table></div>
         <div className="bill-pagination"><span>Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, report.movements.length)} of {report.movements.length}</span><div><button type="button" disabled={page <= 1} onClick={() => setPage(value => value - 1)}><ChevronLeft /></button><strong>Page {page} of {totalPages}</strong><button type="button" disabled={page >= totalPages} onClick={() => setPage(value => value + 1)}><ChevronRight /></button></div></div>
       </>}

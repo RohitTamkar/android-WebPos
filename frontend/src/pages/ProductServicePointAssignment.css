@@ -1,0 +1,9 @@
+.category-modal.service-point-assignment { margin: auto; padding: 0; width: min(480px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; color: #334155; }
+.service-point-assignment::backdrop { background: rgba(15, 23, 42, .5); backdrop-filter: blur(4px); }
+.service-point-assignment .modal-body p { margin: 0; font-size: 13px; line-height: 1.6; }
+.service-point-assignment .assignment-choice-list { display: flex; flex-direction: column; gap: 10px; max-height: 40dvh; overflow-y: auto; margin: 0; padding: 4px; border: 0; min-width: 0; }
+.assignment-choice-list legend { font-size: 13px; font-weight: 600; padding-bottom: 10px; }
+.assignment-choice-list label { display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 13px; cursor: pointer; overflow-wrap: anywhere; }
+.assignment-choice-list input { accent-color: #5547ff; }
+.service-point-assignment .assignment-choice-list button { text-align: left; white-space: normal; overflow-wrap: anywhere; }
+.service-point-assignment .modal-footer { flex-wrap: wrap; gap: 10px; }

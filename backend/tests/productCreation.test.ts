@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { Timestamp, type Firestore } from 'firebase-admin/firestore';
-import { createOutletProduct, ProductCreationError, productTaxes, validateNewProduct } from '../src/productCreation.js';
+import { PRODUCT_UNITS, createOutletProduct, ProductCreationError, productTaxes, validateNewProduct } from '../src/productCreation.js';
 import { nextProductCode } from '../src/productImportValidation.js';
 import { createProductImportChunk } from '../src/productImportWriter.js';
 import { allocateProductCodes } from '../src/productImportValidation.js';
+import { ANDROID_TAX_OPTIONS } from '../../shared/androidTaxes.js';
 
 class Ref {
   constructor(public path: string, public query = false) {}
@@ -102,6 +103,24 @@ test('gaps, numeric strings and invalid legacy values use highest plus one; stal
   assert.equal(nextProductCode(f.products().map(([id, fields]) => ({ id, fields }))), 52);
 });
 
+test('creation accepts existing wholesale and online price fields without adding new field names', async () => {
+  const f = fixture();
+  const saved = await createOutletProduct(f.db, 'outlet', 'user', assigned, { ...input(), wholeSaleAmount: 20, onlinePrice: 30 });
+  assert.equal(saved.fields.wholeSaleAmount, 20); assert.equal(saved.fields.onlinePrice, 30);
+  assert.equal(saved.fields.priceTable, '{"default price":25.5}');
+  for (const key of ['rent', 'variant', 'addon', 'discountAmount']) assert.equal(key in saved.fields, false);
+});
+
+test('manual product creation accepts every Android GST and VAT ID without reading or seeding tax masters', async () => {
+  for (const tax of ANDROID_TAX_OPTIONS) {
+    const f = fixture(); f.records.delete('MASTERS/masters/TAX_MASTER/gst');
+    const product = await createOutletProduct(f.db, 'outlet', 'user', assigned, { ...input(), taxIndex: tax.index });
+    assert.equal(product.fields.taxIndex, tax.index);
+    assert.ok(f.reads.every(path => !path.startsWith('MASTERS/')));
+    assert.ok([...f.records.keys()].every(path => !path.startsWith('MASTERS/')));
+  }
+});
+
 test('authorization rejects missing sessions, inactive users and other outlets before product reads', async () => {
   const f = fixture();
   for (const [outlet, user, status] of [['outlet', null, 401], ['other', 'user', 403], ['bad/path', 'user', 400]] as const) {
@@ -177,4 +196,17 @@ test('manual Add Product matches the supplied Firestore document contract exactl
   assert.deepEqual(f.records.get(`OUTLET/outlet/PRODUCT/${saved.documentId}`), saved.fields);
   assert.equal(f.records.size, before.size + 1);
   for (const [path, fields] of before) assert.deepEqual(f.records.get(path), fields);
+});
+
+
+test('all supplied unit options preserve their IDs when creating products', async () => {
+  assert.deepEqual(PRODUCT_UNITS.map(unit => unit.name), [
+    'KILOGRAM', 'LITER', 'NUMBER', 'MILLILITRE', 'BOX', 'TIN', 'JAR',
+    'BOTTLE', 'GRAM', 'METER', 'DOZEN', 'BAG', 'PIECE',
+  ]);
+  for (const unit of PRODUCT_UNITS) {
+    const f = fixture();
+    const created = await createOutletProduct(f.db, 'outlet', 'user', assigned, { ...input(), unitId: unit.id });
+    assert.equal(created.fields.unitId, unit.id);
+  }
 });

@@ -1,4 +1,5 @@
-import { newProductSchema, ProductCreationError, productTaxes, validateProductReferences } from './productCreation.js';
+import { newProductSchema, ProductCreationError, validateProductReferences } from './productCreation.js';
+import { ANDROID_TAX_OPTIONS } from '../../shared/androidTaxes.js';
 const editableSchema = newProductSchema.omit({ requestId: true, code: true });
 const patchSchema = editableSchema.partial().strict();
 export async function updateOutletProduct(db, outletId, id, profileId, assignedOutlets, raw) {
@@ -17,9 +18,8 @@ export async function updateOutletProduct(db, outletId, id, profileId, assignedO
         const patch = patchSchema.safeParse(raw);
         if (!patch.success)
             throw new ProductCreationError(422, 'Only editable product fields can be updated.', Object.fromEntries(patch.error.issues.map(issue => [String(issue.path[0]), issue.message])));
-        const [product, categories, taxes] = await Promise.all([
+        const [product, categories] = await Promise.all([
             transaction.get(reference), transaction.get(outlet.collection('CATEGORY')),
-            transaction.get(db.collection('MASTERS').doc('masters').collection('TAX_MASTER')),
         ]);
         if (!product.exists)
             throw new ProductCreationError(404, 'This product no longer exists.');
@@ -30,7 +30,11 @@ export async function updateOutletProduct(db, outletId, id, profileId, assignedO
         const parsed = editableSchema.safeParse({ ...stored, ...changes });
         if (!parsed.success)
             throw new ProductCreationError(422, 'Check the highlighted fields.', Object.fromEntries(parsed.error.issues.map(issue => [String(issue.path[0]), issue.message])));
-        validateProductReferences(parsed.data, categories.docs.map(doc => doc.id), productTaxes(taxes.docs.map(doc => doc.data())));
+        const taxChoices = [...ANDROID_TAX_OPTIONS];
+        if (parsed.data.taxIndex === stored.taxIndex && !taxChoices.some(tax => tax.index === stored.taxIndex)) {
+            taxChoices.push({ index: parsed.data.taxIndex, name: 'Saved tax', percent: 0, type: 0 });
+        }
+        validateProductReferences(parsed.data, categories.docs.map(doc => doc.id), taxChoices);
         if ('price' in changes && changes.price !== stored.price) {
             let table;
             try {

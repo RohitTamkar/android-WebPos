@@ -154,7 +154,7 @@ export const StockTransferReportPage = ({ outlet, token, onSessionExpired, repor
 
   return <section className="bill-report-page stock-transfer-report-page">
     <div className="bill-report-heading">
-      <div><span>REPORTS</span><h1>Stock Transfer Report</h1><p>{outlet.name} · Stock transfers and product details.</p></div>
+      <div><strong className="report-print-shop-name">{outlet.name}</strong><span>REPORTS</span><h1>Stock Transfer Report</h1><p>{outlet.name} · Stock transfers and product details.</p></div>
       <div className="bill-report-actions">
         <button type="button" onClick={() => setReloadKey(value => value + 1)} disabled={loading}><RefreshCw /> Refresh</button>
         <button type="button" onClick={exportExcel} disabled={!hasData || loading || !!error}><Download /> Export Excel</button>
@@ -162,8 +162,8 @@ export const StockTransferReportPage = ({ outlet, token, onSessionExpired, repor
       </div>
     </div>
     <div className="bill-report-filters">
-      <label><span>From date</span><ReportDateInput aria-label="From date" value={filters.startDate} onChange={event => setFilters(current => ({ ...current, startDate: event.target.value }))} /></label>
-      <label><span>To date</span><ReportDateInput aria-label="To date" value={filters.endDate} onChange={event => setFilters(current => ({ ...current, endDate: event.target.value }))} /></label>
+      <label><span>From date</span><ReportDateInput aria-label="From date" value={filters.startDate} onChange={value => setFilters(current => ({ ...current, startDate: value }))} /></label>
+      <label><span>To date</span><ReportDateInput aria-label="To date" value={filters.endDate} onChange={value => setFilters(current => ({ ...current, endDate: value }))} /></label>
       <label className="bill-search-filter"><span>Transfer / product search</span><div><Search /><input value={filters.search} onChange={event => setFilters(current => ({ ...current, search: event.target.value }))} onKeyDown={event => { if (event.key === 'Enter') applyFilters(); }} placeholder="Transfer no., reference or product" /></div></label>
       <div className="bill-filter-buttons"><button type="button" className="apply" onClick={applyFilters}><Filter /> Apply</button><button type="button" onClick={resetFilters}><X /> Reset</button></div>
     </div>

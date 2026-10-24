@@ -38,8 +38,6 @@ interface StockFilters {
   search: string;
 }
 
-type SortKey = 'code' | 'stock' | 'name';
-
 const PAGE_SIZE = 50;
 
 const STATUS_CLASS: Record<StockStatus, string> = {
@@ -74,7 +72,6 @@ export const StockReportPage = ({ outlet, token, onSessionExpired, reportName = 
   const [filters, setFilters] = useState(initialFilters);
   const [appliedFilters, setAppliedFilters] = useState(initialFilters);
   const [report, setReport] = useState<StockReportResponse | null>(null);
-  const [sortKey, setSortKey] = useState<SortKey>('code');
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -117,10 +114,11 @@ export const StockReportPage = ({ outlet, token, onSessionExpired, reportName = 
         || product.name.toLowerCase().includes(search)
         || product.code.toLowerCase().includes(search)
         || product.category.toLowerCase().includes(search)));
-    if (sortKey === 'stock') return filtered.sort((left, right) => left.currentStock - right.currentStock);
-    if (sortKey === 'name') return filtered.sort((left, right) => left.name.localeCompare(right.name));
-    return filtered;
-  }, [report, appliedFilters, sortKey]);
+    return filtered.sort((left, right) => {
+      if (!left.code || !right.code) return left.code ? -1 : right.code ? 1 : 0;
+      return left.code.localeCompare(right.code, undefined, { numeric: true });
+    });
+  }, [report, appliedFilters]);
 
   const summary = useMemo(() => rows.reduce((totals, product) => {
     if (product.tracked) {
@@ -165,7 +163,7 @@ export const StockReportPage = ({ outlet, token, onSessionExpired, reportName = 
   return (
     <section className="bill-report-page product-report-page stock-report-page">
       <div className="bill-report-heading">
-        <div><span>REPORTS</span><h1>Stock Report</h1><p>{outlet.name} · Current stock count for stockable products.</p></div>
+        <div><strong className="report-print-shop-name">{outlet.name}</strong><span>REPORTS</span><h1>Stock Report</h1><p>{outlet.name} · Current stock count for stockable products.</p></div>
         <div className="bill-report-actions">
           <button type="button" onClick={() => setReloadKey(value => value + 1)} disabled={loading}><RefreshCw /> Refresh</button>
           <button type="button" onClick={exportExcel} disabled={!rows.length}><Download /> Export Excel</button>
@@ -193,7 +191,6 @@ export const StockReportPage = ({ outlet, token, onSessionExpired, reportName = 
         {!loading && !error && report && rows.length === 0 && <div className="bill-report-state"><PackageSearch /><strong>No products found.</strong><p>{report.products.length ? 'Clear some filters to see more products.' : 'This outlet has no stockable products.'}</p></div>}
         {!loading && !error && report && rows.length > 0 && (
           <>
-            <div className="product-sort-bar"><span>Sort by</span>{(['code', 'stock', 'name'] as SortKey[]).map(key => <button type="button" key={key} className={sortKey === key ? 'active' : ''} onClick={() => { setSortKey(key); setPage(1); }}>{key === 'code' ? 'Product code' : key === 'stock' ? 'Lowest stock' : 'Name'}</button>)}</div>
             <div className="bill-table-scroll"><table><thead><tr><th>Code</th><th>Product</th><th>Category</th><th className="amount">Stock Count</th><th className="amount">Reorder Level</th><th>Status</th><th className="amount">Price</th><th className="amount">Stock Value</th></tr></thead><tbody>{pagedRows.map(product => <tr key={product.productId}><td className="product-code-cell"><span className="product-code">{product.code || '—'}</span></td><td><strong>{product.name}</strong></td><td>{product.category}</td><td className="amount"><strong className={product.tracked ? (product.currentStock <= 0 ? 'stock-count negative' : 'stock-count') : 'stock-count muted'}>{quantity(product.currentStock)}</strong></td><td className="amount">{product.reorderLevel ? quantity(product.reorderLevel) : '—'}</td><td><span className={`stock-status ${STATUS_CLASS[product.status]}`}>{product.status}</span></td><td className="amount">{money(product.price)}</td><td className="amount">{product.tracked ? money(product.stockValue) : '—'}</td></tr>)}</tbody><tfoot><tr><td /><td><strong>Total</strong></td><td>{rows.length} products</td><td className="amount">{quantity(summary.totalStock)}</td><td /><td /><td /><td className="amount"><strong>{money(summary.stockValue)}</strong></td></tr></tfoot></table></div>
             <div className="bill-pagination"><span>Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, rows.length)} of {rows.length}</span><div><button type="button" disabled={page <= 1} onClick={() => setPage(value => value - 1)}><ChevronLeft /></button><strong>Page {page} of {totalPages}</strong><button type="button" disabled={page >= totalPages} onClick={() => setPage(value => value + 1)}><ChevronRight /></button></div></div>
           </>

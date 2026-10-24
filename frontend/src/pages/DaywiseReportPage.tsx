@@ -221,7 +221,7 @@ export const DaywiseReportPage = ({ outlet, token, onSessionExpired, reportName 
   return (
     <section className="bill-report-page daywise-report-page">
       <div className="bill-report-heading">
-        <div><span>REPORTS</span><h1>Daywise Report</h1><p>{outlet.name} · Sales totals across all shifts for the selected date.</p></div>
+        <div><strong className="report-print-shop-name">{outlet.name}</strong><span>REPORTS</span><h1>Daywise Report</h1><p>{outlet.name} · Sales totals across all shifts for the selected date.</p></div>
         <div className="bill-report-actions">
           <button type="button" onClick={exportExcel} disabled={(!report && !bills.length) || loading || !!error}><Download /> Export Excel</button>
           <button type="button" onClick={() => window.print()}><Printer /> Print / PDF</button>
@@ -229,7 +229,7 @@ export const DaywiseReportPage = ({ outlet, token, onSessionExpired, reportName 
       </div>
 
       <div className="bill-report-filters">
-        <label><span>Report date</span><ReportDateInput aria-label="Report date" value={dayId} onChange={event => { if (event.target.value) setDayId(event.target.value); }} /></label>
+        <label><span>Report date</span><ReportDateInput aria-label="Report date" value={dayId} onChange={value => { if (value) setDayId(value); }} /></label>
         <div className="bill-filter-buttons"><button type="button" className="apply" disabled={loading} onClick={() => setReloadKey(value => value + 1)}><RefreshCw /> Refresh</button></div>
       </div>
 

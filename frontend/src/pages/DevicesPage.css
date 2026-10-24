@@ -1,0 +1,23 @@
+.devices-page { display: grid; gap: 20px; min-width: 0; color: var(--ink); }
+.devices-heading { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; }
+.devices-heading > div { min-width: 0; }
+.devices-heading > div > span { color: var(--red); font-size: 11px; font-weight: 600; letter-spacing: .1em; }
+.devices-heading h1 { display: flex; align-items: center; gap: 10px; margin: 8px 0; font-size: 26px; font-weight: 700; letter-spacing: -.025em; }
+.devices-heading h1 svg { color: var(--blue); }
+.devices-heading p { color: var(--muted); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.devices-refresh { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink); font-size: 13px; font-weight: 600; cursor: pointer; }
+.devices-refresh:disabled { opacity: .6; cursor: default; }
+.devices-refresh:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+.devices-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; min-height: 250px; padding: 32px 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--muted); font-size: 13px; text-align: center; }
+.devices-state h2 { color: var(--ink); font-size: 18px; }
+.devices-state [role=alert] { color: var(--red); }
+.devices-table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+.devices-table-scroll table { width: 100%; border-collapse: collapse; color: var(--ink); font-size: 13px; }
+.devices-table-scroll th, .devices-table-scroll td { padding: 17px 20px; text-align: left; border-bottom: 1px solid var(--line); }
+.devices-table-scroll th { background: color-mix(in srgb, var(--workspace) 65%, var(--card)); color: var(--muted); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.devices-table-scroll tbody tr:last-child td { border-bottom: 0; }
+.devices-table-scroll .device-id { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
+.device-status { display: inline-flex; align-items: center; gap: 9px; white-space: nowrap; color: var(--muted); }
+.device-status input { width: 16px; height: 16px; margin: 0; accent-color: var(--green); }
+.device-status.active span { color: var(--green); font-weight: 600; }
+@media (max-width: 680px) { .devices-table-scroll th, .devices-table-scroll td { padding: 14px 12px; } }

@@ -1,0 +1,111 @@
+/* Theme changes only colors. Screen scoping preserves report/PDF print styles. */
+@media screen {
+  :root[data-theme="light"] { color-scheme: light; }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --workspace: #101722;
+    --card: #192331;
+    --ink: #e5edf7;
+    --muted: #9aaac0;
+    --line: #304054;
+    --navy: #c1d9ef;
+    --theme-raised: #202d3d;
+    --theme-text: #e5edf7;
+    --theme-muted: #a5b4c7;
+  }
+  :root[data-theme="dark"] body { background: var(--workspace); color: var(--theme-text); }
+  :root[data-theme="dark"] :is(
+    .retail-header, .dashboard-sidebar, .business-profile, .plan-card, .payment-section,
+    .detail-panel, .payment-tile, .insight-card, .help-card, .sidebar-logout, .logout-modal,
+    .bill-report-filters, .bill-summary-grid article, .bill-table-card, .bill-detail-modal,
+    .bill-detail-meta div, .bill-items-table, .bill-payment-detail, .bill-total-detail,
+    .products-summary-card, .products-category-tabs, .products-toolbar, .products-table-card,
+    .products-empty, .category-stat-card, .category-toolbar, .category-table-card, .category-modal,
+    .upload-excel-option, .upload-excel-dialog, .csv-upload-summary > div,
+    .sheet-workbook, .sheet-sample-badge, .sheet-tab, .sheet-required-columns li,
+    .outlet-selection-header, .outlet-card, .outlet-search-wrap, .outlet-state-card,
+    .report-date-calendar, .shift-table-section, .shift-pill
+  ) { background: var(--card); border-color: var(--line); color: var(--theme-text); }
+  :root[data-theme="dark"] :is(
+    .products-page-shell, .bill-report-page, .upload-excel-page, .category-page-shell,
+    .outlet-selection-page, .excel-sheet-instructions
+  ) { color: var(--theme-text); color-scheme: dark; }
+  :root[data-theme="dark"] .outlet-selection-page { background: var(--workspace); }
+  :root[data-theme="dark"] :is(
+    .retail-dashboard-shell h1, .retail-dashboard-shell h2, .retail-dashboard-shell h3,
+    .retail-dashboard-shell h4, .business-profile strong, .nav-group-title, .masters-group .nav-group-title,
+    .nav-group-items button, .plan-card div strong, .admin-chip strong, .theme-button,
+    .payment-copy strong, .metric-row strong, .shift-card div strong, .insight-card > button,
+    .bill-report-heading h1, .bill-summary-grid strong, .bill-table-card td, .bill-table-card td strong,
+    .bill-table-card .amount strong, .bill-detail-meta strong, .bill-total-detail .grand-total,
+    .products-summary-card strong, .products-table .products-name, .products-table td,
+    .stat-value, .category-table td, .product-section-heading, .modal-header h3,
+    .category-modal, .category-modal .form-field label, .sheet-grid td, .sheet-workbook-heading,
+    .upload-excel-copy strong, .upload-excel-dialog h2, .sheet-grid .sheet-column-headers th,
+    .outlet-card h2, .outlet-selection-title h1
+  ) { color: var(--theme-text); }
+  :root[data-theme="dark"] :is(
+    .business-profile small, .business-profile div span, .admin-chip small, .payment-copy span,
+    .metric-label, .bill-report-heading p, .bill-summary-grid small, .bill-report-filters label > span,
+    .bill-report-state, .bill-pagination, .bill-detail-meta span, .bill-detail-meta small,
+    .products-header p, .products-summary-label, .products-category-tabs button, .stat-label,
+    .category-title-group p, .category-table th, .products-table th, .form-field label,
+    .upload-excel-heading p, .upload-excel-copy > span, .upload-excel-dialog p,
+    .csv-upload-help, .csv-upload-summary dt, .csv-upload-import-note, .sheet-sample-note,
+    .sheet-rules-list p, .outlet-card p, .outlet-card dt, .outlet-selection-title p,
+    .report-date-caption, .report-date-footer > span
+  ) { color: var(--theme-muted); }
+  :root[data-theme="dark"] :is(
+    .bill-table-card th, .bill-table-card tfoot td, .category-summary-row,
+    .bill-items-table th, .bill-detail-modal > footer, .modal-footer,
+    .category-table th, .products-table th, .sheet-workbook-heading, .sheet-instruction-panel,
+    .sheet-required-columns, .sheet-grid .sheet-column-letters td,
+    .sheet-grid .sheet-column-headers th, .sheet-grid .sheet-row-number, .sheet-bottom-bar,
+    .csv-upload-table-scroll th, .report-date-month-selects select
+  ) { background: var(--theme-raised); color: var(--theme-text); border-color: var(--line); }
+  :root[data-theme="dark"] :is(
+    .retail-dashboard-shell input:not([type="checkbox"]):not([type="radio"]),
+    .retail-dashboard-shell select, .report-date-trigger,
+    .category-modal input:not([type="checkbox"]):not([type="radio"]), .category-modal select,
+    .outlet-search-wrap input, .report-date-calendar select
+  ) { background: var(--theme-raised); color: var(--theme-text); border-color: var(--line); color-scheme: dark; }
+  :root[data-theme="dark"] :is(
+    .bill-report-filters label > div, .bill-report-actions button:not(:last-child),
+    .bill-filter-buttons button:not(.apply), .bill-pagination button, .products-refresh,
+    .csv-upload-preview .csv-upload-secondary, .btn-secondary, .plan-card button,
+    .outlet-selection-header > button, .outlet-state-card button
+  ) { background: var(--theme-raised); color: var(--theme-text); border-color: var(--line); }
+  :root[data-theme="dark"] :is(
+    .metric-row, .shift-card div, .insight-card > button, .bill-table-card td,
+    .products-table td, .category-table td, .modal-header, .modal-footer,
+    .bill-detail-modal > footer, .bill-items-table td, .csv-upload-table-scroll,
+    .csv-upload-table-scroll th, .csv-upload-table-scroll td, .sheet-grid td, .sheet-grid th,
+    .report-date-caption, .report-date-footer, .report-date-navigation > button
+  ) { border-color: var(--line); }
+  :root[data-theme="dark"] :is(
+    .nav-group-items button:hover, .nav-group-items button.active, .payment-tile.featured,
+    .products-category-tabs button.active, .products-category-tabs button:hover,
+    .products-table tbody tr:hover, .category-table tbody tr:hover, .bill-table-card tbody tr:hover,
+    .category-report-page .category-product-row:hover, .insight-card > button:hover,
+    .upload-excel-option:hover, .report-date-calendar button:hover:not(:disabled)
+  ) { background: #26384f; color: #d8e7ff; }
+  :root[data-theme="dark"] :is(.product-code, .products-code, .products-status, .category-expand-button) { color: #c0d5ee; }
+  :root[data-theme="dark"] :is(.product-code, .products-code, .products-status) { background: #26384f; }
+  :root[data-theme="dark"] :is(.category-share > span, .payment-brand, .kpi-icon) { background: #2a384b; }
+  :root[data-theme="dark"] :is(.hero-actions .dashboard-date-picker, .hero-actions .dashboard-date-picker .report-date-trigger) { background: var(--theme-raised); color: var(--theme-text); border-color: var(--line); }
+  :root[data-theme="dark"] .report-date-calendar { color-scheme: dark; }
+  :root[data-theme="dark"] .report-date-calendar button { color: var(--theme-text); }
+  :root[data-theme="dark"] .report-date-days > button.is-other-month { color: #738296; }
+  :root[data-theme="dark"] .report-date-days > button.is-selected { background: #ed3036; color: #fff; }
+  :root[data-theme="dark"] .report-date-footer button { color: #ff9298; }
+  :root[data-theme="dark"] :is(.csv-upload-error, .category-form-error, .bill-report-state.error) { color: #ff9da4; }
+  :root[data-theme="dark"] .csv-upload-warning { color: #edc27b; }
+  :root[data-theme="dark"] .theme-button:focus-visible { outline: 2px solid #9abaff; outline-offset: 2px; }
+  :root[data-theme="dark"] .shift-table th { background: var(--theme-raised); color: var(--theme-text); border-color: var(--line); }
+  :root[data-theme="dark"] .shift-table th.overall-col, :root[data-theme="dark"] .shift-table td.overall-col { background: #1c2c3d; color: #a5c7eb; }
+  :root[data-theme="dark"] .shift-table td { border-color: var(--line); color: var(--theme-text); }
+  :root[data-theme="dark"] .shift-table th:first-child, :root[data-theme="dark"] .shift-table td:first-child { color: var(--theme-text); }
+  :root[data-theme="dark"] .shift-table tbody tr:hover td { background: var(--theme-raised); }
+  :root[data-theme="dark"] .shift-table tbody tr:hover td.overall-col { background: #22374d; }
+}
+@media print { :root[data-theme] { color-scheme: light; } }

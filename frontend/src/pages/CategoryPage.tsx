@@ -1,5 +1,7 @@
 import { EditCategoryForm, CategoryUpdatedPopup } from './EditCategoryForm.tsx';
 import { DeleteConfirmation } from './DeleteConfirmation.tsx';
+import { DeleteAllError, deleteAllRecords } from './deleteAllApi.ts';
+import { SuccessPopup } from './SuccessPopup.tsx';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   SlidersHorizontal,
@@ -13,6 +15,7 @@ import {
   FolderPlus,
   RefreshCw,
   X,
+  MoreVertical,
 } from 'lucide-react';
 import type { OutletSummary } from './OutletSelectionPage.tsx';
 import './CategoryPage.css';
@@ -28,6 +31,7 @@ export interface Category {
   productCount: number;
   color: string;
   createdAt: string;
+  imagePath?: string;
 }
 
 // Shape returned by GET /api/outlets/:outletId/categories (Firestore OUTLET/{id}/CATEGORY).
@@ -40,6 +44,7 @@ interface FirebaseCategory {
   active: boolean | null;
   productCount: number;
   createdAt: string;
+  imagePath?: string;
 }
 
 const PRESET_COLORS = [
@@ -64,6 +69,7 @@ function toCategory(category: FirebaseCategory, index: number): Category {
     productCount: category.productCount,
     color: PRESET_COLORS[index % PRESET_COLORS.length] ?? '#3567f0',
     createdAt: category.createdAt ? category.createdAt.slice(0, 10) : '—',
+    imagePath: category.imagePath,
   };
 }
 
@@ -92,6 +98,10 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
   const [deleting, setDeleting] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const deleteBusy = useRef(false);
+  const [categoryMenuOpen, setCategoryMenuOpen] = useState(false);
+  const [deleteAllOpen, setDeleteAllOpen] = useState(false);
+  const [deleteAllError, setDeleteAllError] = useState('');
+  const [deleteAllDone, setDeleteAllDone] = useState(false);
 
   useEffect(() => {
     if (!addOpen || saving) return;
@@ -134,7 +144,7 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
       const matchesSearch =
         cat.name.toLowerCase().includes(query) ||
         cat.code.toLowerCase().includes(query) ||
-        cat.description.toLowerCase().includes(query);
+        cat.regionalName.toLowerCase().includes(query);
       const matchesStatus = statusFilter === 'All' || cat.status === statusFilter;
       return matchesSearch && matchesStatus;
     });
@@ -180,9 +190,22 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
     finally { deleteBusy.current = false; setDeleting(false); setDeleteTarget(null); }
   };
 
+  // Products keep their stored category field and remain listed under All on the Products page.
+  const deleteAllCategories = async () => {
+    if (deleteBusy.current) return;
+    deleteBusy.current = true; setDeleting(true); setDeleteAllError(''); setNotice('');
+    try {
+      await deleteAllRecords(outlet.id, token, 'categories');
+      setCategories([]); setDeleteAllOpen(false); setDeleteAllDone(true);
+    } catch (error) {
+      if (error instanceof DeleteAllError && error.status === 401) { setDeleteAllOpen(false); onSessionExpired(); return; }
+      setDeleteAllError((error as Error).message);
+    } finally { deleteBusy.current = false; setDeleting(false); }
+  };
+
   const addCategory = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (saving) return;
+    if (saving || loading || error) return;
     const categoryNo = nextCategoryNumber;
     const name = draft.name.trim();
     if (!name || !Number.isSafeInteger(categoryNo) || categoryNo <= 0) {
@@ -221,14 +244,24 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
 
   if (editTarget) return <EditCategoryForm key={editTarget.id} category={editTarget} outletId={outlet.id} token={token}
     onSessionExpired={onSessionExpired} onCancel={() => setEditTarget(null)} onUpdated={updated => {
-      setCategories(current => current.map(category => category.id === updated.id ? { ...category,
-        name: updated.name, regionalName: updated.regionalName, description: updated.regionalName || category.dayType } : category));
+      setCategories(current => current.map(category => {
+        if (category.id !== updated.id) return category;
+        const next = { ...category, name: updated.name, regionalName: updated.regionalName,
+          description: updated.regionalName || category.dayType };
+        if (updated.imagePath) next.imagePath = updated.imagePath;
+        if (updated.imageRemoved) delete next.imagePath;
+        return next;
+      }));
       setEditTarget(null); setUpdatedPopup(true);
     }} />;
 
   return (
     <div className="category-page-shell">
       {updatedPopup && <CategoryUpdatedPopup onDismiss={() => setUpdatedPopup(false)} />}
+      {deleteAllOpen && <DeleteConfirmation kind="category" name="all categories" busy={deleting} error={deleteAllError}
+        title="Delete all categories?" description={`Are you sure you want to delete all categories? This will permanently remove all ${categories.length} categories. Products are kept and stay listed under All products.`}
+        confirmLabel="Yes" cancelLabel="No" onCancel={() => { if (!deleteBusy.current) setDeleteAllOpen(false); }} onConfirm={() => void deleteAllCategories()} />}
+      {deleteAllDone && <SuccessPopup message="Categories deleted successfully" onDismiss={() => setDeleteAllDone(false)} />}
       {deleteTarget && <DeleteConfirmation kind="category" name={deleteTarget.name} busy={deleting}
         onCancel={() => { if (!deleteBusy.current) setDeleteTarget(null); }} onConfirm={() => void deleteCategory(deleteTarget.id)} />}
       {/* Header Row */}
@@ -240,48 +273,22 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
           </h1>
           <p>Organize, create, update, and manage your product categories</p>
         </div>
-        <div className="category-header-actions">
+        <div className="category-header-actions category-master-actions">
           <button
             type="button"
             className="btn-primary-add"
-            disabled={loading || !!error || saving}
+            disabled={saving}
             onClick={openAddCategory}
           >
             <Plus size={16} />
             Add New Category
           </button>
-        </div>
-      </div>
-
-      {/* Stats Summary Cards */}
-      <div className="category-stats-grid">
-        <div className="category-stat-card">
-          <div className="stat-icon-wrapper blue">
-            <Layers size={22} />
-          </div>
-          <div className="stat-info">
-            <span className="stat-label">Total Categories</span>
-            <span className="stat-value">{stats.total}</span>
-          </div>
-        </div>
-
-        <div className="category-stat-card">
-          <div className="stat-icon-wrapper green">
-            <CheckCircle2 size={22} />
-          </div>
-          <div className="stat-info">
-            <span className="stat-label">Active Categories</span>
-            <span className="stat-value">{stats.active}</span>
-          </div>
-        </div>
-
-        <div className="category-stat-card">
-          <div className="stat-icon-wrapper purple">
-            <Package size={22} />
-          </div>
-          <div className="stat-info">
-            <span className="stat-label">Total Assigned Items</span>
-            <span className="stat-value">{stats.totalItems}</span>
+          <div className="category-more-actions">
+            <button type="button" className="category-menu-toggle" aria-label="Category options" aria-expanded={categoryMenuOpen}
+              aria-controls="category-options-menu" onClick={() => setCategoryMenuOpen(value => !value)}><MoreVertical size={17} /></button>
+            {categoryMenuOpen && <div id="category-options-menu" className="category-options-menu">
+              <button type="button" disabled={loading || deleting || !categories.length} onClick={() => { setCategoryMenuOpen(false); setDeleteAllError(''); setDeleteAllOpen(true); }}><Trash2 size={14} />Delete All</button>
+            </div>}
           </div>
         </div>
       </div>
@@ -293,12 +300,21 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
             <Search size={16} />
           </span>
           <input
-            type="text"
+            type="search"
             className="search-input"
-            placeholder="Search category name, code, description..."
+            aria-label="Search categories"
+            placeholder="Search category name, code, regional name..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
+        </div>
+
+        <div className="category-stat-card category-total-summary">
+          <div className="stat-icon-wrapper blue"><Layers size={20} /></div>
+          <div className="stat-info">
+            <span className="stat-label">Total Categories</span>
+            <span className="stat-value">{stats.total}</span>
+          </div>
         </div>
 
         <div className="toolbar-filters">
@@ -321,9 +337,8 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
             <tr>
               <th>Code</th>
               <th>Category Name</th>
-              <th>Description</th>
+              <th>Regional Name</th>
               <th>Products</th>
-              <th>Status</th>
               <th>Created</th>
               <th style={{ textAlign: 'right' }}>Actions</th>
             </tr>
@@ -331,7 +346,7 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={7}>
+                <td colSpan={6}>
                   <div className="table-empty-state">
                     <RefreshCw size={30} className="empty-state-icon category-loading-icon" />
                     <h3>Loading categories…</h3>
@@ -340,7 +355,7 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
               </tr>
             ) : error ? (
               <tr>
-                <td colSpan={7}>
+                <td colSpan={6}>
                   <div className="table-empty-state">
                     <FolderPlus size={36} className="empty-state-icon" />
                     <h3>{error}</h3>
@@ -371,23 +386,14 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
                     </div>
                   </td>
                   <td>
-                    <div className="category-desc-text" title={cat.description}>
-                      {cat.description || '—'}
+                    <div className="category-desc-text" title={cat.regionalName}>
+                      {cat.regionalName || '—'}
                     </div>
                   </td>
                   <td>
                     <span className="product-count-chip">
                       <Package size={14} color="#64748b" />
                       {cat.productCount} items
-                    </span>
-                  </td>
-                  <td>
-                    <span
-                      className={`status-badge ${
-                        cat.status === 'Active' ? 'active' : 'inactive'
-                      }`}
-                    >
-                      {cat.status}
                     </span>
                   </td>
                   <td style={{ color: '#64748b', fontSize: '12px' }}>
@@ -421,7 +427,7 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
               ))
             ) : (
               <tr>
-                <td colSpan={7}>
+                <td colSpan={6}>
                   <div className="table-empty-state">
                     <FolderPlus size={36} className="empty-state-icon" />
                     <h3>No categories found</h3>
@@ -442,12 +448,14 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
           <form onSubmit={addCategory}>
             <div className="modal-header"><h3 id="add-category-title">Add New Category</h3><button type="button" className="modal-close-btn" aria-label="Close add category" disabled={saving} onClick={() => setAddOpen(false)}><X size={18} /></button></div>
             <div className="modal-body">
-              <div className="form-field"><label htmlFor="new-category-number">Category Number</label><input id="new-category-number" type="text" readOnly disabled={saving} value={String(nextCategoryNumber)} /></div>
+              <div className="form-field"><label htmlFor="new-category-number">Category Number</label><input id="new-category-number" type="text" readOnly disabled={saving} value={loading ? 'Loading…' : error ? 'Unavailable' : String(nextCategoryNumber)} /></div>
               <div className="form-field"><label htmlFor="new-category-name">Category Name</label><input id="new-category-name" required maxLength={200} autoFocus disabled={saving} value={draft.name} onChange={event => setDraft(current => ({ ...current, name: event.target.value }))} /></div>
               <div className="form-field"><label htmlFor="new-category-regional">Regional Name</label><input id="new-category-regional" maxLength={200} disabled={saving} value={draft.regionalName} onChange={event => setDraft(current => ({ ...current, regionalName: event.target.value }))} /></div>
               {addError && <p className="category-form-error" role="alert">{addError}</p>}
             </div>
-            <div className="modal-footer"><button type="button" className="btn-secondary" disabled={saving} onClick={() => setAddOpen(false)}>Cancel</button><button type="submit" className="btn-primary-add" disabled={saving}>{saving ? 'Adding…' : 'Add Category'}</button></div>
+            {loading && <p className="category-form-loading" role="status">Loading the next category number. You can enter the names now.</p>}
+            {error && <p className="category-form-error" role="alert">{error} <button type="button" className="btn-secondary" onClick={() => setReloadKey(value => value + 1)}>Retry</button></p>}
+            <div className="modal-footer"><button type="button" className="btn-secondary" disabled={saving} onClick={() => setAddOpen(false)}>Cancel</button><button type="submit" className="btn-primary-add" disabled={saving || loading || !!error}>{saving ? 'Saving…' : 'Add Category'}</button></div>
           </form>
         </section>
       </div>}

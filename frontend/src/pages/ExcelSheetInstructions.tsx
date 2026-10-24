@@ -28,16 +28,16 @@ const examples = [
 const widths = [190, 180, 120, 110, 110, 130, 170, 115, 80, 150, 105, 80, 120, 115];
 const numericColumns = new Set([2, 3, 4, 5, 7, 8, 11, 13]);
 const instructions = [
-  { title: 'Keep all 14 columns', text: 'Use the exact headers and order shown, from Product Name to Search Code. Keep the header in the first nonblank row.' },
+  { title: 'Keep all 14 columns', text: 'Use the headers and order shown, from Product Name to Search Code. Header matching ignores letter case and extra spaces. Keep the header in the first nonblank row.' },
   { title: 'Save as CSV', text: 'Use UTF-8 CSV (.csv); TSV is also accepted. Maximum 5 MB and 10,000 product rows. XLS and XLSX files are not supported.' },
   { title: 'Match the category name', text: 'Category Name must exactly match an existing category in the selected outlet. The example categories are illustrative, not your POS records.' },
   { title: 'Use its category number', text: 'Category No must be the number of that same existing category in Category Master. Do not use the spreadsheet row number.' },
-  { title: 'Check prices and cell values', text: 'Default Price and Price 1 must match. Fill numeric cells, using zero where applicable. Current CSV checks reject decimal points, prohibited punctuation and extra whitespace; ordinary internal spaces are allowed in names.' },
+  { title: 'Check prices and cell values', text: 'Default Price and Price 1 must match. Fill numeric cells, using zero where applicable. Spaces around values are ignored on import; internal name spaces are preserved. Current CSV checks still reject decimal points and prohibited punctuation.' },
   { title: 'Start with zero stock', text: 'Stock must be numeric. This uploader currently accepts only 0 opening stock. Unit Type must be number.' },
   { title: 'Use YES or NO', text: 'Weightable accepts YES or NO, in either letter case. Do not use true, false or a tick mark in the file.' },
   { title: 'Use a configured GST rate', text: 'Tax is the numeric GST percentage configured in the POS, without a % sign. Use 0 only when configured. The example tax rates do not define your tax configuration.' },
   { title: 'Review assigned Search Codes', text: 'Keep the Search Code column. File codes are ignored; the server assigns codes after the outlet’s highest existing numeric code. Preview the final codes before uploading.' },
-  { title: 'Premises are a separate workflow', text: 'Premises 1–5 belong to Upload with Premises, which is currently unavailable. Do not append premise 1 or premise 2: no optional premise columns, naming/order rules or premise-price JSON are accepted by this 14-column uploader.' },
+  { title: 'Premises are a separate workflow', text: 'Standard upload uses only these 14 columns. The separate premises template adds Premises 1, Premises 2 and Premises 3 after Search Code. Each numbered column contains a separate selling price. Keep two columns or add more in numbered order; a single Premises column is also accepted for local preview. Premises cannot currently be verified or saved because the product model has no premises association.' },
   { title: 'Resolve repeated products', text: 'Names alone do not identify duplicates. Otherwise identical product rows are rejected even if their Search Codes differ. Existing matching products are not overwritten.' },
 ];
 

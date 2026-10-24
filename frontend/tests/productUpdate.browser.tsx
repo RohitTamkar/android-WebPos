@@ -9,7 +9,8 @@ let mode: 'failure' | 'success' | 'expired' = 'failure';
 let product = { documentId: 'p1', fields: { id: 'p1', code: '00196', name: 'Product Original', price: 50,
   mrpPrice: 60, costPrice: 20, category: 'c1', regionalName: 'Local', discount: 5, shortName: 'Short',
   taxIndex: 7, hsnCode: '123', unitId: 2, weighable: false, stockable: true, currentStock: 35,
-  barcode: '00000123456', priceTable: '{"default price":50,"Wholesale":40}', onlineSynced: true } };
+  barcode: '00000123456', priceTable: '{"default price":50,"Wholesale":40,"AC Table price":40,"TABLE price":50}', onlineSynced: true,
+  wholeSaleAmount: 40, onlinePrice: 60, kitchenId: 'kitchen', recipeId: 'recipe' } };
 const other = { documentId: 'p2', fields: { name: 'Other', code: 999, category: 'c2', price: 10 } };
 const categories = [{ id: 'c1', name: 'Food' }, { id: 'c2', name: 'Drinks' }];
 window.fetch = async (url, init) => {
@@ -17,8 +18,9 @@ window.fetch = async (url, init) => {
   if (path === '/api/outlets/outlet/products') return Response.json({ success: true, data: [product, other] });
   if (path === '/api/outlets/outlet/categories') return Response.json({ success: true, data: categories });
   if (path === '/api/outlets/outlet/products/p1/edit-options') {
-    return Response.json({ success: true, data: { code: product.fields.code, categories, product,
-      taxes: [{ percent: 5, index: 7, type: 0 }, { percent: 0, index: 1, type: 0 }], units: [{ id: 2, name: 'number' }] } });
+    return Response.json({ success: true, data: { code: product.fields.code, categories, product, servicePointName: 'Kitchen Printer',
+      taxes: [{ percent: 5, index: 7, type: 0 }, { percent: 0, index: 1, type: 0 }], units: [{ id: 2, name: 'number' }],
+      premises: [{ id: 'ac', name: 'AC Table' }, { id: 'table', name: 'TABLE' }] } });
   }
   if (path === '/api/outlets/outlet/products/p1' && init?.method === 'PATCH') {
     const body = JSON.parse(String(init.body)); patches.push({ path, body });
@@ -56,9 +58,22 @@ void (async () => {
   const expected = { name: 'Product Original', price: '50', mrpPrice: '60', costPrice: '20', category: 'c1',
     regionalName: 'Local', discount: '5', shortName: 'Short', taxIndex: '7', hsnCode: '123', unitId: '2' };
   for (const [key, text] of Object.entries(expected)) assert(input(`product-${key}`).value === text, `${key} is prefilled`);
+  assert(input('product-wholeSaleAmount').value === '40' && input('product-onlinePrice').value === '60', 'saved additional prices displayed');
+  assert(input('product-barcode').value === '00000123456' && input('product-barcode').readOnly, 'barcode string preserved');
+  assert(input('product-kitchenId').value === 'Kitchen Printer' && input('product-kitchenId').readOnly, 'service point name displayed read-only instead of its ID');
+  assert(product.fields.kitchenId === 'kitchen' && input('product-recipeId').value === 'recipe', 'saved service point ID and recipe preserved');
+  const taxOptions = [...document.querySelectorAll<HTMLOptionElement>('#product-taxIndex option')].filter(option => option.value);
+  assert(taxOptions.length === 12 && taxOptions[5]!.value === '6' && taxOptions[5]!.textContent === 'VAT 22'
+    && taxOptions[6]!.value === '7' && taxOptions[6]!.textContent === 'VAT 10', 'Product selector uses all Android GST and VAT IDs');
+  assert(document.querySelector('.modal-body')?.lastElementChild?.classList.contains('local-image-picker'), 'image upload is the last section');
+  assert(document.querySelectorAll('[aria-label="AC Table Price"]').length === 1
+    && document.querySelector<HTMLInputElement>('[aria-label="AC Table Price"]')!.value === '40', 'phone-saved AC Table price displays once with its saved value');
+  assert(document.querySelectorAll('[aria-label="TABLE Price"]').length === 1
+    && document.querySelector<HTMLInputElement>('[aria-label="TABLE Price"]')!.value === '50', 'phone-saved TABLE price displays once with its saved value');
+  assert(!document.querySelector('[aria-label="AC Table price Price"]'), 'price suffix is not repeated');
   assert(!document.querySelector('details'), 'all fields visible');
-  let checks = [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
-  assert(!checks[0]!.checked && checks[1]!.checked, 'existing checkbox values preserved');
+  assert(!document.querySelector<HTMLInputElement>('[aria-label="Weighable"]')!.checked
+    && document.querySelector<HTMLInputElement>('[aria-label="Stockable"]')!.checked, 'existing checkbox values preserved');
   await value(input('product-name'), 'Discard'); button('Cancel').click(); await pause();
   assert(patches.length === 0 && !input('product-name'), 'Cancel does not save');
   await open(); assert(input('product-name').value === 'Product Original', 'cancelled draft discarded');
@@ -72,7 +87,8 @@ void (async () => {
   assert(input('product-price').getAttribute('aria-invalid') === 'true' && patches.length === 0, 'invalid number prevents PATCH');
   await value(input('product-price'), '55.5'); await value(input('product-regionalName'), 'Regional Updated');
   await value(input('product-taxIndex'), '1');
-  checks = [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]; checks[0]!.click(); checks[1]!.click(); await pause();
+  document.querySelector<HTMLInputElement>('[aria-label="Weighable"]')!.click();
+  document.querySelector<HTMLInputElement>('[aria-label="Stockable"]')!.click(); await pause();
   const update = button('Update'); update.click(); update.click(); await pause();
   assert(patches.length === 1, 'duplicate clicks issue one update');
   assert(button('Cancel').disabled, 'cannot leave during update');

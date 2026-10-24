@@ -10,7 +10,7 @@
 .add-product-modal .modal-header h3 { font-size: 20px; }
 .add-product-modal .modal-body {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-content: start;
   gap: 22px 24px;
   padding: 28px;
@@ -23,12 +23,23 @@
 .add-product-modal .form-field input, .add-product-modal .form-field select { width: 100%; min-width: 0; color: #334155; min-height: 42px; }
 .add-product-modal .modal-footer { padding: 18px 28px; }
 .product-checkbox { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.product-wide, .product-pricing-fields { grid-column: 1 / -1; }
+.product-pricing-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 22px 24px; }
+.product-inventory { margin: 0; padding: 18px; border: 1px solid #e2e8f0; border-radius: 10px; }
+.product-inventory legend { padding: 0 6px; color: #334155; font-size: 14px; font-weight: 600; }
+.product-flag-fields, .product-recipe-field { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; }
+.product-recipe-field input { flex: 1; }
+.product-field-note { margin: -8px 0 0; color: #64748b; font-size: 12px; }
+.product-recipe-field button:disabled { cursor: default; opacity: .6; }
+.add-product-modal input:read-only { background: #f8fafc; }
 .products-notice { color: #15803d; font-size: 13px; }
 @media (max-width: 1100px) {
   .add-product-modal .modal-body { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .product-pricing-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 600px) {
   .category-modal.add-product-modal { min-height: calc(100dvh - 104px); }
   .add-product-modal .modal-body { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  .product-pricing-fields { grid-template-columns: minmax(0, 1fr); gap: 18px; }
   .add-product-modal .modal-body, .add-product-modal .modal-header, .add-product-modal .modal-footer { padding: 18px; }
 }

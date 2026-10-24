@@ -36,7 +36,7 @@ export interface ImportValidationDependencies {
     readTaxes: () => Promise<ImportTax[]>;
     readProducts: (outletId: string) => Promise<StoredImportProduct[]>;
 }
-export declare function checkAuthorizedProductImport(profileId: string | null, outletId: string, source: unknown, deps: ImportValidationDependencies): Promise<{
+export declare function checkAuthorizedProductImport(profileId: string | null, outletId: string, source: unknown, deps: ImportValidationDependencies, acceptAttempt?: () => void): Promise<{
     status: number;
     body: {
         success: boolean;

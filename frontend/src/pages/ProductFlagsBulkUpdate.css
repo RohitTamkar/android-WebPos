@@ -1,0 +1,22 @@
+.product-flags-bulk .flags-header { align-items: flex-start; }
+.product-flags-bulk .flags-header-actions { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.product-flags-bulk .flags-header-actions button { width: auto; min-height: 36px; padding: 8px 16px; font-size: 13px; white-space: nowrap; }
+.product-flags-bulk .flags-search { flex: none; width: 100%; max-width: 320px; box-sizing: border-box; background: #fff; }
+.product-flags-bulk .flags-search:focus-within { border-color: #5547ff; }
+.product-flags-bulk .flags-table { min-width: 480px; }
+.product-flags-bulk .flags-table .flags-column { width: 130px; text-align: center; }
+.product-flags-bulk .flags-heading { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.product-flags-bulk .flags-table input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: #5547ff; cursor: pointer; vertical-align: middle; }
+.product-flags-bulk .flags-table input[type="checkbox"]:disabled { cursor: not-allowed; }
+.product-flags-bulk .flags-table tbody tr.changed { background: #f7f6ff; }
+.product-flags-bulk .flags-table tbody tr.failed { background: #fef2f2; }
+.product-flags-bulk .flags-row-error { display: block; margin-top: 2px; color: #b91c1c; font-size: 12px; font-weight: 400; }
+.product-flags-bulk .flags-empty { text-align: center; padding: 28px 14px; }
+.product-flags-bulk .flags-failures { margin: 0; padding-left: 20px; color: #b91c1c; font-size: 12px; }
+@media (max-width: 640px) {
+  .product-flags-bulk .flags-search { max-width: none; }
+  .product-flags-bulk .flags-header { flex-wrap: wrap; }
+  .product-flags-bulk .flags-header-actions { width: 100%; }
+  .product-flags-bulk .flags-header-actions button { flex: 1; }
+  .product-flags-bulk .flags-table .flags-column { width: 96px; }
+}

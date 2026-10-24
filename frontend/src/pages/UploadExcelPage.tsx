@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ArrowRight, BookOpen, Building2, FileSpreadsheet, Upload, X } from 'lucide-react';
 import './UploadExcelPage.css';
 import { CsvUploadPreview } from './CsvUploadPreview.tsx';
+import { DemoExcelTemplates } from './DemoExcelTemplates.tsx';
 import { ExcelSheetInstructions } from './ExcelSheetInstructions.tsx';
 
 const options = [
@@ -20,7 +21,7 @@ const options = [
   {
     title: 'Upload with Premises',
     description: 'Upload inventory with premises information.',
-    message: 'Upload with premises functionality will be available in a later phase.',
+    message: 'Preview the standard 14 product fields followed by Premises 1, Premises 2, Premises 3, or more selling-price columns.',
     icon: Building2,
   },
   {
@@ -62,7 +63,9 @@ export function UploadExcelPage({ outletId, token, onSessionExpired }: { outletI
         })}
       </div>
 
-      <dialog ref={dialogRef} className={`upload-excel-dialog${selectedOption?.title === 'Excel Sheet Instructions' ? ' upload-excel-instruction-dialog' : selectedOption?.title === 'Upload Excel' ? ' upload-excel-preview-dialog' : ''}`} aria-labelledby="upload-excel-dialog-title" aria-describedby="upload-excel-dialog-description"
+      <DemoExcelTemplates />
+
+      <dialog ref={dialogRef} className={`upload-excel-dialog${selectedOption?.title === 'Excel Sheet Instructions' ? ' upload-excel-instruction-dialog' : selectedOption?.title === 'Upload Excel' || selectedOption?.title === 'Upload with Premises' ? ' upload-excel-preview-dialog' : ''}`} aria-labelledby="upload-excel-dialog-title" aria-describedby="upload-excel-dialog-description"
         onClose={() => setSelectedOption(null)} onClick={event => {
           if (event.target !== event.currentTarget) return;
           const bounds = event.currentTarget.getBoundingClientRect();
@@ -75,7 +78,8 @@ export function UploadExcelPage({ outletId, token, onSessionExpired }: { outletI
           <button type="button" className="upload-excel-close-icon" aria-label="Close information" onClick={() => setSelectedOption(null)}><X size={18} /></button>
         </div>
         <p id="upload-excel-dialog-description">{selectedOption?.title === 'Upload Excel' ? 'Select a spreadsheet to validate and preview. Upload adds new products to the selected outlet.' : selectedOption?.message}</p>
-        {selectedOption?.title === 'Upload Excel' && <CsvUploadPreview outletId={outletId} token={token} onSessionExpired={onSessionExpired} onSuccessAcknowledged={() => setSelectedOption(null)} />}
+        {selectedOption?.title === 'Upload Excel' && <CsvUploadPreview key="standard" outletId={outletId} token={token} onSessionExpired={onSessionExpired} onSuccessAcknowledged={() => setSelectedOption(null)} />}
+        {selectedOption?.title === 'Upload with Premises' && <CsvUploadPreview key="premises" mode="premises" outletId={outletId} token={token} onSessionExpired={onSessionExpired} onSuccessAcknowledged={() => setSelectedOption(null)} />}
         {selectedOption?.title === 'Excel Sheet Instructions' && <ExcelSheetInstructions />}
         <div className="upload-excel-dialog-actions">
           <button type="button" onClick={() => setSelectedOption(null)}>Close</button>

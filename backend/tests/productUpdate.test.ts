@@ -4,6 +4,7 @@ import type { Firestore } from 'firebase-admin/firestore';
 import { updateOutletProduct } from '../src/productUpdate.js';
 import { ProductCreationError } from '../src/productCreation.js';
 import { productFields } from '../src/productDefaults.js';
+import { ANDROID_TAX_OPTIONS } from '../../shared/androidTaxes.js';
 class Ref {
   constructor(public path: string, public query = false) {}
   collection(name: string) { return new Ref(`${this.path}/${name}`, true); }
@@ -79,6 +80,31 @@ test('partial update, explicit empty optional text and unchecked flags never res
   assert.equal(f.updates.length, 1); assert.deepEqual(f.records, snapshot);
 });
 
+test('wholesale and online prices update only the existing numeric fields', async () => {
+  const f = fixture(); const before = structuredClone(f.records.get(path));
+  const result = await updateOutletProduct(f.db, 'outlet', 'p1', 'user', assigned, { wholeSaleAmount: 40, onlinePrice: 55 });
+  assert.deepEqual(f.updates[0]!.fields, { wholeSaleAmount: 40, onlinePrice: 55 });
+  assert.deepEqual(result.fields, { ...before, wholeSaleAmount: 40, onlinePrice: 55 });
+  assert.equal(typeof result.fields.wholeSaleAmount, 'number'); assert.equal(typeof result.fields.onlinePrice, 'number');
+  for (const change of [{ wholeSaleAmount: '40' }, { onlinePrice: '55' }, { onlinePrice: -1 }, { wholeSaleAmount: Infinity }]) {
+    await assert.rejects(updateOutletProduct(f.db, 'outlet', 'p1', 'user', assigned, change));
+  }
+  assert.equal(f.updates.length, 1);
+});
+
+test('product edits accept the Android tax IDs and retain unknown saved IDs until explicitly changed', async () => {
+  const f = fixture();
+  f.records.set(path, { ...f.records.get(path), taxIndex: 99 });
+  await updateOutletProduct(f.db, 'outlet', 'p1', 'user', assigned, { name: 'Changed' });
+  assert.equal(f.records.get(path)!.taxIndex, 99);
+  for (const tax of ANDROID_TAX_OPTIONS) {
+    const result = await updateOutletProduct(f.db, 'outlet', 'p1', 'user', assigned, { taxIndex: tax.index });
+    assert.equal(result.fields.taxIndex, tax.index);
+  }
+  assert.ok(f.reads.every(path => !path.startsWith('MASTERS/')));
+  assert.ok(f.updates.every(update => update.path === path));
+});
+
 test('price changes preserve additional price levels; malformed existing tables block only price changes', async () => {
   for (const table of ['invalid', '{}', 'null', '[]', { 'default price': 50 }]) {
     const f = fixture(); f.records.set(path, { ...f.records.get(path), priceTable: table });
@@ -133,4 +159,14 @@ test('partial updates preserve stock or names changed since the form was opened'
   const updated = await updateOutletProduct(f.db, 'outlet', 'p1', 'user', assigned, { discount: 15 });
   assert.equal(updated.fields.currentStock, 80); assert.equal(updated.fields.name, 'Changed elsewhere');
   assert.deepEqual(f.updates[0]!.fields, { discount: 15 });
+});
+
+test('products whose category was deleted can still update other fields but cannot move to a missing category', async () => {
+  const f = fixture(); f.records.delete('OUTLET/outlet/CATEGORY/c1');
+  const result = await updateOutletProduct(f.db, 'outlet', 'p1', 'user', assigned, { stockable: false, weighable: true });
+  assert.deepEqual(f.updates[0]!.fields, { stockable: false, weighable: true }); assert.equal(result.fields.category, 'c1');
+  await updateOutletProduct(f.db, 'outlet', 'p1', 'user', assigned, { category: 'c2' });
+  assert.equal(f.records.get(path)!.category, 'c2');
+  await assert.rejects(updateOutletProduct(f.db, 'outlet', 'p1', 'user', assigned, { category: 'c1' }),
+    error => error instanceof ProductCreationError && error.status === 422 && !!error.errors.category);
 });

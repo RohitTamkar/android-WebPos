@@ -1,0 +1,39 @@
+/* Keep search controls readable, touch friendly, and consistent across screens. */
+body input[type="search"] {
+  min-width: 0;
+  min-height: 40px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink, #193454);
+  caret-color: var(--blue, #5547ff);
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+body input[type="search"]::placeholder { color: #788ca7; opacity: 1; }
+body :is(.products-search, .outlet-search-wrap) {
+  min-height: 44px;
+  border-radius: 10px;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+body .products-search { padding: 0 12px; background: #fff; }
+body :is(.products-search, .outlet-search-wrap) > svg { flex-shrink: 0; }
+body :is(.products-search, .outlet-search-wrap):focus-within {
+  border-color: var(--blue, #5547ff);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue, #5547ff) 14%, transparent);
+}
+body :is(.products-search, .outlet-search-wrap) input[type="search"] {
+  flex: 1;
+  outline: none;
+  box-shadow: none;
+  border: 0;
+}
+body input[type="search"]:not(.products-search input):not(.outlet-search-wrap input) {
+  border-radius: 10px;
+}
+body input[type="search"]:not(.products-search input):not(.outlet-search-wrap input):focus-visible {
+  outline: 2px solid var(--blue, #5547ff);
+  outline-offset: 2px;
+}
+body .toolbar-search-box { min-width: 0; }
+@media (max-width: 640px) {
+  body input[type="search"] { font-size: 16px; }
+}

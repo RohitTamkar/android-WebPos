@@ -25,3 +25,6 @@ pnpm-debug.log*
 # OS
 .DS_Store
 Thumbs.db
+
+# Local upload-attempt history (keep on the backend PC across restarts)
+backend/.local-data/

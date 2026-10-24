@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { updateOutletProduct } from '../src/productUpdate.js';
 import { ProductCreationError } from '../src/productCreation.js';
 import { productFields } from '../src/productDefaults.js';
+import { ANDROID_TAX_OPTIONS } from '../../shared/androidTaxes.js';
 class Ref {
     path;
     query;
@@ -88,6 +89,31 @@ test('partial update, explicit empty optional text and unchecked flags never res
     await updateOutletProduct(f.db, 'outlet', 'p1', 'user', assigned, {});
     assert.equal(f.updates.length, 1);
     assert.deepEqual(f.records, snapshot);
+});
+test('wholesale and online prices update only the existing numeric fields', async () => {
+    const f = fixture();
+    const before = structuredClone(f.records.get(path));
+    const result = await updateOutletProduct(f.db, 'outlet', 'p1', 'user', assigned, { wholeSaleAmount: 40, onlinePrice: 55 });
+    assert.deepEqual(f.updates[0].fields, { wholeSaleAmount: 40, onlinePrice: 55 });
+    assert.deepEqual(result.fields, { ...before, wholeSaleAmount: 40, onlinePrice: 55 });
+    assert.equal(typeof result.fields.wholeSaleAmount, 'number');
+    assert.equal(typeof result.fields.onlinePrice, 'number');
+    for (const change of [{ wholeSaleAmount: '40' }, { onlinePrice: '55' }, { onlinePrice: -1 }, { wholeSaleAmount: Infinity }]) {
+        await assert.rejects(updateOutletProduct(f.db, 'outlet', 'p1', 'user', assigned, change));
+    }
+    assert.equal(f.updates.length, 1);
+});
+test('product edits accept the Android tax IDs and retain unknown saved IDs until explicitly changed', async () => {
+    const f = fixture();
+    f.records.set(path, { ...f.records.get(path), taxIndex: 99 });
+    await updateOutletProduct(f.db, 'outlet', 'p1', 'user', assigned, { name: 'Changed' });
+    assert.equal(f.records.get(path).taxIndex, 99);
+    for (const tax of ANDROID_TAX_OPTIONS) {
+        const result = await updateOutletProduct(f.db, 'outlet', 'p1', 'user', assigned, { taxIndex: tax.index });
+        assert.equal(result.fields.taxIndex, tax.index);
+    }
+    assert.ok(f.reads.every(path => !path.startsWith('MASTERS/')));
+    assert.ok(f.updates.every(update => update.path === path));
 });
 test('price changes preserve additional price levels; malformed existing tables block only price changes', async () => {
     for (const table of ['invalid', '{}', 'null', '[]', { 'default price': 50 }]) {

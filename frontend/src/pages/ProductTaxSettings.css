@@ -1,0 +1,25 @@
+.product-tax-settings .tax-settings-header { align-items: flex-start; }
+.tax-settings-actions { display: flex; align-items: flex-end; gap: 10px; margin-left: auto; }
+.tax-settings-actions label { display: grid; gap: 5px; font-size: 12px; color: var(--ink); }
+.tax-settings-actions select { min-width: 140px; min-height: 36px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--card); color: var(--ink); font: inherit; }
+.tax-settings-actions button { min-height: 36px; padding: 8px 16px; font-size: 13px; }
+.tax-category-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+.tax-category-tabs button { padding: 10px 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink); font: inherit; font-size: 13px; cursor: pointer; }
+.tax-category-tabs button[aria-pressed="true"] { background: var(--blue); border-color: var(--blue); color: #fff; }
+.tax-category-tabs button:disabled { cursor: not-allowed; opacity: .65; }
+.product-tax-settings .tax-settings-table { min-width: 0; table-layout: fixed; }
+.product-tax-settings .tax-settings-table :is(th, td):first-child { width: 50%; overflow-wrap: anywhere; white-space: normal; }
+.product-tax-settings .tax-settings-table :is(th, td):last-child { text-align: right; }
+.tax-settings-table input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--blue); vertical-align: middle; }
+.tax-select-all { display: inline-flex; align-items: center; gap: 8px; }
+.tax-settings-failures { color: var(--red); font-size: 13px; padding-left: 20px; }
+.tax-settings-empty { padding: 28px 14px; text-align: center; }
+@media (max-width: 640px) {
+  .product-tax-settings .tax-settings-header { flex-wrap: wrap; }
+  .tax-settings-actions { width: 100%; flex-wrap: wrap; }
+  .tax-settings-actions label { flex: 1 0 100%; }
+  .tax-settings-actions button { flex: 1; }
+  .product-tax-settings .tax-settings-table :is(th, td) { padding: 12px 8px; }
+  .product-tax-settings .tax-settings-table :is(th, td):first-child { width: 42%; }
+  .tax-select-all { flex-wrap: wrap; justify-content: flex-end; }
+}

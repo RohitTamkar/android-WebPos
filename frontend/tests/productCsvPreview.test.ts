@@ -170,14 +170,14 @@ test('every prohibited character in a later row blocks the entire result', () =>
   }
 });
 
-test('edge spaces and non-space whitespace still block the entire preview', () => {
-  for (const value of [' name', 'name ', '\tname', 'name\t', 'line\nbreak', 'line\r\nbreak', 'non\u00a0breaking', 'wide\u2003space']) {
+test('internal non-space whitespace still blocks the entire preview', () => {
+  for (const value of ['line\nbreak', 'line\r\nbreak', 'non\u00a0breaking', 'wide\u2003space']) {
     const later = [...sample];
     later[0] = value;
     assert.throws(() => parseProductCsv(sheet([sample, later])), /row 3, column 1 \(Product Name\).*whitespace/);
   }
-  assert.throws(() => parseProductCsv(sheet([sample, Array(14).fill(' ')])), /row 3.*whitespace/);
-  assert.throws(() => parseProductCsv('   '), /row 1, column 1.*whitespace/);
+  assert.equal(parseProductCsv(sheet([sample, Array(14).fill(' ')])).rows.length, 1);
+  assert.throws(() => parseProductCsv('   '), /blank rows/);
 });
 
 test('structural delimiters, CSV quotation and CR/LF line endings remain valid', () => {
@@ -280,4 +280,17 @@ test('worker returns only an error, never partial preview data, for a later-row 
     if (original) Object.defineProperty(globalThis, 'self', original);
     else Reflect.deleteProperty(globalThis, 'self');
   }
+});
+
+
+test('mixed-case headers and extra header/value spaces are accepted without altering preview cells', () => {
+  const headers = PRODUCT_COLUMNS.map(header => `  ${header.toLowerCase().replaceAll(' ', '   ')}  `);
+  const padded = sample.map(value => `  ${value}  `);
+  const preview = parseProductCsv(sheet([padded], ',', headers));
+  assert.deepEqual(preview.headerErrors, []);
+  assert.deepEqual(preview.rows[0]?.errors, []);
+  assert.deepEqual(preview.rows[0]?.cells, padded);
+  assert.deepEqual(preview.headers, headers);
+  const duplicate = [...headers]; duplicate[1] = 'PRODUCT   NAME';
+  assert.ok(parseProductCsv(sheet([padded], ',', duplicate)).headerErrors.some(error => /Duplicate headers/.test(error)));
 });
