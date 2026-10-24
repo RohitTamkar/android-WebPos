@@ -21,6 +21,8 @@ export declare const newProductSchema: z.ZodObject<{
     unitId: z.ZodNumber;
     weighable: z.ZodBoolean;
     stockable: z.ZodBoolean;
+    wholeSaleAmount: z.ZodOptional<z.ZodNumber>;
+    onlinePrice: z.ZodOptional<z.ZodNumber>;
 }, z.core.$strip>;
 export declare class ProductCreationError extends Error {
     status: number;
@@ -50,6 +52,8 @@ export declare function validateNewProduct(raw: unknown, categories: string[], t
     unitId: number;
     weighable: boolean;
     stockable: boolean;
+    wholeSaleAmount?: number | undefined;
+    onlinePrice?: number | undefined;
 };
 export declare function validateProductReferences(data: {
     category: string;

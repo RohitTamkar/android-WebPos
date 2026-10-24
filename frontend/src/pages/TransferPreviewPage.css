@@ -42,3 +42,17 @@
 .transfer-action-button:disabled { opacity: .6; cursor: not-allowed; box-shadow: none; }
 @media (max-width: 680px) { .transfer-action-bar { bottom: 10px; flex-wrap: wrap; padding: 14px; } .transfer-action-button { width: 100%; } }
 .transfer-confirmation-question { margin: 0; font-size: 16px; font-weight: 600; color: var(--ink); }
+.transfer-preview-image, .transfer-preview-image-placeholder {
+  display: inline-flex;
+  width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #94a3b8;
+  vertical-align: middle;
+}
+.transfer-preview-image { object-fit: cover; }

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useWebUsage } from './utils/useWebUsage.ts';
+import { DAILY_WEB_USAGE_SCREEN_ENABLED } from './utils/featureFlags.ts';
 import { LoginPage, type UserSession } from './pages/LoginPage.tsx';
 import { OutletSelectionPage, type OutletSummary } from './pages/OutletSelectionPage.tsx';
 import { CategoryPage } from './pages/CategoryPage.tsx';
@@ -13,6 +14,8 @@ import { TransferPreviewPage } from './pages/TransferPreviewPage.tsx';
 import { MulticounterPage } from './pages/MulticounterPage.tsx';
 import { UserAccountPage } from './pages/UserAccountPage.tsx';
 import { ProductsPage } from './pages/ProductsPage.tsx';
+import { ServicePointsPage } from './pages/ServicePointsPage.tsx';
+import { PremisesPage } from './pages/PremisesPage.tsx';
 import { UploadExcelPage } from './pages/UploadExcelPage.tsx';
 import { BillWiseReportPage } from './pages/BillWiseReportPage.tsx';
 import { ShiftSummaryReportPage } from './pages/ShiftSummaryReportPage.tsx';
@@ -23,6 +26,7 @@ import { GstReportPage } from './pages/GstReportPage.tsx';
 import { GstDaywiseReportPage } from './pages/GstDaywiseReportPage.tsx';
 import { StockReportPage } from './pages/StockReportPage.tsx';
 import { StockInOutReportPage } from './pages/StockInOutReportPage.tsx';
+import { StockAdjustmentPage } from './pages/StockAdjustmentPage.tsx';
 import { StockTransferReportPage } from './pages/StockTransferReportPage.tsx';
 import {
   Accessibility, BadgeIndianRupee, Banknote, Bot, Calculator, Download,
@@ -35,6 +39,10 @@ import {
 import { downloadDashboardExcel, type ShiftDashboardData } from './utils/dashboardExcel.ts';
 import './App.css';
 import './Theme.css';
+
+const hiddenNavigationGroups = new Set(['Inventory']);
+const disabledNavigationItems = new Set(['Inventory:Products', 'Operations:Broadcast', 'Operations:Device', 'Operations:Multicounter']);
+const dashboardBroadcastActionEnabled = false;
 
 function Sparkline({ tone = 'cyan', compact = false }: { tone?: 'cyan' | 'green' | 'muted'; compact?: boolean }) {
   return (
@@ -317,7 +325,7 @@ export default function App() {
     </>
   );
 
-  if (!usage.ready) return <main className="outlet-selection-page">
+  if (DAILY_WEB_USAGE_SCREEN_ENABLED && !usage.ready && !usage.suspended) return <main className="outlet-selection-page">
     <section className="outlet-selection-content"><div className="outlet-state-card" role={usage.message ? 'alert' : 'status'}>
       <strong>{usage.blocked ? 'Daily usage limit reached' : usage.message ? 'Web POS access paused' : 'Checking outlet access…'}</strong>
       <p>{usage.message || `Verifying daily usage for ${selectedOutlet.name}…`}</p>
@@ -349,6 +357,9 @@ export default function App() {
     { label: 'Masters', icon: <ClipboardList />, items: [
       { label: 'Category', icon: <SlidersHorizontal /> },
       { label: 'Products', icon: <Package /> },
+      { label: 'Service Point', icon: <Store /> },
+      { label: 'Premises', icon: <Store /> },
+      { label: 'Stock In and Out', icon: <ClipboardCheck /> },
       { label: 'User Account', icon: <ContactRound /> },
       { label: 'Employees/Captain/Salesman', icon: <UserRoundCog /> },
       { label: 'Category & Product Transfer', icon: <Database /> },
@@ -359,15 +370,18 @@ export default function App() {
       { label: 'Upload Excel', icon: <Upload /> },
     ] },
     { label: 'Operations', icon: <Bot />, items: [
+      { label: 'Upload Excel', icon: <Upload /> },
       { label: 'Multicounter', icon: <Users /> },
       { label: 'Device', icon: <Monitor /> },
       { label: 'Broadcast', icon: <Radio /> },
     ] },
     { label: 'Reports', icon: <ReceiptText />, items: [
       { label: 'Day Wise Report', icon: <CalendarDays /> },
+      { label: 'Shift Summary Report', icon: <CalendarCheck /> },
       { label: 'Category Wise', icon: <SlidersHorizontal /> },
       { label: 'Product Wise', icon: <PackageSearch /> },
       { label: 'Stock Report', icon: <ClipboardCheck /> },
+      { label: 'Stock In-Out Report', icon: <ClipboardList /> },
       { label: 'Stock Transfer Report', icon: <Accessibility /> },
       { label: 'GST Report', icon: <Calculator /> },
       { label: 'GST Report Day Wise', icon: <CalendarCheck /> },
@@ -385,7 +399,7 @@ export default function App() {
           <div><small>Selected Outlet</small><strong>{selectedOutlet.name}</strong><span>{selectedOutlet.branch || selectedOutlet.country}</span></div>
         </div>
         <nav className="sidebar-nav">
-          {navigationGroups.map((group) => (
+          {navigationGroups.filter(group => !hiddenNavigationGroups.has(group.label)).map((group) => (
             <section
               className={`nav-group ${group.label === 'Masters' ? 'masters-group' : ''} ${group.label === 'Reports' ? 'reports-group' : ''}`}
               key={group.label}
@@ -405,7 +419,7 @@ export default function App() {
               </div>
               {(openGroups[group.label] ?? true) && (
                 <div className="nav-group-items">
-                  {group.items.map((item) => (
+                  {group.items.filter(item => !disabledNavigationItems.has(`${group.label}:${item.label}`)).map((item) => (
                     <button
                       key={item.label}
                       type="button"
@@ -446,7 +460,18 @@ export default function App() {
         </header>
 
         <main className="dashboard-workspace">
-          {activeNavigation.id === 'Operations:Multicounter' ? (
+          {!DAILY_WEB_USAGE_SCREEN_ENABLED && !usage.ready && !usage.suspended && (
+            <section className="outlet-state-card" data-outlet-access-notice role={usage.message ? 'alert' : 'status'}>
+              <strong>{usage.blocked ? 'Daily usage limit reached' : usage.message ? 'Outlet access paused' : 'Checking outlet access…'}</strong>
+              <p>{usage.message || `Verifying access to ${selectedOutlet.name}…`}</p>
+              {!usage.blocked && <button type="button" onClick={usage.retry}>{usage.message ? 'Continue / Retry' : 'Retry connection'}</button>}
+              <button type="button" onClick={handleChangeOutlet}>Change outlet</button>
+              <button type="button" onClick={handleLogout}>Sign out</button>
+            </section>
+          )}
+          {!DAILY_WEB_USAGE_SCREEN_ENABLED && !usage.authorized ? null : activeNavigation.id === 'Masters:Stock In and Out' ? (
+            <StockAdjustmentPage key={`${session.id}:${selectedOutlet.id}`} outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
+          ) : activeNavigation.id === 'Operations:Multicounter' ? (
             <MulticounterPage key={`${session.id}:${selectedOutlet.id}`} outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
           ) : activeNavigation.id === 'Operations:Device' ? (
             <DevicesPage key={`${session.id}:${selectedOutlet.id}`} outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
@@ -454,6 +479,8 @@ export default function App() {
             <BroadcastPage key={`${session.id}:${selectedOutlet.id}`} outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
           ) : activeNavigation.id === 'Masters:Category & Product Transfer' ? (
             <TransferPreviewPage key={`${session.id}:${selectedOutlet.id}`} outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
+          ) : activeNavigation.id === 'Masters:Service Point' ? (
+            <ServicePointsPage key={`${session.id}:${selectedOutlet.id}`} outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
           ) : activeNavigation.id === 'Masters:Customer' ? (
             <CustomersPage key={`${session.id}:${selectedOutlet.id}`} outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
           ) : activeNavigation.id === 'Masters:Employees/Captain/Salesman' ? (
@@ -482,9 +509,11 @@ export default function App() {
             <DaywiseReportPage outlet={selectedOutlet} reportName={activeNavigation.label} token={session.token} onSessionExpired={handleLogout} />
           ) : activeNavigation.id === 'Masters:Category' ? (
             <CategoryPage outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
+          ) : activeNavigation.id === 'Masters:Premises' ? (
+            <PremisesPage key={`${session.id}:${selectedOutlet.id}`} outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
           ) : activeNavigation.id === 'Masters:Products' || activeNavigation.id === 'Inventory:Products' ? (
             <ProductsPage outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
-          ) : activeNavigation.id === 'Inventory:Upload Excel' ? (
+          ) : activeNavigation.id === 'Inventory:Upload Excel' || activeNavigation.id === 'Operations:Upload Excel' ? (
             <UploadExcelPage outletId={selectedOutlet.id} token={session.token} onSessionExpired={handleLogout} />
           ) : (
             <>
@@ -557,8 +586,8 @@ export default function App() {
                     <span><strong>Category Master</strong><small>Add, update & organize</small></span>
                   </button>
                   {/* <button type="button"><ShoppingCart /><span><strong>New Sale</strong><small>Start a new checkout</small></span></button> */}
-                  <button type="button" onClick={() => setActiveNavigation({ id: 'Inventory:Upload Excel', label: 'Upload Excel' })}><Upload /><span><strong>Upload Stock</strong><small>Import products from Excel</small></span></button>
-                  <button type="button" onClick={() => setActiveNavigation({ id: 'Operations:Broadcast', label: 'Broadcast' })}><MessageSquareText /><span><strong>Broadcast</strong><small>View devices and employees</small></span></button>
+                  <button type="button" onClick={() => setActiveNavigation({ id: 'Operations:Upload Excel', label: 'Upload Excel' })}><Upload /><span><strong>Upload Stock</strong><small>Import products from Excel</small></span></button>
+                  {dashboardBroadcastActionEnabled && <button type="button" onClick={() => setActiveNavigation({ id: 'Operations:Broadcast', label: 'Broadcast' })}><MessageSquareText /><span><strong>Broadcast</strong><small>View devices and employees</small></span></button>}
                 </article>
                 <article className="insight-card shift-card">
                   <h2>{selectedShiftId === 'all' ? (activeShift && !activeShift.inActive ? 'Current Active Shift' : 'Latest Shift') : `Shift ${displayData?.shiftNo || '—'}`}</h2>

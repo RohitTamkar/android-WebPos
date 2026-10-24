@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { CheckCircle2, X } from 'lucide-react';
 import './CategoryPage.css';
-export interface UpdatedCategoryNames { id: string; name: string; regionalName: string }
+export interface UpdatedCategoryNames { id: string; name: string; regionalName: string; imagePath?: string; imageRemoved?: boolean }
 interface Props {
-  category: UpdatedCategoryNames & { code: string }; outletId: string; token: string;
+  category: UpdatedCategoryNames & { code: string; imagePath?: string }; outletId: string; token: string;
   onCancel: () => void; onUpdated: (category: UpdatedCategoryNames) => void; onSessionExpired: () => void;
 }
 export function EditCategoryForm({ category, outletId, token, onCancel, onUpdated, onSessionExpired }: Props) {

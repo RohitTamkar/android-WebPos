@@ -1,4 +1,6 @@
 // Activity pauses after 60 seconds, sampled every 10 seconds. Hidden pages release immediately.
+import { createRequestId } from './requestId.ts';
+
 export const WEB_USAGE_HEARTBEAT_MS = 10_000;
 export const WEB_USAGE_IDLE_MS = 60_000;
 export interface UsageSession {
@@ -27,6 +29,9 @@ export class WebUsageClient {
     const wrapped: typeof fetch = async (input, init) => {
       const url = new URL(input instanceof Request ? input.url : String(input), window.location.origin);
       if (!this.active || url.origin !== window.location.origin || !/^\/api\/outlets\//.test(url.pathname) || /\/usage\//.test(url.pathname)) return this.original(input, init);
+      // A visible page may still be reacquiring its lease after the device picker
+      // closes. Wait for that lifecycle operation before sending an outlet request.
+      if (!this.session) await this.queue;
       const session = this.session;
       if (!session) return Response.json({ success: false, code: 'USAGE_SESSION_REQUIRED', message: 'Resume Web POS to continue.' }, { status: 428 });
       const headers = new Headers(input instanceof Request ? input.headers : undefined);
@@ -83,8 +88,8 @@ export class WebUsageClient {
       this.token = token; this.outletId = outletId;
       // Persist only a random idempotency key, never a counter or activity timestamp.
       const key = `pos_web_usage:${outletId}`;
-      try { this.requestId = sessionStorage.getItem(key) || crypto.randomUUID(); sessionStorage.setItem(key, this.requestId); }
-      catch { this.requestId ||= crypto.randomUUID(); }
+      try { this.requestId = sessionStorage.getItem(key) || createRequestId(); sessionStorage.setItem(key, this.requestId); }
+      catch { this.requestId ||= createRequestId(); }
       const data = await this.request('start', { requestId: this.requestId });
       if (!data.sessionId || !data.generation || data.outletId !== outletId) throw new UsageRequestError('Invalid usage authorization response.', 'USAGE_UNAVAILABLE', 503);
       this.session = data; return data;

@@ -66,16 +66,25 @@ async function usageTransaction(db: Firestore, outletId: string, profileId: stri
     throw new ProductCreationError(422, 'Usage initialization accepts no client fields, counters or timestamps.');
   }
   const outletRef = db.collection('OUTLET').doc(outletId);
+  // One stable accounting document retains the existing map of concurrent leases.
+  // This storage name does not establish or enable Web POS-only enforcement.
+  const usageRef = outletRef.collection('SESSION').doc('dailyUsage');
   const outcome = await db.runTransaction(async transaction => {
     const profile = (await transaction.get(db.collection('USER_PROFILE').doc(profileId))).data();
     requireProductOutlet(profileId, outletId, profile, assigned);
     const outlet = (await transaction.get(outletRef)).data();
     if (!outlet) throw new ProductCreationError(404, 'Outlet not found.');
     if (outlet.active !== true) throw new ProductCreationError(403, 'This outlet is inactive.');
+    const stored = (await transaction.get(usageRef)).data();
+    // Never silently grant a new allowance or migrate legacy data on entry.
+    // An existing SESSION document is authoritative; legacy fields stay untouched.
+    if (stored === undefined && outlet.dailyUsage !== undefined) {
+      throw new DailyUsageError(409, 'USAGE_LEGACY_REVIEW_REQUIRED',
+        'Legacy daily usage requires review before SESSION storage can be initialized. No usage data was migrated or reset.');
+    }
     const timeZone = resolveUsageTimeZone(outlet.country);
     const now = clock(); // Recalculate inside every retry, including retries across midnight.
     const date = localDate(now, timeZone);
-    const stored = outlet.dailyUsage;
     let reset = false;
     if (stored !== undefined) {
       const parsed = usageSchema.safeParse(stored);
@@ -103,7 +112,7 @@ async function usageTransaction(db: Firestore, outletId: string, profileId: stri
     const initialized = stored === undefined || reset;
     const summary = () => ({ outletId, initialized, reset, date, timeZone, limitSeconds, usedSeconds: dailyUsage.usedSeconds });
     if (!operation) {
-      transaction.update(outletRef, { dailyUsage: { ...dailyUsage, updatedAt: FieldValue.serverTimestamp() } });
+      transaction.set(usageRef, { ...dailyUsage, updatedAt: FieldValue.serverTimestamp() });
       return summary();
     }
     const parsedSessions = z.record(z.string().regex(/^[a-f0-9]{64}$/), leaseSchema).safeParse(dailyUsage.sessions);
@@ -114,13 +123,13 @@ async function usageTransaction(db: Firestore, outletId: string, profileId: stri
     dailyUsage.usedSeconds = Math.min(limitSeconds,
       (Math.round(dailyUsage.usedSeconds * 1000) + Math.max(0, through - dailyUsage.settledAt.toMillis())) / 1000);
     dailyUsage.settledAt = now;
-    const persist = () => transaction.update(outletRef, { dailyUsage: { ...dailyUsage, sessions, updatedAt: FieldValue.serverTimestamp() } });
+    const persist = () => transaction.set(usageRef, { ...dailyUsage, sessions, updatedAt: FieldValue.serverTimestamp() });
     const failure = (status: number, code: string, message: string) => {
       for (const [id, session] of Object.entries(sessions)) if (session.expiresAt.toMillis() <= nowMs) delete sessions[id];
       persist(); return { ...summary(), failure: { status, code, message } };
     };
     if (dailyUsage.usedSeconds >= limitSeconds && operation.action !== 'status' && operation.action !== 'stop') {
-      return failure(403, 'USAGE_LIMIT_REACHED', 'The daily 30-minute Web POS allowance for this outlet has been exhausted. Access resumes on its next local calendar day.');
+      return failure(403, 'USAGE_LIMIT_REACHED', 'The daily 30-minute Web POS allowance for this outlet has been exhausted. Access resumes 24 Hrs later.');
     }
     if (operation.action !== 'status' && operation.action !== 'start') {
       const session = sessions[operation.sessionId];

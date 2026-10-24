@@ -1,7 +1,10 @@
 import express from "express";
+import { listOutletServicePoints, createOutletServicePoint, updateOutletServicePoint, deleteOutletServicePoint, assignCategoryServicePoint } from './servicePoints.js';
+import { productExportRouter } from './productExportRoutes.js';
 import { createWebUsageGuard } from "./webUsageMiddleware.js";
 import { initializeOutletDailyUsage, operateOutletDailyUsage, DailyUsageError } from "./dailyUsage.js";
 import { readOutletMulticounter } from "./multicounter.js";
+import { verifyProductImagePin, requireProductImageAuthorization } from "./productImageAuthorization.js";
 import { verifyTransferPreviewPin } from "./transferPreviewPin.js";
 import { issueTransferAuthorization, transferOutletMasters } from "./masterTransfer.js";
 import { listOutletDevices } from "./devices.js";
@@ -9,17 +12,24 @@ import { listOutletCustomers, createOutletCustomer } from "./customers.js";
 import { listOutletEmployees, createOutletEmployee } from "./employees.js";
 import { readUserAccount, updateUserAccount, UserAccountError } from "./userAccount.js";
 import { updateOutletProduct } from "./productUpdate.js";
+import { saveStockAdjustment } from "./stockAdjustment.js";
+import { assignProductImage } from "./productImageAssignments.js";
+import { createOutletPremise, listOutletPremises, updateOutletPremise } from "./premises.js";
+import { ANDROID_TAX_OPTIONS } from "../../shared/androidTaxes.js";
+import { premisesTransactionRunner } from "./premisesFirestore.js";
+import { getFirestoreRestContext } from "./firebase.js";
 import { updateCategoryNames, CategoryUpdateError } from "./categoryUpdate.js";
 import { deleteOutletRecord, OutletDeletionError } from "./outletDeletion.js";
-import { createOutletProduct, requireProductOutlet, productTaxes, PRODUCT_UNITS, ProductCreationError } from "./productCreation.js";
-import type { Request, Response } from "express";
+import { createOutletProduct, requireProductOutlet, PRODUCT_UNITS, ProductCreationError } from "./productCreation.js";
+import type { Request, RequestHandler, Response } from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import { fileURLToPath } from "node:url";
 import jwt from "jsonwebtoken";
 import type { JwtPayload } from "jsonwebtoken";
 import { z } from "zod";
-import { FirebaseConfigurationError, getFirebaseApp, getFirestoreDb, logFirebaseConfigurationError, verifyFirebaseConnection } from "./firebase.js";
+import { FirebaseConfigurationError, getFirebaseApp, getFirebaseStorageBucket, getFirestoreDb, logFirebaseConfigurationError, verifyFirebaseConnection } from "./firebase.js";
+import { ImageStorageError, readMasterImage, removeMasterImage, uploadMasterImage, type MasterImageCollection, type MasterImageKind } from "./imageStorage.js";
 import { summarizeDay } from "./daywiseSummary.js";
 import { stockDirection, stockMovementRecord } from "./stockMovementReport.js";
 import { isStockTransfer, stockTransferRecord } from "./stockTransferReport.js";
@@ -36,10 +46,13 @@ const PORT = process.env.PORT || 3000;
 const productImportQuota = createFileProductImportQuota(fileURLToPath(new URL("../.local-data/product-import-quota.json", import.meta.url)));
 const JWT_SECRET = process.env.JWT_SECRET || "web-pos-secret-key-2026";
 // Separate grants from login sessions; changing this key does not invalidate existing logins.
+// This server-only signing key protects grants; users enter their existing login Quick PIN.
+const IMAGE_JWT_SECRET = process.env.PRODUCT_IMAGE_SECRET || process.env.JWT_SECRET || '';
 const TRANSFER_JWT_SECRET = process.env.MASTER_TRANSFER_SECRET || process.env.JWT_SECRET || '';
 
 app.use(cors());
 app.use("/api/outlets/:outletId/products/import", express.json({ limit: "12mb" }));
+app.use('/api/outlets/:outletId/product-image-assignments', express.json({ limit: '160kb' }));
 app.use(express.json());
 // All outlet-scoped routes in this Express backend belong to Web POS.
 // Checks never renew leases; dashboard polling therefore cannot keep a session active.
@@ -999,7 +1012,7 @@ app.get("/api/outlets/:outletId/reports/categories", async (req: Request, res: R
   }
 });
 
-// Read-only category master for an assigned outlet. Nothing is written to Firestore.
+// Read-only category master for an assigned outlet.
 app.get("/api/outlets/:outletId/categories", async (req: Request, res: Response): Promise<void> => {
   const token = readAccessToken(req);
   if (!token) {
@@ -1051,7 +1064,8 @@ app.get("/api/outlets/:outletId/categories", async (req: Request, res: Response)
           active: typeof category.inActive === "boolean" || typeof category.active === "boolean"
             ? category.inActive !== true && category.active !== false : null,
           productCount: productCounts.get(document.id) ?? 0,
-          createdAt: document.createTime?.toDate().toISOString() ?? ""
+          createdAt: document.createTime?.toDate().toISOString() ?? "",
+          ...(typeof category.imagePath === 'string' ? { imagePath: category.imagePath } : {})
         };
       })
       .sort((left, right) => (left.categoryNo ?? 0) - (right.categoryNo ?? 0) || left.name.localeCompare(right.name));
@@ -1062,6 +1076,160 @@ app.get("/api/outlets/:outletId/categories", async (req: Request, res: Response)
     res.status(503).json({ success: false, message: "Unable to load categories right now" });
   }
 });
+
+const imageBodyParser: RequestHandler = (req, res, next) => {
+  express.raw({ type: () => true, limit: '5mb' })(req, res, error => {
+    if (!error) { next(); return; }
+    const status = (error as { status?: number }).status === 413 ? 413 : 400;
+    res.status(status).json({ success: false, message: status === 413 ? 'Images must be 5 MB or smaller.' : 'The image upload could not be read.' });
+  });
+};
+
+async function authorizeImageTarget(req: Request, res: Response, collection: MasterImageCollection) {
+  const token = readAccessToken(req);
+  if (!token) {
+    res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' });
+    return null;
+  }
+  const outletId = String(req.params.outletId ?? '');
+  const documentId = String(req.params.documentId ?? '');
+  if (![outletId, documentId].every(id => id && id.length <= 200 && !id.includes('/') && id !== '.' && id !== '..')) {
+    res.status(400).json({ success: false, message: 'A valid outlet and record ID are required.' });
+    return null;
+  }
+  try {
+    const db = getFirestoreDb();
+    const profile = (await db.collection('USER_PROFILE').doc(token.profileDocId).get()).data();
+    requireProductOutlet(token.profileDocId, outletId, profile, assignedOutletIds);
+    const document = db.collection('OUTLET').doc(outletId).collection(collection).doc(documentId);
+    const snapshot = await document.get();
+    if (!snapshot.exists) {
+      res.status(404).json({ success: false, message: 'This record no longer exists.' });
+      return null;
+    }
+    return { db, outletId, documentId, profileId: token.profileDocId, snapshot };
+  } catch (error) {
+    const status = error instanceof ProductCreationError ? error.status : 503;
+    res.status(status).json({ success: false, message: error instanceof ProductCreationError
+      ? error.message : 'Image service is unavailable.' });
+    return null;
+  }
+}
+
+function imageApiError(res: Response, error: unknown) {
+  if (error instanceof ProductCreationError) {
+    res.status(error.status).json({ success: false, message: error.message }); return;
+  }
+  if (error instanceof ImageStorageError) {
+    res.status(error.status).json({ success: false, message: error.message });
+    return;
+  }
+  if (error instanceof FirebaseConfigurationError) {
+    const message = error.check === 'missing_storage_bucket'
+      ? 'Firebase Storage bucket is not configured in the running backend. Restart the backend after setting FIREBASE_STORAGE_BUCKET.'
+      : 'Firebase Storage configuration is invalid. Check the backend Firebase configuration.';
+    res.status(503).json({ success: false, message });
+    return;
+  }
+  const code = error && typeof error === 'object' && 'code' in error
+    ? (error as { code?: unknown }).code : undefined;
+  const safeCode = typeof code === 'number' || (typeof code === 'string' && /^[A-Z0-9_/-]{1,40}$/i.test(code))
+    ? code : 'unknown';
+  console.error('Firebase image operation failed', { code: safeCode });
+  const message = safeCode === 403
+    ? 'Firebase Storage denied access. Check the backend service account permissions for this bucket.'
+    : safeCode === 404
+      ? 'The configured Firebase Storage bucket was not found. Check FIREBASE_STORAGE_BUCKET.'
+      : 'Firebase Storage could not complete the request. Check the backend logs and bucket configuration.';
+  res.status(503).json({ success: false, message });
+}
+
+app.post('/api/outlets/:outletId/product-images/verify-quick-pin', async (req: Request, res: Response): Promise<void> => {
+  res.setHeader('Cache-Control', 'no-store');
+  const token = readAccessToken(req);
+  if (!token) { res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' }); return; }
+  try {
+    const data = await verifyProductImagePin(getFirestoreDb(), String(req.params.outletId ?? ''), token.profileDocId,
+      assignedOutletIds, IMAGE_JWT_SECRET, req.header('authorization') ?? '', req.body);
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(error instanceof ProductCreationError ? error.status : 503).json({ success: false,
+      message: error instanceof ProductCreationError ? error.message : 'Unable to verify your Quick PIN. Please try again.' });
+  }
+});
+
+app.post('/api/outlets/:outletId/product-image-assignments', async (req: Request, res: Response): Promise<void> => {
+  const token = readAccessToken(req);
+  if (!token) { res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' }); return; }
+  try {
+    requireProductImageAuthorization(IMAGE_JWT_SECRET, req.header('x-image-token'), token.profileDocId,
+      String(req.params.outletId ?? ''), req.header('authorization') ?? '', ['bulk', 'shared']);
+    const data = await assignProductImage(getFirestoreDb(), getFirebaseStorageBucket(), String(req.params.outletId ?? ''),
+      token.profileDocId, assignedOutletIds, req.body);
+    res.json({ success: true, data });
+  } catch (error) {
+    if (error instanceof ProductCreationError) {
+      res.status(error.status).json({ success: false, message: error.message }); return;
+    }
+    imageApiError(res, error);
+  }
+});
+
+// Bulk removal has its own route so omitting a review cannot bypass the PIN gate.
+app.delete('/api/outlets/:outletId/product-image-removals/:documentId', async (req: Request, res: Response): Promise<void> => {
+  const target = await authorizeImageTarget(req, res, 'PRODUCT');
+  if (!target) return;
+  try {
+    requireProductImageAuthorization(IMAGE_JWT_SECRET, req.header('x-image-token'), target.profileId,
+      target.outletId, req.header('authorization') ?? '', ['remove']);
+    if (!req.body) throw new ImageStorageError(400, 'The reviewed image references are required.');
+    const data = await removeMasterImage(target.db, 'products', target.outletId, target.documentId, req.body);
+    res.json({ success: true, data });
+  } catch (error) { imageApiError(res, error); }
+});
+
+for (const [routeCollection, firestoreCollection] of [['products', 'PRODUCT'], ['categories', 'CATEGORY']] as const) {
+  const imagePath = `/api/outlets/:outletId/${routeCollection}/:documentId/image`;
+  const imageKind: MasterImageKind = routeCollection;
+  app.put(imagePath, imageBodyParser, async (req: Request, res: Response): Promise<void> => {
+    const target = await authorizeImageTarget(req, res, firestoreCollection);
+    if (!target) return;
+    try {
+      const declaredType = String(req.header('content-type') ?? '').split(';', 1)[0]!.trim().toLowerCase();
+      const requestId = req.header('X-Image-Upload-Id');
+      let operation;
+      if (requestId && imageKind === 'products') {
+        let expectedReference: unknown;
+        try { expectedReference = JSON.parse(req.header('X-Image-Expected-Reference') ?? ''); }
+        catch { throw new ImageStorageError(400, 'The reviewed image reference is missing or invalid.'); }
+        if (expectedReference !== null && typeof expectedReference !== 'string') throw new ImageStorageError(400, 'Invalid reviewed image reference.');
+        operation = { requestId, expectedReference };
+      }
+      const data = await uploadMasterImage(target.db, getFirebaseStorageBucket(), imageKind, target.outletId,
+        target.documentId, Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0), declaredType, operation);
+      res.json({ success: true, data });
+    } catch (error) { imageApiError(res, error); }
+  });
+  app.get(imagePath, async (req: Request, res: Response): Promise<void> => {
+    const target = await authorizeImageTarget(req, res, firestoreCollection);
+    if (!target) return;
+    try {
+      const image = await readMasterImage(target.db, getFirebaseStorageBucket(), imageKind, target.outletId, target.documentId, target.snapshot);
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Content-Type', image.contentType);
+      res.send(image.bytes);
+    } catch (error) { imageApiError(res, error); }
+  });
+  app.delete(imagePath, async (req: Request, res: Response): Promise<void> => {
+    const target = await authorizeImageTarget(req, res, firestoreCollection);
+    if (!target) return;
+    try {
+      const data = await removeMasterImage(target.db, imageKind, target.outletId, target.documentId, imageKind === 'products' ? req.body : undefined);
+      res.json({ success: true, data });
+    } catch (error) { imageApiError(res, error); }
+  });
+}
 
 // Explicit Web POS storage initialization only. This does not start accounting or enforce login limits.
 app.post('/api/outlets/:outletId/usage/initialize', async (req: Request, res: Response): Promise<void> => {
@@ -1154,6 +1322,70 @@ app.get("/api/outlets/:outletId/devices", async (req: Request, res: Response): P
   }
 });
 
+// Service Point masters use the existing outlet authorization and SERVICE_POINT collection.
+app.get('/api/outlets/:outletId/service-points', async (req: Request, res: Response): Promise<void> => {
+  res.setHeader('Cache-Control', 'no-store');
+  const token = readAccessToken(req);
+  if (!token) { res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' }); return; }
+  try {
+    const data = await listOutletServicePoints(getFirestoreDb(), String(req.params.outletId ?? ''), token.profileDocId, assignedOutletIds);
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(error instanceof ProductCreationError ? error.status : 503).json({ success: false,
+      message: error instanceof ProductCreationError ? error.message : 'Unable to load service points. Please try again.' });
+  }
+});
+app.post('/api/outlets/:outletId/service-points', async (req: Request, res: Response): Promise<void> => {
+  res.setHeader('Cache-Control', 'no-store');
+  const token = readAccessToken(req);
+  if (!token) { res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' }); return; }
+  try {
+    const data = await createOutletServicePoint(getFirestoreDb(), String(req.params.outletId ?? ''), token.profileDocId, assignedOutletIds, req.body);
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(error instanceof ProductCreationError ? error.status : 503).json({ success: false,
+      message: error instanceof ProductCreationError ? error.message : 'Unable to confirm the service point save. Retry without changing the form.' });
+  }
+});
+
+app.delete('/api/outlets/:outletId/service-points/:documentId', async (req: Request, res: Response): Promise<void> => {
+  const token = readAccessToken(req);
+  if (!token) { res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' }); return; }
+  try {
+    const data = await deleteOutletServicePoint(getFirestoreDb(), String(req.params.outletId ?? ''),
+      String(req.params.documentId ?? ''), token.profileDocId, assignedOutletIds);
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(error instanceof ProductCreationError ? error.status : 503).json({ success: false,
+      message: error instanceof ProductCreationError ? error.message : 'Unable to confirm the service point deletion. Please retry.' });
+  }
+});
+
+app.patch('/api/outlets/:outletId/service-points/:documentId', async (req: Request, res: Response): Promise<void> => {
+  res.setHeader('Cache-Control', 'no-store');
+  const token = readAccessToken(req);
+  if (!token) { res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' }); return; }
+  try {
+    const data = await updateOutletServicePoint(getFirestoreDb(), String(req.params.outletId ?? ''), String(req.params.documentId ?? ''), token.profileDocId, assignedOutletIds, req.body);
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(error instanceof ProductCreationError ? error.status : 503).json({ success: false,
+      message: error instanceof ProductCreationError ? error.message : 'Unable to update the service point. Please try again.' });
+  }
+});
+app.post('/api/outlets/:outletId/products/assign-service-point', async (req: Request, res: Response): Promise<void> => {
+  res.setHeader('Cache-Control', 'no-store');
+  const token = readAccessToken(req);
+  if (!token) { res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' }); return; }
+  try {
+    const data = await assignCategoryServicePoint(getFirestoreDb(), String(req.params.outletId ?? ''), token.profileDocId, assignedOutletIds, req.body);
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(error instanceof ProductCreationError ? error.status : 503).json({ success: false,
+      message: error instanceof ProductCreationError ? error.message : 'Unable to confirm the service point assignment. Please try again.' });
+  }
+});
+
 // Customer reads and creates are scoped to the signed-in user's assigned outlet.
 app.get("/api/outlets/:outletId/customers", async (req: Request, res: Response): Promise<void> => {
   res.setHeader('Cache-Control', 'no-store');
@@ -1207,7 +1439,52 @@ app.post("/api/outlets/:outletId/employees", async (req: Request, res: Response)
   }
 });
 
+app.get('/api/outlets/:outletId/premises', async (req: Request, res: Response): Promise<void> => {
+  res.setHeader('Cache-Control', 'no-store');
+  const token = readAccessToken(req);
+  if (!token) { res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' }); return; }
+  try {
+    const data = await listOutletPremises(getFirestoreDb(), String(req.params.outletId ?? ''), token.profileDocId, assignedOutletIds);
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(error instanceof ProductCreationError ? error.status : 503).json({ success: false,
+      message: error instanceof ProductCreationError ? error.message : 'Unable to load premises. Please try again.' });
+  }
+});
+
+app.post('/api/outlets/:outletId/premises', async (req: Request, res: Response): Promise<void> => {
+  res.setHeader('Cache-Control', 'no-store');
+  const token = readAccessToken(req);
+  if (!token) { res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' }); return; }
+  try {
+    const context = getFirestoreRestContext();
+    const data = await createOutletPremise(premisesTransactionRunner(context.database, context.accessToken),
+      String(req.params.outletId ?? ''), token.profileDocId, assignedOutletIds, req.body);
+    res.status(201).json({ success: true, data });
+  } catch (error) {
+    res.status(error instanceof ProductCreationError ? error.status : 503).json({ success: false,
+      message: error instanceof ProductCreationError ? error.message : 'Unable to confirm the premises save. Retry the same form to confirm the outcome.' });
+  }
+});
+
+app.patch('/api/outlets/:outletId/premises/:documentId', async (req: Request, res: Response): Promise<void> => {
+  res.setHeader('Cache-Control', 'no-store');
+  const token = readAccessToken(req);
+  if (!token) { res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' }); return; }
+  try {
+    const context = getFirestoreRestContext();
+    const data = await updateOutletPremise(premisesTransactionRunner(context.database, context.accessToken),
+      String(req.params.outletId ?? ''), String(req.params.documentId ?? ''), token.profileDocId, assignedOutletIds, req.body);
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(error instanceof ProductCreationError ? error.status : 503).json({ success: false,
+      message: error instanceof ProductCreationError ? error.message : 'Unable to confirm the premises update. Retry the same changes to confirm the outcome.' });
+  }
+});
+
 // Read the complete product documents without renaming fields or writing to Firestore.
+app.use('/api/outlets/:outletId/products/export', productExportRouter(productImportDependencies, req => readAccessToken(req)?.profileDocId ?? null));
+
 app.get("/api/outlets/:outletId/products", async (req: Request, res: Response): Promise<void> => {
   const token = readAccessToken(req);
   if (!token) {
@@ -1256,15 +1533,38 @@ app.get("/api/outlets/:outletId/products/:documentId/edit-options", async (req: 
     requireProductOutlet(token?.profileDocId ?? null, outletId,
       token ? await deps.readProfile(token.profileDocId) : undefined, assignedOutletIds);
     if (!id || id.includes('/') || id === '.' || id === '..') throw new ProductCreationError(400, 'A valid product ID is required.');
-    const [snapshot, categories, taxes] = await Promise.all([
+    const [snapshot, categories, premises] = await Promise.all([
       getFirestoreDb().collection('OUTLET').doc(outletId).collection('PRODUCT').doc(id).get(),
-      deps.readCategories(outletId), deps.readTaxes(),
+      deps.readCategories(outletId),
+      deps.readPremises(outletId),
     ]);
     if (!snapshot.exists) throw new ProductCreationError(404, 'This product no longer exists.');
     const fields = snapshot.data()!;
+    let servicePointName = '';
+    const kitchenId = fields.kitchenId;
+    if (typeof kitchenId === 'string' && kitchenId && !kitchenId.includes('/') && kitchenId !== '.' && kitchenId !== '..') {
+      const servicePoint = await getFirestoreDb().collection('OUTLET').doc(outletId)
+        .collection('SERVICE_POINT').doc(kitchenId).get();
+      const name = servicePoint.data()?.name;
+      if (typeof name === 'string') servicePointName = name;
+    }
     res.json({ success: true, data: { code: typeof fields.code === 'string' || typeof fields.code === 'number' ? fields.code : '',
-      categories, taxes: productTaxes(taxes), units: PRODUCT_UNITS, product: { documentId: id, fields } } });
+      categories, taxes: ANDROID_TAX_OPTIONS, units: PRODUCT_UNITS, premises, servicePointName, product: { documentId: id, fields } } });
   } catch (error) { productCreationResponse(res, error); }
+});
+
+app.post("/api/outlets/:outletId/stock-adjustments", async (req: Request, res: Response): Promise<void> => {
+  res.setHeader('Cache-Control', 'no-store');
+  const token = readAccessToken(req);
+  if (!token) { res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' }); return; }
+  try {
+    const data = await saveStockAdjustment(getFirestoreDb(), String(req.params.outletId ?? ''),
+      token.profileDocId, assignedOutletIds, req.body);
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(error instanceof ProductCreationError ? error.status : 503).json({ success: false,
+      message: error instanceof ProductCreationError ? error.message : 'The stock save could not be confirmed. Retry the same confirmation to reconcile the outcome.' });
+  }
 });
 
 app.patch("/api/outlets/:outletId/products/:documentId", async (req: Request, res: Response): Promise<void> => {
@@ -1308,11 +1608,11 @@ app.get("/api/outlets/:outletId/products/create-options", async (req: Request, r
     const deps = productImportDependencies();
     const profile = token ? await deps.readProfile(token.profileDocId) : undefined;
     requireProductOutlet(token?.profileDocId ?? null, outletId, profile, assignedOutletIds);
-    const [categories, taxes, products] = await Promise.all([
-      deps.readCategories(outletId), deps.readTaxes(), deps.readProducts(outletId),
+    const [categories, products, premises] = await Promise.all([
+      deps.readCategories(outletId), deps.readProducts(outletId), deps.readPremises(outletId),
     ]);
     res.json({ success: true, data: { code: nextProductCode(products), categories,
-      taxes: productTaxes(taxes), units: PRODUCT_UNITS } });
+      taxes: ANDROID_TAX_OPTIONS, units: PRODUCT_UNITS, premises } });
   } catch (error) { productCreationResponse(res, error); }
 });
 
@@ -1345,6 +1645,8 @@ function productImportDependencies() {
     },
     readProducts: async (id: string) => (await getFirestoreDb().collection("OUTLET").doc(id).collection("PRODUCT").get()).docs
       .map(document => ({ id: document.id, fields: document.data() })),
+    readPremises: async (id: string) => (await getFirestoreDb().collection('OUTLET').doc(id).collection('PREMISES').get()).docs
+      .map(document => ({ id: document.id, name: stringValue(document.data().name) })),
     readTaxes: async () => {
       const snapshot = await getFirestoreDb().collection("MASTERS").doc("masters").collection("TAX_MASTER").get();
       return snapshot.docs.map(document => document.data()).filter(data =>

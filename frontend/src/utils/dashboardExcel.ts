@@ -55,9 +55,51 @@ export async function createDashboardWorkbook(options: DashboardExportOptions): 
   const { default: ExcelJS } = await import('exceljs');
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet('Dashboard');
-  const { data, outlet } = options;
+  const { outlet } = options;
+  const shifts = options.data.shifts?.length ? options.data.shifts : [options.data];
+  const orderedShifts = [...shifts].sort((left, right) =>
+    (left.startTime - right.startTime) || (left.shiftNo - right.shiftNo) || left.id.localeCompare(right.id));
+  const firstShift = orderedShifts[0]!;
+  const latestShift = orderedShifts.at(-1)!;
+  const sum = (field: keyof ShiftDashboardData) => orderedShifts.reduce((total, shift) => {
+    const value = shift[field];
+    return total + (typeof value === 'number' && Number.isFinite(value) ? value : 0);
+  }, 0);
+  const payments = orderedShifts.reduce<Record<string, number>>((totals, shift) => {
+    const shiftPayments = shift.payments ?? {};
+    for (const [key, value] of Object.entries(shiftPayments)) {
+      totals[key] = (totals[key] ?? 0) + (Number.isFinite(value) ? value : 0);
+    }
+    return totals;
+  }, {});
+  // Each payment category is summed across shifts; use the matching shift total when
+  // older records omit that category from their payment breakdown.
+  for (const [key, field] of [['cash', 'cashSale'], ['credit', 'creditSale']] as const) {
+    payments[key] = orderedShifts.reduce((total, shift) => {
+      const value = shift.payments?.[key];
+      const fallback = shift[field];
+      return total + (typeof value === 'number' && Number.isFinite(value)
+        ? value : typeof fallback === 'number' && Number.isFinite(fallback) ? fallback : 0);
+    }, 0);
+  }
+  const data: ShiftDashboardData = {
+    ...latestShift,
+    dayId: options.data.dayId,
+    shiftNo: 0,
+    inActive: orderedShifts.every(shift => shift.inActive),
+    startTime: firstShift.startTime,
+    startBillNo: orderedShifts.find(shift => shift.startBillNo)?.startBillNo ?? '',
+    lastBillNo: [...orderedShifts].reverse().find(shift => shift.lastBillNo)?.lastBillNo ?? '',
+    openingAmt: firstShift.openingAmt,
+    payments,
+    ...Object.fromEntries([
+      'billCount', 'billDeletesNumber', 'billDeletesAmount', 'totalSale', 'cashSale', 'digitalSale', 'creditSale',
+      'subTotalBill', 'discount', 'tax', 'gstTotal', 'vatTotal', 'refundAmount', 'extraCharges',
+      'serviceChargeAmount', 'roundOff', 'expensesAmtTotal', 'expCash', 'expDigital', 'advanceAmtTotal',
+      'customerReceiveAmtTotal', 'receiveAmtTotal', 'swiggyTotal', 'zomatoTotal',
+    ].map(field => [field, sum(field as keyof ShiftDashboardData)])),
+  };
   const number = (value: number | undefined) => Number.isFinite(value) ? value! : 0;
-  const payments = data.payments ?? {};
   const moneyFormat = '#,##0.00;[Red]-#,##0.00';
   sheet.columns = [{ width: 38 }, { width: 34 }];
   sheet.mergeCells('A1:B1');
@@ -97,7 +139,7 @@ export async function createDashboardWorkbook(options: DashboardExportOptions): 
   detail('Branch', outlet.branch || '—');
   detail('Terminal', options.terminal);
   detail('Cashier', options.cashier);
-  detail('Scope', `Shift ${data.shiftNo || '—'} for the selected date`);
+  detail('Scope', `All ${shifts.length} shift${shifts.length === 1 ? '' : 's'} for the selected date`);
 
   section('Key Sales Figures');
   detail('Cash In Hand', number(data.openingAmt) + number(data.cashSale) - number(data.expCash), true);
@@ -137,15 +179,13 @@ export async function createDashboardWorkbook(options: DashboardExportOptions): 
   detail('Swiggy', number(data.swiggyTotal), true);
   detail('Zomato', number(data.zomatoTotal), true);
 
-  section('Current Shift');
-  detail('Shift ID', data.id);
-  detail('Shift No.', number(data.shiftNo));
-  detail('Status', data.inActive ? 'Closed' : 'Active');
-  detail('Start Time', timestamp(data.startTime));
-  detail('End Time', timestamp(data.endTime));
+  section('All Shifts Summary');
+  detail('Shifts Included', shifts.length);
+  detail('Day Status', data.inActive ? 'All shifts closed' : 'At least one shift active');
+  detail('First Shift Start', timestamp(firstShift.startTime));
+  detail('Last Shift End', timestamp(latestShift.endTime));
   detail('First Bill No.', data.startBillNo || '—');
   detail('Last Bill No.', data.lastBillNo || '—');
-  detail('Last Bill Time', timestamp(data.lastBillTime));
 
   sheet.views = [{ state: 'frozen', ySplit: 2 }];
   sheet.pageSetup = { paperSize: 9, orientation: 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0 };

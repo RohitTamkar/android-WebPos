@@ -1,6 +1,5 @@
 import { downloadReportExcel, sumPayments } from '../utils/reportExcel.ts';
-import { ReportDateInput } from './ReportDateInput.tsx';
-import { reportDateError } from './reportDates.ts';
+import { ReportMonthInput } from './ReportMonthInput.tsx';
 import { useEffect, useMemo, useState } from 'react';
 import {
   Banknote, Clock3, CreditCard, Download, Filter, Printer,
@@ -58,9 +57,7 @@ interface ShiftReportResponse {
 }
 
 interface ShiftFilters {
-  startDate: string;
-  endDate: string;
-  dayId: string;
+  month: string;
   shiftNo: string;
   deviceId: string;
 }
@@ -72,9 +69,26 @@ interface ShiftSummaryReportPageProps {
   onSessionExpired: () => void;
 }
 
+function currentMonthId(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
 function todayId(): string {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
+function monthDateRange(month: string): { startDate: string; endDate: string } {
+  const match = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(month);
+  if (!match) return { startDate: '', endDate: '' };
+  const year = Number(match[1]);
+  const monthNumber = Number(match[2]);
+  const lastDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
+  return {
+    startDate: `${month}-01`,
+    endDate: `${month}-${String(lastDay).padStart(2, '0')}`,
+  };
 }
 
 function money(value = 0): string {
@@ -114,7 +128,7 @@ function cashInHand(shift: ShiftRecord): number {
 
 export const ShiftSummaryReportPage = ({ outlet, token, onSessionExpired, reportName = 'Shift Summary Report' }: ShiftSummaryReportPageProps) => {
   const initialFilters = useMemo<ShiftFilters>(() => ({
-    startDate: todayId(), endDate: todayId(), dayId: '', shiftNo: '', deviceId: '',
+    month: currentMonthId(), shiftNo: '', deviceId: '',
   }), []);
   const [filters, setFilters] = useState(initialFilters);
   const [appliedFilters, setAppliedFilters] = useState(initialFilters);
@@ -126,8 +140,8 @@ export const ShiftSummaryReportPage = ({ outlet, token, onSessionExpired, report
 
   useEffect(() => {
     const controller = new AbortController();
-    const params = new URLSearchParams({ startDate: appliedFilters.startDate, endDate: appliedFilters.endDate });
-    if (appliedFilters.dayId) params.set('dayId', appliedFilters.dayId);
+    const { startDate, endDate } = monthDateRange(appliedFilters.month);
+    const params = new URLSearchParams({ startDate, endDate });
     if (appliedFilters.shiftNo) params.set('shiftNo', appliedFilters.shiftNo);
     if (appliedFilters.deviceId) params.set('deviceId', appliedFilters.deviceId);
 
@@ -155,16 +169,15 @@ export const ShiftSummaryReportPage = ({ outlet, token, onSessionExpired, report
   }, [outlet.id, token, appliedFilters, reloadKey]);
 
   const applyFilters = () => {
-    const dateError = filters.dayId ? reportDateError(filters.dayId, filters.dayId) : reportDateError(filters.startDate, filters.endDate);
-    if (dateError) {
-      setError(dateError);
+    if (!monthDateRange(filters.month).startDate) {
+      setError('Choose a valid month and year.');
       return;
     }
     setAppliedFilters({ ...filters });
   };
 
   const resetFilters = () => {
-    const reset = { ...initialFilters, startDate: todayId(), endDate: todayId() };
+    const reset = { ...initialFilters, month: currentMonthId() };
     setFilters(reset);
     setAppliedFilters(reset);
   };
@@ -182,7 +195,7 @@ export const ShiftSummaryReportPage = ({ outlet, token, onSessionExpired, report
       ]),
     ];
     await downloadReportExcel({
-      name: reportName, outlet, startDate: appliedFilters.dayId || appliedFilters.startDate, endDate: appliedFilters.dayId || appliedFilters.endDate,
+      name: reportName, outlet, ...monthDateRange(appliedFilters.month),
       summary: {
         ...sumPayments(report.shifts),
         'TOTAL SALE': report.summary.totalSale,
@@ -208,9 +221,7 @@ export const ShiftSummaryReportPage = ({ outlet, token, onSessionExpired, report
       </div>
 
       <div className="bill-report-filters">
-        <label><span>From date</span><ReportDateInput aria-label="From date" value={filters.startDate} onChange={value => setFilters(current => ({ ...current, startDate: value, dayId: '' }))} /></label>
-        <label><span>To date</span><ReportDateInput aria-label="To date" value={filters.endDate} onChange={value => setFilters(current => ({ ...current, endDate: value, dayId: '' }))} /></label>
-        <label><span>Day ID</span><ReportDateInput aria-label="Day ID" value={filters.dayId} onChange={value => setFilters(current => ({ ...current, dayId: value }))} /></label>
+        <label><span>Month / Year</span><ReportMonthInput aria-label="Month and year" value={filters.month} onChange={value => setFilters(current => ({ ...current, month: value }))} /></label>
         <label><span>Shift No.</span><input type="number" min="1" value={filters.shiftNo} onChange={event => setFilters(current => ({ ...current, shiftNo: event.target.value }))} onKeyDown={event => { if (event.key === 'Enter') applyFilters(); }} placeholder="All shifts" /></label>
         <label><span>Device ID</span><input value={filters.deviceId} onChange={event => setFilters(current => ({ ...current, deviceId: event.target.value }))} onKeyDown={event => { if (event.key === 'Enter') applyFilters(); }} placeholder="All devices" /></label>
         <div className="bill-filter-buttons"><button type="button" className="apply" onClick={applyFilters}><Filter /> Apply</button><button type="button" onClick={resetFilters}><X /> Reset</button></div>

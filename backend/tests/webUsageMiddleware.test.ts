@@ -5,7 +5,7 @@ import { DailyUsageError } from '../src/dailyUsage.js';
 
 async function run(path = '/dashboard', options: { method?: string; missing?: boolean; context?: string; error?: Error; anonymous?: boolean } = {}) {
   const calls: any[] = []; let next = false;
-  const guard = createWebUsageGuard({ readToken: () => options.anonymous ? null : { profileDocId: 'signed' },
+  const guard = createWebUsageGuard({ enabled: true, readToken: () => options.anonymous ? null : { profileDocId: 'signed' },
     db: () => { calls.push('db'); return {} as any; }, assigned: () => [],
     operate: async (...args: any[]) => { calls.push(args); if (options.error) throw options.error; return {} as any; } });
   const req: any = { path, params: { outletId: 'outlet' }, method: options.method ?? 'GET', header: (name: string) =>
@@ -14,7 +14,7 @@ async function run(path = '/dashboard', options: { method?: string; missing?: bo
   await guard(req, res, () => { next = true; }); return { calls, next, res };
 }
 test('protected reports, devices, employees and mutations require the server check before handlers execute', async () => {
-  for (const [path, method] of [['/dashboard', 'GET'], ['/reports/gst', 'GET'], ['/devices', 'GET'], ['/employees', 'POST'], ['/master-transfer', 'POST'], ['/products/id', 'DELETE']] as const) {
+  for (const [path, method] of [['/dashboard', 'GET'], ['/reports/gst', 'GET'], ['/devices', 'GET'], ['/employees', 'POST'], ['/master-transfer', 'POST'], ['/products/id', 'DELETE'], ['/product-image-assignments', 'POST']] as const) {
     const result = await run(path, { method }); assert.equal(result.next, true);
     assert.equal(result.calls[1][2], 'signed'); assert.deepEqual(result.calls[1][4], { action: 'check', sessionId: 'session', generation: 'generation' });
   }
@@ -35,6 +35,7 @@ test('recovery/status/release remain available, cross-outlet writes cannot use a
     const result = await run(path, { missing: true }); assert.equal(result.next, true); assert.deepEqual(result.calls, []);
   }
   assert.equal((await run('/products', { method: 'POST', context: 'other' })).next, false);
+  assert.equal((await run('/product-image-assignments', { method: 'POST', context: 'other' })).next, false);
   assert.equal((await run('/employees', { context: 'other' })).next, false);
   const preview = await run('/categories', { context: 'source' }); assert.equal(preview.next, true); assert.equal(preview.calls[1][1], 'source');
 });

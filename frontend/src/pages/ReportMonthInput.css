@@ -1,0 +1,10 @@
+.report-month-calendar { max-height: none; }
+.report-month-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+.report-month-grid > button { height: 36px; font-size: 12px; font-weight: 600; }
+.report-month-calendar .report-month-grid > button.is-current { box-shadow: inset 0 0 0 1px #f0a1a5; color: #d92932; }
+.report-month-calendar .report-month-grid > button.is-selected,
+.report-month-calendar .report-month-grid > button.is-selected:hover { background: #ed3036; color: #fff; box-shadow: 0 3px 8px rgba(237,48,54,.2); }
+:root[data-theme="dark"] .report-month-calendar .report-month-grid > button.is-selected,
+:root[data-theme="dark"] .report-month-calendar .report-month-grid > button.is-selected:hover { background: #ed3036; color: #fff; }
+.report-month-calendar .report-date-footer > span { margin-right: auto; color: #263f55; font-size: 11px; font-weight: 600; }
+.report-month-calendar .report-date-footer button { padding: 6px 8px; }

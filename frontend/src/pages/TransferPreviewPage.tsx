@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ArrowRight, Database } from 'lucide-react';
+import { AuthenticatedImagePreview } from './AuthenticatedImagePreview.tsx';
+import { masterImageUrl, productImageReference } from './imageApi.ts';
 import { proposeCategoryNumbers, proposeProductCodes } from './transferNumberProposals.ts';
 import type { OutletSummary } from './OutletSelectionPage.tsx';
 import './DevicesPage.css';
 import './TransferPreviewPage.css';
 
-interface Category { id: string; name: string; regionalName?: string; dayType?: string; categoryNo: number | null }
+interface Category { id: string; name: string; regionalName?: string; dayType?: string; categoryNo: number | null; imagePath?: string }
 interface Product { documentId: string; fields: Record<string, unknown> }
 interface TransferResult { created: number; unchanged: number; skipped: number; items: { type: string; sourceId: string; name: string; status: string; reason: string; destinationNumber?: number }[] }
 type Mode = 'categories' | 'products';
@@ -139,8 +141,8 @@ function OutletPreview({ source, destination, mode, token, grant, busy, onBusy, 
   const base = (id: string) => `/api/outlets/${encodeURIComponent(id)}`;
   const sourceCategories = usePreviewRead<Category[]>(`${base(source.id)}/categories`, token, onSessionExpired);
   const destinationCategories = usePreviewRead<Category[]>(`${base(destination.id)}/categories`, token, onSessionExpired);
-  const sourceProducts = usePreviewRead<Product[]>(mode === 'products' ? `${base(source.id)}/products` : null, token, onSessionExpired);
-  const destinationProducts = usePreviewRead<Product[]>(mode === 'products' ? `${base(destination.id)}/products` : null, token, onSessionExpired);
+  const sourceProducts = usePreviewRead<Product[]>(`${base(source.id)}/products`, token, onSessionExpired);
+  const destinationProducts = usePreviewRead<Product[]>(`${base(destination.id)}/products`, token, onSessionExpired);
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<string[]>([]);
   const [selectedFields, setSelectedFields] = useState<Record<string, string[]>>({});
@@ -152,7 +154,7 @@ function OutletPreview({ source, destination, mode, token, grant, busy, onBusy, 
   const submitting = useRef(false);
   const requests = [
     { label: 'source categories', ...sourceCategories }, { label: 'destination categories', ...destinationCategories },
-    ...(mode === 'products' ? [{ label: 'source products', ...sourceProducts }, { label: 'destination products', ...destinationProducts }] : []),
+    { label: 'source products', ...sourceProducts }, { label: 'destination products', ...destinationProducts },
   ];
   const outcome = result && <TransferOutcome result={result} destination={destination.name} open={showOutcome} onDismiss={() => setShowOutcome(false)} />;
   if (requests.some(request => request.loading || request.error)) return <div className="devices-state">
@@ -172,7 +174,9 @@ function OutletPreview({ source, destination, mode, token, grant, busy, onBusy, 
   const toggle = (id: string) => setSelected(current => current.includes(id) ? current.filter(value => value !== id) : [...current, id]);
   const allVisible = rows.length > 0 && rows.every(row => selected.includes(row.id));
   const chosenCategories = categories.filter(category => mode === 'categories' ? selected.includes(category.id) : products.some(product => selected.includes(product.documentId) && product.fields.category === category.id));
-  const chosenProducts = products.filter(product => selected.includes(product.documentId));
+  const chosenProducts = products.filter(product => mode === 'categories'
+    ? typeof product.fields.category === 'string' && selected.includes(product.fields.category)
+    : selected.includes(product.documentId));
   const productFields = (product: Product) => selectedFields[product.documentId] ?? ['name', 'category', 'taxIndex', 'unitId'].filter(key => available(product, key));
   const categoryProposals = proposeCategoryNumbers(chosenCategories.filter(category => !categoryMappings[category.id]), targets);
   const productProposals = proposeProductCodes(chosenProducts, targetProducts);
@@ -183,6 +187,14 @@ function OutletPreview({ source, destination, mode, token, grant, busy, onBusy, 
   const fieldValue = (product: Product, key: string) => key === 'category' ? `${categoryName(product.fields.category)} → ${mappedName(String(product.fields.category))}` : key === 'price'
     ? `${text(product.fields.price)} (price table default: ${text(defaultPrice(product))})` : text(product.fields[key]);
   const allocationErrors = [...categoryProposals, ...productProposals].filter(proposal => proposal.error);
+  const transferSize = selected.length + (mode === 'categories' ? chosenProducts.length : 0);
+  if (transferSize > 100) allocationErrors.push({ id: 'transfer-limit', proposed: null,
+    error: 'A transfer can include at most 100 categories and products. Select fewer categories or use Product Transfer for a smaller selection.', conflicts: [] });
+  const chosenCategoryMappings: Record<string, string> = {};
+  for (const category of chosenCategories) {
+    const destinationCategoryId = categoryMappings[category.id];
+    if (destinationCategoryId) chosenCategoryMappings[category.id] = destinationCategoryId;
+  }
   const execute = async () => {
     if (submitting.current) return;
     submitting.current = true; onBusy(true); setConfirming(false); setError(''); setResult(null); setShowOutcome(false);
@@ -190,7 +202,9 @@ function OutletPreview({ source, destination, mode, token, grant, busy, onBusy, 
       const response = await fetch(`${base(source.id)}/master-transfer`, {
         method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-Transfer-Token': grant },
         body: JSON.stringify({ destinationOutletId: destination.id, mode, categoryIds: chosenCategories.map(category => category.id),
-          products: mode === 'products' ? chosenProducts.map(product => ({ sourceProductId: product.documentId, fields: productFields(product) })) : [], categoryMappings }),
+          products: chosenProducts.map(product => ({ sourceProductId: product.documentId,
+            fields: mode === 'categories' ? ['name', 'category', 'taxIndex', 'unitId'] : productFields(product) })),
+          categoryMappings: chosenCategoryMappings }),
       });
       if (response.status === 401) { onSessionExpired(); return; }
       const payload = await response.json() as { success?: boolean; data?: TransferResult; message?: string };
@@ -198,7 +212,7 @@ function OutletPreview({ source, destination, mode, token, grant, busy, onBusy, 
       if (!response.ok || payload.success !== true || !Array.isArray(payload.data?.items)) throw new Error(payload.message || 'Unable to confirm transfer. Retry safely without creating duplicate copies.');
       setResult(payload.data!); setShowOutcome(true);
       sourceCategories.retry(); destinationCategories.retry();
-      if (mode === 'products') { sourceProducts.retry(); destinationProducts.retry(); }
+      sourceProducts.retry(); destinationProducts.retry();
     } catch (failure) { setError(failure instanceof Error ? failure.message : 'Unable to confirm transfer.'); }
     finally { submitting.current = false; onBusy(false); }
   };
@@ -213,35 +227,38 @@ function OutletPreview({ source, destination, mode, token, grant, busy, onBusy, 
         onChange={() => setSelected(current => allVisible ? current.filter(id => !rows.some(row => row.id === id)) : [...new Set([...current, ...rows.map(row => row.id)])])} />Select all visible {mode}</label>
     </div>
     {!rows.length ? <div className="devices-state"><p>{query ? 'No matching results.' : `No source ${mode} found.`}</p></div> : <div className="devices-table-scroll"><table>
-      <thead><tr><th>Select</th><th>{mode === 'categories' ? 'Category No.' : 'Source Code (reference)'}</th><th>Name</th><th>Destination number/code (estimated)</th><th>{mode === 'categories' ? 'Regional Name' : 'Source Category'}</th>{mode === 'products' && <th>Source Stock (never copied)</th>}</tr></thead>
+      <thead><tr><th>Select</th><th>{mode === 'categories' ? 'Category No.' : 'Source Code (reference)'}</th><th>Name</th><th>Image</th><th>Destination number/code (estimated)</th><th>{mode === 'categories' ? 'Regional Name' : 'Source Category'}</th>{mode === 'products' && <th>Source Stock (never copied)</th>}</tr></thead>
       <tbody>{rows.map(row => {
         const category = 'category' in row ? row.category : null;
         const product = 'product' in row ? row.product : null;
         const name = category?.name ?? text(product?.fields.name);
         return <tr key={row.id}><td><input type="checkbox" aria-label={`Select ${name}`} checked={selected.includes(row.id)} onChange={() => toggle(row.id)} /></td>
-          <td>{text(category ? category.categoryNo : product?.fields.code)}</td><td>{name}</td><td>{selected.includes(row.id) ? `${proposedNumber(category ? categoryProposal(row.id)?.proposed : productProposal(row.id)?.proposed)}` : 'Assigned on transfer'}</td><td>{category ? text(category.regionalName) : categoryName(product?.fields.category)}</td>
+          <td>{text(category ? category.categoryNo : product?.fields.code)}</td><td>{name}</td>
+          <td><AuthenticatedImagePreview alt={`${name} image`} imagePath={category?.imagePath ?? productImageReference(product?.fields)}
+            endpoint={masterImageUrl(source.id, category ? 'categories' : 'products', row.id)} token={token} onSessionExpired={onSessionExpired} /></td>
+          <td>{selected.includes(row.id) ? `${proposedNumber(category ? categoryProposal(row.id)?.proposed : productProposal(row.id)?.proposed)}` : 'Assigned on transfer'}</td><td>{category ? text(category.regionalName) : categoryName(product?.fields.category)}</td>
           {product && <td>{text(product.fields.currentStock)}</td>}</tr>;
       })}</tbody></table></div>}
     {mode === 'products' && chosenProducts.some(product => !categories.some(category => category.id === product.fields.category)) && <p className="transfer-preview-warning">Some selected products have an unavailable source category and have no category proposal; review is required.</p>}
-    {mode === 'products' && <>
+    <>
       {chosenCategories.map(category => <label className="transfer-preview-controls" key={category.id}>Destination category for {category.name}
         <select value={categoryMappings[category.id] ?? ''} onChange={event => setCategoryMappings(current => { const next = { ...current }; if (event.target.value) next[category.id] = event.target.value; else delete next[category.id]; return next; })}>
           <option value="">Copy as a new category</option>{targets.map(target => <option key={target.id} value={target.id}>{target.name} · #{target.categoryNo}</option>)}
         </select></label>)}
-      {chosenProducts.map(product => <section className="transfer-preview-controls" key={product.documentId} aria-label={`Fields for ${text(product.fields.name)}`}><h2>{text(product.fields.name)} — Fields to copy</h2>
+      {mode === 'products' && chosenProducts.map(product => <section className="transfer-preview-controls" key={product.documentId} aria-label={`Fields for ${text(product.fields.name)}`}><h2>{text(product.fields.name)} — Fields to copy</h2>
         <p>Source code: {text(product.fields.code)} (reference only; destination codes are assigned on transfer). Separate Price 1 is unsupported.</p>
         <div className="transfer-preview-fields">{fields.map(([key, label]) => <label className="transfer-preview-field" key={key}><span className="transfer-preview-check"><input type="checkbox" aria-label={`${label} for ${text(product.fields.name)}`}
           disabled={!available(product, key)} checked={available(product, key) && productFields(product).includes(key)} onChange={() => setSelectedFields(current => ({ ...current,
             [product.documentId]: productFields(product).includes(key) ? productFields(product).filter(field => field !== key) : [...productFields(product), key] }))} />{label}</span>
           <small>{available(product, key) ? fieldValue(product, key) : 'Unavailable'}</small></label>)}</div>
       </section>)}
-    </>}
+    </>
     {!!selected.length && <section className="transfer-preview-controls" aria-label="Transfer summary"><h2>Transfer summary</h2>
-      <p>{selected.length} {mode} selected · {source.name} → {destination.name}. Selected records will be copied to the destination; the source remains unchanged.</p>
+      <p>{mode === 'categories' ? `${selected.length} categories selected · ${chosenProducts.length} linked products included automatically` : `${selected.length} products selected`} · {source.name} → {destination.name}. Selected records will be copied to the destination; the source remains unchanged.</p>
       <ul>{chosenCategories.map(category => <li key={category.id}>
         {category.name} · Source #{text(category.categoryNo)} → {mappedName(category.id)}
+        {mode === 'categories' && <p>{products.filter(product => product.fields.category === category.id).length} linked products included automatically.</p>}
         {categoryProposal(category.id)?.conflicts.map(warning => <p className="transfer-preview-warning" key={warning}>{warning}</p>)}
-        {mode === 'categories' && <p>Linked products are not included.</p>}
       </li>)}</ul>
       {mode === 'products' && chosenProducts.map(product => <div key={product.documentId} className="transfer-preview-summary">
         <strong>{text(product.fields.name)} · Source code {text(product.fields.code)} → Destination code {proposedNumber(productProposal(product.documentId)?.proposed)} (estimated)</strong>
@@ -254,12 +271,15 @@ function OutletPreview({ source, destination, mode, token, grant, busy, onBusy, 
       {allocationErrors.map(proposal => <p key={proposal.id} role="alert">{proposal.error}</p>)}
     </section>}
     <div className="transfer-action-bar">
-      <div><strong>{selected.length} {mode} selected</strong><p>{busy ? 'Transferring…' : 'Source records stay unchanged'}</p></div>
+      <div><strong>{mode === 'categories' ? `${selected.length} categories · ${chosenProducts.length} linked products` : `${selected.length} products`}</strong><p>{busy ? 'Transferring…' : 'Source records stay unchanged'}</p></div>
       <button type="button" className="transfer-action-button" disabled={busy || !selected.length || !!allocationErrors.length} onClick={() => { if (!grant) onAuthExpired(); else setConfirming(true); }}>{busy ? 'Transferring…' : 'Review & transfer'}<ArrowRight size={18} aria-hidden="true" /></button>
     </div>
     </fieldset>
     {confirming && <TransferConfirmation source={source.name} destination={destination.name} mode={mode}
-      records={mode === 'categories' ? chosenCategories.map(category => `${category.name} · Source #${text(category.categoryNo)} → ${mappedName(category.id)}`)
+      records={mode === 'categories' ? [
+        ...chosenCategories.map(category => `${category.name} · Source #${text(category.categoryNo)} → ${mappedName(category.id)}`),
+        ...chosenProducts.map(product => `${text(product.fields.name)} · linked product · Destination code ${proposedNumber(productProposal(product.documentId)?.proposed)} (estimated)`),
+      ]
         : chosenProducts.map(product => `${text(product.fields.name)} · Source code ${text(product.fields.code)} → Destination code ${proposedNumber(productProposal(product.documentId)?.proposed)} (estimated)`)}
       warnings={[...categoryProposals, ...productProposals].flatMap(proposal => [...proposal.conflicts, ...(proposal.error ? [proposal.error] : [])])}
       onCancel={() => setConfirming(false)} onConfirm={() => void execute()} />}

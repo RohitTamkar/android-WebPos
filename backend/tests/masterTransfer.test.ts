@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import jwt from 'jsonwebtoken';
 import type { Firestore } from 'firebase-admin/firestore';
-import { issueTransferAuthorization, requireTransferAuthorization, transferOutletMasters } from '../src/masterTransfer.js';
+import { issueTransferAuthorization, requireTransferAuthorization, transferOutletMasters, transferOutletMastersWithStorage } from '../src/masterTransfer.js';
 
 const secret = 'isolated-master-transfer-test-key';
 const requiredFields = ['name', 'category', 'taxIndex', 'unitId'];
@@ -59,6 +59,18 @@ function fixture() {
     transfer: (raw: unknown, authorization = grant, user: string | null = 'user') => transferOutletMasters(db, 'source', user, assignment, secret, authorization, raw),
     fail: () => { failCommit = true; }, retry: () => { retry = true; } };
 }
+function fakeStorage(seed: Record<string, Buffer> = {}) {
+  const objects = new Map(Object.entries(seed));
+  const bucket = { file: (path: string) => ({
+    save: async (bytes: Buffer, options?: { preconditionOpts?: { ifGenerationMatch?: number } }) => {
+      if (options?.preconditionOpts?.ifGenerationMatch === 0 && objects.has(path)) throw { code: 412 };
+      objects.set(path, Buffer.from(bytes));
+    },
+    getMetadata: async () => { const bytes = objects.get(path); if (!bytes) throw new Error('missing'); return [{ size: String(bytes.length), contentType: 'image/png' }]; },
+    getSignedUrl: async () => { const bytes = objects.get(path); if (!bytes) throw new Error('missing'); return [`data:application/octet-stream;base64,${bytes.toString('base64')}`]; },
+  }) } as any;
+  return { bucket, objects };
+}
 const newProducts = (f: ReturnType<typeof fixture>) => f.writes.filter(path => path.includes('/PRODUCT/')).map(path => f.records.get(path)!);
 
 test('writes only selected category masters with new destination IDs and preserves source data', async () => {
@@ -96,6 +108,108 @@ test('transfers required categories and maps products to the newly created desti
   const category = result.items.find(item => item.type === 'category')!;
   assert.equal(newProducts(f)[0]!.category, category.destinationId); assert.notEqual(category.destinationId, 'c1');
 });
+test('product image is copied and verified before its destination document is created', async () => {
+  const f = fixture(); const sourcePath = 'sensible_images/OUTLET/source/PRODUCT_IMAGES/p1/abc123.png';
+  f.records.get('OUTLET/source/PRODUCT/p1')!.imagePath = sourcePath;
+  const bytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1]); const { bucket, objects } = fakeStorage({ [sourcePath]: bytes });
+  const result = await transferOutletMastersWithStorage(f.db, 'source', 'user', assignment, secret, f.grant, f.productRequest, bucket);
+  const product = newProducts(f)[0]!;
+  assert.equal(result.created, 1); assert.equal(typeof product.image, 'string');
+  assert.equal(product.imagePath, undefined);
+  assert.equal(objects.get(`product_images/${String(product.image)}`)?.equals(bytes), true);
+});
+test('migrated image paths transfer into image, retry safely, and retain existing legacy destination records', async () => {
+  const f = fixture(); const path = 'sensible_images/OUTLET/source/PRODUCT_IMAGES/p1/abc123.png';
+  Object.assign(f.records.get('OUTLET/source/PRODUCT/p1')!, { image: path, imagePath: 'stale/legacy/path' });
+  const bytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1]);
+  const { bucket, objects } = fakeStorage({ [path]: bytes });
+  const transfer = () => transferOutletMastersWithStorage(f.db, 'source', 'user', assignment, secret, f.grant, f.productRequest, bucket);
+  assert.equal((await transfer()).created, 1);
+  const product = newProducts(f)[0]!;
+  assert.equal(product.imagePath, undefined);
+  assert.match(String(product.image), /^[a-f0-9]{64}\.png$/);
+  assert.deepEqual(objects.get(`product_images/${String(product.image)}`), bytes);
+  assert.equal((await transfer()).unchanged, 1);
+  product.imagePath = `sensible_images/OUTLET/destination/PRODUCT_IMAGES/${String(product.id)}/abc123.png`;
+  objects.set(String(product.imagePath), bytes); delete product.image;
+  const legacy = structuredClone(product);
+  assert.equal((await transfer()).unchanged, 1);
+  assert.deepEqual(product, legacy); assert.equal(f.writes.length, 1); assert.equal(objects.size, 3);
+});
+test('image-only products retain their verified existing filename without duplicate uploads and with safe retries', async () => {
+  const f = fixture(); const source = f.records.get('OUTLET/source/PRODUCT/p1')!;
+  source.image = '1000014014.png'; const before = structuredClone(f.records);
+  const bytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1]);
+  const { bucket, objects } = fakeStorage({ 'product_images/1000014014.png': bytes });
+  const transfer = () => transferOutletMastersWithStorage(f.db, 'source', 'user', assignment, secret, f.grant, f.productRequest, bucket);
+  assert.equal((await transfer()).created, 1);
+  const product = newProducts(f)[0]!;
+  assert.equal(product.image, source.image);
+  assert.equal(product.imagePath, undefined);
+  assert.deepEqual(objects.get(`product_images/${String(product.image)}`), bytes);
+  assert.equal(product.currentStock, 0); assert.equal(product.category, 'd1');
+  for (const [path, data] of before) assert.deepEqual(f.records.get(path), data);
+  assert.equal((await transfer()).unchanged, 1); assert.equal(f.writes.length, 1); assert.equal(objects.size, 1);
+  product.image = 'different.png';
+  assert.equal((await transfer()).skipped, 1, 'A retry never reports incompatible references as verified');
+  assert.equal(product.image, 'different.png', 'Existing destination records are not rewritten');
+});
+test('unsupported, missing or mismatching product images skip creation without broken references', async () => {
+  for (const mode of ['unsupported', 'missing', 'foreign-path', 'copy-failure', 'verification-failure', 'shared-verification-failure']) {
+    const f = fixture(); const source = f.records.get('OUTLET/source/PRODUCT/p1')!;
+    const path = 'sensible_images/OUTLET/source/PRODUCT_IMAGES/p1/abc123.png';
+    source.image = mode === 'unsupported' ? 'https://example.com/a.png' : '1000014014.png';
+    if (mode === 'foreign-path') source.image = 'sensible_images/OUTLET/other/PRODUCT_IMAGES/p1/abc123.png';
+    if (mode === 'copy-failure' || mode === 'verification-failure') source.image = path;
+    const before = structuredClone(f.records);
+    const bytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1]);
+    const { bucket, objects } = fakeStorage(mode === 'missing' ? {} : {
+      'product_images/1000014014.png': bytes, [path]: bytes,
+    });
+    if (mode === 'copy-failure' || mode === 'verification-failure') {
+      const file = bucket.file;
+      bucket.file = (objectPath: string) => ({ ...file(objectPath),
+        ...(objectPath.startsWith('product_images/') && objectPath !== 'product_images/1000014014.png'
+          ? mode === 'copy-failure' ? { save: async () => { throw new Error('failed'); } }
+            : { getMetadata: async () => [{ contentType: 'image/png', size: 999 }] } : {}) });
+    }
+    if (mode === 'shared-verification-failure') {
+      const file = bucket.file;
+      bucket.file = (objectPath: string) => ({ ...file(objectPath), getMetadata: async () => [{ contentType: 'image/png', size: 999 }] });
+    }
+    const result = await transferOutletMastersWithStorage(f.db, 'source', 'user', assignment, secret, f.grant, f.productRequest, bucket);
+    assert.equal(result.created, 0, mode); assert.equal(result.skipped, 1, mode); assert.deepEqual(f.writes, []);
+    assert.deepEqual(f.records, before);
+    if (mode !== 'missing') assert.deepEqual(objects.get('product_images/1000014014.png'), bytes);
+  }
+});
+test('active filename references transfer without recreating legacy imagePath', async () => {
+  const f = fixture(); const path = 'sensible_images/OUTLET/source/PRODUCT_IMAGES/p1/abc123.png';
+  Object.assign(f.records.get('OUTLET/source/PRODUCT/p1')!, { image: '1000014014.png', imagePath: path });
+  const bytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1]);
+  const { bucket, objects } = fakeStorage({ 'product_images/1000014014.png': bytes, [path]: bytes });
+  const result = await transferOutletMastersWithStorage(f.db, 'source', 'user', assignment, secret, f.grant, f.productRequest, bucket);
+  assert.equal(result.created, 1);
+  assert.equal(newProducts(f)[0]!.image, '1000014014.png');
+  assert.equal(newProducts(f)[0]!.imagePath, undefined);
+  assert.deepEqual(objects.get('product_images/1000014014.png'), bytes);
+});
+test('category and linked product images transfer to their matching destination records', async () => {
+  const f = fixture(); f.productRequest.categoryIds = ['c1']; f.productRequest.categoryMappings = {};
+  const categoryPath = 'sensible_images/OUTLET/source/CATEGORY_IMAGES/c1/abc123.png';
+  const productPath = 'sensible_images/OUTLET/source/PRODUCT_IMAGES/p1/def456.png';
+  f.records.get('OUTLET/source/CATEGORY/c1')!.imagePath = categoryPath;
+  f.records.get('OUTLET/source/PRODUCT/p1')!.imagePath = productPath;
+  const categoryBytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 2]);
+  const productBytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 3]);
+  const { bucket, objects } = fakeStorage({ [categoryPath]: categoryBytes, [productPath]: productBytes });
+  const result = await transferOutletMastersWithStorage(f.db, 'source', 'user', assignment, secret, f.grant, f.productRequest, bucket);
+  const category = result.items.find(item => item.type === 'category')!;
+  const product = newProducts(f)[0]!;
+  assert.equal(result.created, 2); assert.equal(product.category, category.destinationId);
+  assert.equal(objects.get(String(f.records.get(`OUTLET/destination/CATEGORY/${category.destinationId}`)!.imagePath))?.equals(categoryBytes), true);
+  assert.equal(objects.get(`product_images/${String(product.image)}`)?.equals(productBytes), true);
+});
 test('explicit category mapping reuses an existing category without modifying it', async () => {
   const f = fixture(); const before = structuredClone(f.records);
   const result = await f.transfer({ ...f.categories, categoryIds: ['c1'], categoryMappings: { c1: 'd1' } });
@@ -115,8 +229,10 @@ test('product name and barcode conflicts are review warnings, never identity mat
 });
 test('repeated requests and concurrent retries do not duplicate categories or products', async () => {
   const f = fixture(); f.productRequest.categoryIds = ['c1']; f.productRequest.categoryMappings = {};
-  const [first, second] = await Promise.all([f.transfer(f.productRequest), f.transfer(f.productRequest)]);
-  assert.equal(first.created, 2); assert.equal(second.created, 0); assert.equal(second.unchanged, 2); assert.equal(f.writes.length, 2);
+  const [first, second] = await Promise.allSettled([f.transfer(f.productRequest), f.transfer(f.productRequest)]);
+  assert.equal(first.status, 'fulfilled'); assert.equal(first.value.created, 2);
+  assert.equal(second.status, 'rejected'); assert.equal((second.reason as { status: number }).status, 409);
+  const retry = await f.transfer(f.productRequest); assert.equal(retry.created, 0); assert.equal(retry.unchanged, 2); assert.equal(f.writes.length, 2);
   const productPath = f.writes.find(path => path.includes('/PRODUCT/'))!; f.records.get(productPath)!.currentStock = 88;
   const third = await f.transfer(f.productRequest); assert.equal(third.unchanged, 2); assert.equal(f.records.get(productPath)!.currentStock, 88);
 });

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { Timestamp } from 'firebase-admin/firestore';
 import { productFields } from './productDefaults.js';
 import { allocateProductCodes, nextProductCode } from './productImportValidation.js';
+import { ANDROID_TAX_OPTIONS } from '../../shared/androidTaxes.js';
 // Follow the supplied POS unit order, preserving the existing NUMBER unitId (2).
 export const PRODUCT_UNITS = [
     { id: 0, name: 'KILOGRAM' },
@@ -28,6 +29,7 @@ export const newProductSchema = z.object({
     shortName: z.string().trim().max(200).default(''), taxIndex: z.number().int().nonnegative(),
     hsnCode: z.string().trim().max(200).default(''), unitId: z.number().int(),
     weighable: z.boolean(), stockable: z.boolean(),
+    wholeSaleAmount: price.optional(), onlinePrice: price.optional(),
 });
 export class ProductCreationError extends Error {
     status;
@@ -83,12 +85,11 @@ export async function createOutletProduct(db, outletId, profileId, assignedOutle
     return db.runTransaction(async (transaction) => {
         const profile = await transaction.get(db.collection('USER_PROFILE').doc(profileId));
         requireProductOutlet(profileId, outletId, profile.data(), assignedOutlets);
-        const [products, categories, taxes] = await Promise.all([
+        const [products, categories] = await Promise.all([
             transaction.get(outlet.collection('PRODUCT')),
             transaction.get(outlet.collection('CATEGORY')),
-            transaction.get(db.collection('MASTERS').doc('masters').collection('TAX_MASTER')),
         ]);
-        const data = validateNewProduct(raw, categories.docs.map(doc => doc.id), productTaxes(taxes.docs.map(doc => doc.data())));
+        const data = validateNewProduct(raw, categories.docs.map(doc => doc.id), ANDROID_TAX_OPTIONS);
         const existing = products.docs.map(doc => ({ id: doc.id, fields: doc.data() }));
         const allocated = allocateProductCodes(outletId, [{ rowNumber: 1, sourceIdentity: `manual:${data.requestId}`,
                 fields: productFields(data, data.code, '0') }], existing)[0];

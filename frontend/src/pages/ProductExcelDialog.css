@@ -1,0 +1,6 @@
+.category-modal.product-excel-dialog { margin: auto; padding: 0; width: min(440px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; color: #334155; }
+.product-excel-dialog::backdrop { background: rgba(15, 23, 42, 0.5); backdrop-filter: blur(4px); }
+.product-excel-dialog .modal-body { display: grid; gap: 16px; }
+.product-excel-dialog .modal-body p { margin: 0; font-size: 13px; line-height: 1.5; }
+.product-excel-dialog .product-excel-options { display: flex; flex-wrap: wrap; gap: 12px; }
+.product-excel-dialog .product-excel-options button { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }

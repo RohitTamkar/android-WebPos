@@ -1,6 +1,7 @@
 import { applicationDefault, cert, getApp, getApps, initializeApp } from "firebase-admin/app";
 import type { App, AppOptions } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
+import { getStorage } from "firebase-admin/storage";
 import { readFileSync } from "node:fs";
 import { createPrivateKey } from "node:crypto";
 import { resolve } from "node:path";
@@ -15,7 +16,7 @@ export type FirebaseConfigurationCheck =
   | "missing_credentials" | "credential_file_unavailable"
   | "invalid_service_account_json" | "invalid_service_account_shape"
   | "service_account_project_mismatch" | "invalid_service_account_fields"
-  | "invalid_private_key" | "unverified_existing_app" | "admin_initialization_failed";
+  | "invalid_private_key" | "unverified_existing_app" | "admin_initialization_failed" | "missing_storage_bucket";
 
 export class FirebaseConfigurationError extends Error {
   constructor(message: string, public readonly check: FirebaseConfigurationCheck) {
@@ -147,6 +148,26 @@ export function getFirebaseApp(): App {
 
 export function getFirestoreDb() {
   return getFirestore(getFirebaseApp());
+}
+
+// Resolve the same project/credential used by this Admin app for typed REST writes.
+export function getFirestoreRestContext() {
+  const app = getFirebaseApp();
+  const credential = app.options.credential;
+  if (!credential) throw new Error('Firebase credential unavailable.');
+  const source = process.env.FIREBASE_SERVICE_ACCOUNT_JSON ?? readFileSync(resolve(
+    fileURLToPath(new URL('../', import.meta.url)), process.env.GOOGLE_APPLICATION_CREDENTIALS ?? ''), 'utf8');
+  const projectId = app.options.projectId || process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT
+    || (JSON.parse(source) as { project_id?: string }).project_id;
+  if (!projectId) throw new Error('Firebase project unavailable.');
+  return { database: `projects/${projectId}/databases/${getFirestoreDb().databaseId}`,
+    accessToken: async () => (await credential.getAccessToken()).access_token };
+}
+
+export function getFirebaseStorageBucket(): ReturnType<ReturnType<typeof getStorage>['bucket']> {
+  const bucketName = process.env.FIREBASE_STORAGE_BUCKET?.trim();
+  if (!bucketName) configurationError("Firebase Storage is not configured. Set FIREBASE_STORAGE_BUCKET on the backend.", "missing_storage_bucket");
+  return getStorage(getFirebaseApp()).bucket(bucketName);
 }
 
 export async function verifyFirebaseConnection(): Promise<void> {

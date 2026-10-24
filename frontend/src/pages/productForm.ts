@@ -2,6 +2,7 @@ export interface ProductDraft {
   name: string; price: string; mrpPrice: string; costPrice: string; category: string;
   regionalName: string; discount: string; shortName: string; taxIndex: string;
   hsnCode: string; unitId: string; weighable: boolean; stockable: boolean;
+  wholeSaleAmount?: string; onlinePrice?: string;
 }
 export function productFormErrors(draft: ProductDraft): Record<string, string> {
   const errors: Record<string, string> = {};
@@ -12,6 +13,11 @@ export function productFormErrors(draft: ProductDraft): Record<string, string> {
     if (!draft[key].trim() || !Number.isFinite(value) || value < 0) errors[key] = 'Enter a finite number of zero or more.';
   }
   if (Number(draft.discount) > 100) errors.discount = 'Discount must be between 0 and 100.';
+  for (const key of ['wholeSaleAmount', 'onlinePrice'] as const) {
+    if (draft[key] !== undefined && (!draft[key]!.trim() || !Number.isFinite(Number(draft[key])) || Number(draft[key]) < 0)) {
+      errors[key] = 'Enter a finite number of zero or more.';
+    }
+  }
   for (const key of ['taxIndex', 'unitId'] as const) {
     if (!draft[key] || !Number.isSafeInteger(Number(draft[key]))) errors[key] = 'Select a configured option.';
   }
@@ -21,7 +27,9 @@ export function productFormPayload(draft: ProductDraft, code: number, requestId:
   return { ...draft, name: draft.name.trim(), regionalName: draft.regionalName.trim(),
     shortName: draft.shortName.trim(), hsnCode: draft.hsnCode.trim(), code, requestId,
     price: Number(draft.price), mrpPrice: Number(draft.mrpPrice), costPrice: Number(draft.costPrice),
-    discount: Number(draft.discount), taxIndex: Number(draft.taxIndex), unitId: Number(draft.unitId) };
+    discount: Number(draft.discount), taxIndex: Number(draft.taxIndex), unitId: Number(draft.unitId),
+    ...(draft.wholeSaleAmount === undefined ? {} : { wholeSaleAmount: Number(draft.wholeSaleAmount) }),
+    ...(draft.onlinePrice === undefined ? {} : { onlinePrice: Number(draft.onlinePrice) }) };
 }
 
 export function productDraftFromFields(fields: Record<string, unknown>): ProductDraft {
@@ -29,7 +37,9 @@ export function productDraftFromFields(fields: Record<string, unknown>): Product
   return { name: text('name'), price: text('price'), mrpPrice: text('mrpPrice'), costPrice: text('costPrice'),
     category: text('category'), regionalName: text('regionalName'), discount: text('discount'), shortName: text('shortName'),
     taxIndex: text('taxIndex'), hsnCode: text('hsnCode'), unitId: text('unitId'),
-    weighable: fields.weighable === true, stockable: fields.stockable === true };
+    weighable: fields.weighable === true, stockable: fields.stockable === true,
+    ...(typeof fields.wholeSaleAmount === 'number' ? { wholeSaleAmount: text('wholeSaleAmount') } : {}),
+    ...(typeof fields.onlinePrice === 'number' ? { onlinePrice: text('onlinePrice') } : {}) };
 }
 
 export function productUpdatePayload(draft: ProductDraft, original: ProductDraft) {

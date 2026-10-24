@@ -1,26 +1,61 @@
-import express from "express";
-import { updateOutletProduct } from "./productUpdate.js";
-import { updateCategoryNames, CategoryUpdateError } from "./categoryUpdate.js";
-import { deleteOutletRecord, OutletDeletionError } from "./outletDeletion.js";
-import { createOutletProduct, requireProductOutlet, productTaxes, PRODUCT_UNITS, ProductCreationError } from "./productCreation.js";
-import cors from "cors";
-import dotenv from "dotenv";
-import { fileURLToPath } from "node:url";
-import jwt from "jsonwebtoken";
-import { z } from "zod";
-import { FirebaseConfigurationError, getFirebaseApp, getFirestoreDb, logFirebaseConfigurationError, verifyFirebaseConnection } from "./firebase.js";
-import { summarizeDay } from "./daywiseSummary.js";
-import { stockDirection, stockMovementRecord } from "./stockMovementReport.js";
-import { isStockTransfer, stockTransferRecord } from "./stockTransferReport.js";
-import { checkAuthorizedProductImport, persistProductImport, nextProductCode, PRODUCT_IMPORT_WRITES_ENABLED } from "./productImportValidation.js";
-import { createProductImportChunk } from "./productImportWriter.js";
-dotenv.config({ path: fileURLToPath(new URL("../.env", import.meta.url)) });
-const app = express();
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = __importDefault(require("express"));
+const webUsageMiddleware_js_1 = require("./webUsageMiddleware.js");
+const dailyUsage_js_1 = require("./dailyUsage.js");
+const multicounter_js_1 = require("./multicounter.js");
+const productImageAuthorization_js_1 = require("./productImageAuthorization.js");
+const transferPreviewPin_js_1 = require("./transferPreviewPin.js");
+const masterTransfer_js_1 = require("./masterTransfer.js");
+const devices_js_1 = require("./devices.js");
+const customers_js_1 = require("./customers.js");
+const employees_js_1 = require("./employees.js");
+const userAccount_js_1 = require("./userAccount.js");
+const productUpdate_js_1 = require("./productUpdate.js");
+const stockAdjustment_js_1 = require("./stockAdjustment.js");
+const productImageAssignments_js_1 = require("./productImageAssignments.js");
+const premises_js_1 = require("./premises.js");
+const androidTaxes_js_1 = require("../../shared/androidTaxes.js");
+const premisesFirestore_js_1 = require("./premisesFirestore.js");
+const firebase_js_1 = require("./firebase.js");
+const categoryUpdate_js_1 = require("./categoryUpdate.js");
+const outletDeletion_js_1 = require("./outletDeletion.js");
+const productCreation_js_1 = require("./productCreation.js");
+const cors_1 = __importDefault(require("cors"));
+const dotenv_1 = __importDefault(require("dotenv"));
+const node_url_1 = require("node:url");
+const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
+const zod_1 = require("zod");
+const firebase_js_2 = require("./firebase.js");
+const imageStorage_js_1 = require("./imageStorage.js");
+const daywiseSummary_js_1 = require("./daywiseSummary.js");
+const stockMovementReport_js_1 = require("./stockMovementReport.js");
+const stockTransferReport_js_1 = require("./stockTransferReport.js");
+const productImportValidation_js_1 = require("./productImportValidation.js");
+const productImportWriter_js_1 = require("./productImportWriter.js");
+const productImportQuota_js_1 = require("./productImportQuota.js");
+const productImportQuotaFile_js_1 = require("./productImportQuotaFile.js");
+dotenv_1.default.config({ path: (0, node_url_1.fileURLToPath)(new URL("../.env", import.meta.url)) });
+const app = (0, express_1.default)();
 const PORT = process.env.PORT || 3000;
+// Shared local history survives backend/PC restarts; no database quota records.
+const productImportQuota = (0, productImportQuotaFile_js_1.createFileProductImportQuota)((0, node_url_1.fileURLToPath)(new URL("../.local-data/product-import-quota.json", import.meta.url)));
 const JWT_SECRET = process.env.JWT_SECRET || "web-pos-secret-key-2026";
-app.use(cors());
-app.use("/api/outlets/:outletId/products/import", express.json({ limit: "12mb" }));
-app.use(express.json());
+// Separate grants from login sessions; changing this key does not invalidate existing logins.
+// This server-only signing key protects grants; users enter their existing login Quick PIN.
+const IMAGE_JWT_SECRET = process.env.PRODUCT_IMAGE_SECRET || process.env.JWT_SECRET || '';
+const TRANSFER_JWT_SECRET = process.env.MASTER_TRANSFER_SECRET || process.env.JWT_SECRET || '';
+app.use((0, cors_1.default)());
+app.use("/api/outlets/:outletId/products/import", express_1.default.json({ limit: "12mb" }));
+app.use('/api/outlets/:outletId/product-image-assignments', express_1.default.json({ limit: '160kb' }));
+app.use(express_1.default.json());
+// All outlet-scoped routes in this Express backend belong to Web POS.
+// Checks never renew leases; dashboard polling therefore cannot keep a session active.
+app.use('/api/outlets/:outletId', (0, webUsageMiddleware_js_1.createWebUsageGuard)({ readToken: readAccessToken,
+    db: firebase_js_2.getFirestoreDb, assigned: assignedOutletIds, operate: dailyUsage_js_1.operateOutletDailyUsage }));
 let categories = [
     {
         id: "cat_1",
@@ -67,14 +102,14 @@ let categories = [
 app.get("/api/health", (_req, res) => {
     let firebase;
     try {
-        const firebaseApp = getFirebaseApp();
+        const firebaseApp = (0, firebase_js_2.getFirebaseApp)();
         firebase = { initialized: true, projectId: firebaseApp.options.projectId ?? "" };
     }
     catch (error) {
         firebase = {
             initialized: false,
             // Only our fixed configuration messages are safe to return; never return SDK/parser errors.
-            message: error instanceof FirebaseConfigurationError ? error.message
+            message: error instanceof firebase_js_2.FirebaseConfigurationError ? error.message
                 : "Configure valid Firebase credentials and testing project isolation on the server"
         };
     }
@@ -88,25 +123,25 @@ app.get("/api/health", (_req, res) => {
 // Verifies credentials and makes a real request to Cloud Firestore.
 app.get("/api/firebase/health", async (_req, res) => {
     try {
-        await verifyFirebaseConnection();
+        await (0, firebase_js_2.verifyFirebaseConnection)();
         res.json({
             success: true,
             message: "Firebase is connected",
-            projectId: getFirebaseApp().options.projectId
+            projectId: (0, firebase_js_2.getFirebaseApp)().options.projectId
         });
     }
     catch (error) {
-        logFirebaseConfigurationError(error, "connection");
+        (0, firebase_js_2.logFirebaseConfigurationError)(error, "connection");
         res.status(503).json({
             success: false,
             message: "Firebase connection failed"
         });
     }
 });
-const loginSchema = z.object({
-    email: z.string().trim().email(),
-    quickPin: z.string().trim().regex(/^\d{4,6}$/),
-    terminal: z.string().trim().max(100).optional()
+const loginSchema = zod_1.z.object({
+    email: zod_1.z.string().trim().email(),
+    quickPin: zod_1.z.string().trim().regex(/^\d{4,6}$/),
+    terminal: zod_1.z.string().trim().max(100).optional()
 });
 function profileRole(value) {
     const role = typeof value === "string" ? value.trim() : "";
@@ -128,19 +163,19 @@ app.post("/api/auth/login", async (req, res) => {
     }
     const { email, quickPin, terminal = "POS Workspace" } = parsed.data;
     try {
-        getFirebaseApp();
+        (0, firebase_js_2.getFirebaseApp)();
     }
     catch (error) {
-        logFirebaseConfigurationError(error, "login");
+        (0, firebase_js_2.logFirebaseConfigurationError)(error, "login");
         res.status(503).json({
             success: false,
-            message: error instanceof FirebaseConfigurationError ? error.message
+            message: error instanceof firebase_js_2.FirebaseConfigurationError ? error.message
                 : "Firebase credentials or testing isolation are missing or invalid. Check the server configuration."
         });
         return;
     }
     try {
-        const snapshot = await getFirestoreDb()
+        const snapshot = await (0, firebase_js_2.getFirestoreDb)()
             .collection("USER_PROFILE")
             .where("email", "==", email.toLowerCase())
             .get();
@@ -163,7 +198,7 @@ app.post("/api/auth/login", async (req, res) => {
         const userId = typeof profile.id === "string" && profile.id ? profile.id : document.id;
         const name = typeof profile.name === "string" && profile.name ? profile.name : email;
         const role = profileRole(profile.roll);
-        const token = jwt.sign({ userId, profileDocId: document.id, email, name, role, terminal }, JWT_SECRET, { expiresIn: "12h" });
+        const token = jsonwebtoken_1.default.sign({ userId, profileDocId: document.id, email, name, role, terminal }, JWT_SECRET, { expiresIn: "12h" });
         res.json({
             success: true,
             message: `Authentication successful for ${name}`,
@@ -186,7 +221,7 @@ function readAccessToken(req) {
     if (!authorization?.startsWith("Bearer "))
         return null;
     try {
-        const payload = jwt.verify(authorization.slice(7), JWT_SECRET);
+        const payload = jsonwebtoken_1.default.verify(authorization.slice(7), JWT_SECRET);
         if (typeof payload === "string" || typeof payload.profileDocId !== "string")
             return null;
         return payload;
@@ -195,6 +230,37 @@ function readAccessToken(req) {
         return null;
     }
 }
+// Current account access always targets the signed session's existing profile document.
+app.get("/api/auth/account", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    const token = readAccessToken(req);
+    if (!token) {
+        res.status(401).json({ success: false, message: "Your session has expired. Please sign in again." });
+        return;
+    }
+    try {
+        res.json({ success: true, data: await (0, userAccount_js_1.readUserAccount)((0, firebase_js_2.getFirestoreDb)(), token.profileDocId) });
+    }
+    catch (error) {
+        res.status(error instanceof userAccount_js_1.UserAccountError ? error.status : 503).json({ success: false,
+            message: error instanceof userAccount_js_1.UserAccountError ? error.message : "Unable to load your account details." });
+    }
+});
+app.patch("/api/auth/account", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    const token = readAccessToken(req);
+    if (!token) {
+        res.status(401).json({ success: false, message: "Your session has expired. Please sign in again." });
+        return;
+    }
+    try {
+        res.json({ success: true, data: await (0, userAccount_js_1.updateUserAccount)((0, firebase_js_2.getFirestoreDb)(), token.profileDocId, req.body) });
+    }
+    catch (error) {
+        res.status(error instanceof userAccount_js_1.UserAccountError ? error.status : 503).json({ success: false,
+            message: error instanceof userAccount_js_1.UserAccountError ? error.message : "Unable to save your account details." });
+    }
+});
 function stringValue(value) {
     return typeof value === "string" ? value : "";
 }
@@ -257,7 +323,7 @@ app.get("/api/auth/outlets", async (req, res) => {
         return;
     }
     try {
-        const db = getFirestoreDb();
+        const db = (0, firebase_js_2.getFirestoreDb)();
         const profileDocument = await db.collection("USER_PROFILE").doc(token.profileDocId).get();
         const profile = profileDocument.data();
         if (!profileDocument.exists || !profile || profile.active !== true) {
@@ -303,6 +369,31 @@ app.get("/api/auth/outlets", async (req, res) => {
     }
 });
 // Loads the selected outlet's shift summary for the requested business day.
+// Display-only account details for the authenticated user and an assigned outlet.
+app.get("/api/outlets/:outletId/profile", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    const token = readAccessToken(req);
+    const parameter = req.params.outletId;
+    const outletId = Array.isArray(parameter) ? parameter[0] ?? "" : parameter ?? "";
+    try {
+        if (!token)
+            throw new productCreation_js_1.ProductCreationError(401, "Your session has expired. Please sign in again.");
+        const db = (0, firebase_js_2.getFirestoreDb)();
+        const profile = (await db.collection("USER_PROFILE").doc(token.profileDocId).get()).data();
+        (0, productCreation_js_1.requireProductOutlet)(token.profileDocId, outletId, profile, assignedOutletIds);
+        const outlet = await db.collection("OUTLET").doc(outletId).get();
+        if (!outlet.exists)
+            throw new productCreation_js_1.ProductCreationError(404, "Outlet not found.");
+        res.json({ success: true, data: {
+                name: stringValue(profile.name), mobile: stringValue(profile.mobile),
+                role: profileRole(profile.roll), outletName: stringValue(outlet.data()?.name),
+            } });
+    }
+    catch (error) {
+        res.status(error instanceof productCreation_js_1.ProductCreationError ? error.status : 503).json({ success: false,
+            message: error instanceof productCreation_js_1.ProductCreationError ? error.message : "Unable to load your account details." });
+    }
+});
 app.get("/api/outlets/:outletId/dashboard", async (req, res) => {
     const token = readAccessToken(req);
     if (!token) {
@@ -317,7 +408,7 @@ app.get("/api/outlets/:outletId/dashboard", async (req, res) => {
         return;
     }
     try {
-        const db = getFirestoreDb();
+        const db = (0, firebase_js_2.getFirestoreDb)();
         const profileDocument = await db.collection("USER_PROFILE").doc(token.profileDocId).get();
         const profile = profileDocument.data();
         if (!profileDocument.exists || !profile || profile.active !== true) {
@@ -334,30 +425,19 @@ app.get("/api/outlets/:outletId/dashboard", async (req, res) => {
             .collection("SHIFT")
             .where("dayId", "==", requestedDay)
             .get();
-        const shiftDocument = [...shiftSnapshot.docs].sort((left, right) => numberValue(right.data().shiftNo) - numberValue(left.data().shiftNo))[0];
-        if (!shiftDocument) {
+        if (shiftSnapshot.empty) {
             res.status(404).json({ success: false, message: `No shift data found for ${requestedDay}` });
             return;
         }
-        const shift = req.query.scope === "day"
-            ? summarizeDay(shiftSnapshot.docs.map(document => document.data()))
-            : shiftDocument.data();
-        let payments = {};
-        if (typeof shift.paymentJson === "string") {
-            try {
-                const parsed = JSON.parse(shift.paymentJson);
-                payments = Object.fromEntries(Object.entries(parsed).map(([key, value]) => [key, numberValue(value)]));
-            }
-            catch {
-                payments = {};
-            }
-        }
-        res.json({
-            success: true,
-            data: {
-                id: shiftDocument.id,
+        const formatShiftData = (docId, shift) => {
+            const payments = shift.payments && typeof shift.payments === "object" && !Array.isArray(shift.payments)
+                ? Object.fromEntries(Object.entries(shift.payments).map(([key, val]) => [key, numberValue(val)]))
+                : parsePayment(shift.paymentJson);
+            return {
+                id: docId,
                 dayId: stringValue(shift.dayId),
                 shiftNo: numberValue(shift.shiftNo),
+                deviceId: stringValue(shift.deviceId),
                 inActive: shift.inActive === true,
                 startTime: numberValue(shift.startTime),
                 endTime: numberValue(shift.endTime),
@@ -390,6 +470,35 @@ app.get("/api/outlets/:outletId/dashboard", async (req, res) => {
                 swiggyTotal: numberValue(shift.swiggyTotal),
                 zomatoTotal: numberValue(shift.zomatoTotal),
                 payments
+            };
+        };
+        const formattedShifts = shiftSnapshot.docs
+            .map(doc => formatShiftData(doc.id, doc.data()))
+            .sort((left, right) => (left.startTime - right.startTime) || (left.shiftNo - right.shiftNo) || left.id.localeCompare(right.id));
+        const daySummaryRaw = (0, daywiseSummary_js_1.summarizeDay)(shiftSnapshot.docs.map(doc => doc.data()));
+        const latestDoc = [...shiftSnapshot.docs].sort((left, right) => numberValue(right.data().shiftNo) - numberValue(left.data().shiftNo))[0];
+        const overallSummary = formatShiftData(latestDoc?.id ?? formattedShifts[0]?.id ?? "", daySummaryRaw);
+        const shiftParam = typeof req.query.shiftNo === "string" ? Number.parseInt(req.query.shiftNo, 10) : Number.NaN;
+        const shiftIdParam = typeof req.query.shiftId === "string" ? req.query.shiftId.trim().toLowerCase() : "";
+        let selectedData = overallSummary;
+        if (!Number.isNaN(shiftParam)) {
+            const found = formattedShifts.find(s => s.shiftNo === shiftParam);
+            if (found)
+                selectedData = found;
+        }
+        else if (shiftIdParam) {
+            const found = formattedShifts.find(s => s.id.toLowerCase() === shiftIdParam);
+            if (found)
+                selectedData = found;
+        }
+        else if (req.query.scope === "shift") {
+            selectedData = formattedShifts.at(-1) ?? overallSummary;
+        }
+        res.json({
+            success: true,
+            data: {
+                ...selectedData,
+                shifts: formattedShifts
             }
         });
     }
@@ -409,6 +518,9 @@ function datesBetween(startDate, endDate) {
     return dates;
 }
 function parsePayment(value) {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+        return Object.fromEntries(Object.entries(value).map(([key, amount]) => [key, numberValue(amount)]));
+    }
     if (typeof value !== "string")
         return {};
     try {
@@ -444,7 +556,7 @@ app.get("/api/outlets/:outletId/reports/stock-transfers", async (req, res) => {
     }
     const search = typeof req.query.search === "string" ? req.query.search.trim().toLowerCase() : "";
     try {
-        const db = getFirestoreDb();
+        const db = (0, firebase_js_2.getFirestoreDb)();
         const profileDocument = await db.collection("USER_PROFILE").doc(token.profileDocId).get();
         const profile = profileDocument.data();
         if (!profileDocument.exists || !profile || profile.active !== true) {
@@ -458,8 +570,8 @@ app.get("/api/outlets/:outletId/reports/stock-transfers", async (req, res) => {
         const goods = db.collection("OUTLET").doc(outletId).collection("GOODS_RECEIVED");
         const snapshots = await Promise.all(days.map(day => goods.where("dayID", "==", day).get()));
         const transfers = snapshots.flatMap(snapshot => snapshot.docs)
-            .filter(document => isStockTransfer(document.data()))
-            .map(document => stockTransferRecord(document.id, document.data()))
+            .filter(document => (0, stockTransferReport_js_1.isStockTransfer)(document.data()))
+            .map(document => (0, stockTransferReport_js_1.stockTransferRecord)(document.id, document.data()))
             .filter(entry => !search || [entry.transferNo, entry.supplier, entry.remark, ...entry.references.map(reference => reference.value),
             ...entry.items.flatMap(item => [item.name, item.productId])]
             .some(value => value.toLowerCase().includes(search)))
@@ -510,7 +622,7 @@ app.get("/api/outlets/:outletId/reports/stock-movements", async (req, res) => {
         return;
     }
     try {
-        const db = getFirestoreDb();
+        const db = (0, firebase_js_2.getFirestoreDb)();
         const profileDocument = await db.collection("USER_PROFILE").doc(token.profileDocId).get();
         const profile = profileDocument.data();
         if (!profileDocument.exists || !profile || profile.active !== true) {
@@ -524,8 +636,8 @@ app.get("/api/outlets/:outletId/reports/stock-movements", async (req, res) => {
         const goods = db.collection("OUTLET").doc(outletId).collection("GOODS_RECEIVED");
         const snapshots = await Promise.all(days.map(day => goods.where("dayID", "==", day).get()));
         const movements = snapshots.flatMap(snapshot => snapshot.docs)
-            .filter(document => stockDirection(document.data()) !== null)
-            .map(document => stockMovementRecord(document.id, document.data()))
+            .filter(document => (0, stockMovementReport_js_1.stockDirection)(document.data()) !== null)
+            .map(document => (0, stockMovementReport_js_1.stockMovementRecord)(document.id, document.data()))
             .filter(entry => !direction || entry.direction === direction)
             .filter(entry => !search || [entry.transactionNo, entry.supplier, entry.remark,
             ...entry.items.flatMap(item => [item.name, item.productId])]
@@ -578,7 +690,7 @@ app.get("/api/outlets/:outletId/reports/bills", async (req, res) => {
     const page = Math.max(1, Number.parseInt(typeof req.query.page === "string" ? req.query.page : "1", 10) || 1);
     const pageSize = Math.min(50, Math.max(1, Number.parseInt(typeof req.query.limit === "string" ? req.query.limit : "50", 10) || 50));
     try {
-        const db = getFirestoreDb();
+        const db = (0, firebase_js_2.getFirestoreDb)();
         const profileDocument = await db.collection("USER_PROFILE").doc(token.profileDocId).get();
         const profile = profileDocument.data();
         if (!profileDocument.exists || !profile || profile.active !== true) {
@@ -703,7 +815,7 @@ app.get("/api/outlets/:outletId/reports/categories", async (req, res) => {
     const shiftId = typeof req.query.shiftId === "string" ? req.query.shiftId.trim().toLowerCase() : "";
     const search = typeof req.query.search === "string" ? req.query.search.trim().toLowerCase() : "";
     try {
-        const db = getFirestoreDb();
+        const db = (0, firebase_js_2.getFirestoreDb)();
         const profileDocument = await db.collection("USER_PROFILE").doc(token.profileDocId).get();
         const profile = profileDocument.data();
         if (!profileDocument.exists || !profile || profile.active !== true) {
@@ -810,7 +922,7 @@ app.get("/api/outlets/:outletId/reports/categories", async (req, res) => {
         res.status(503).json({ success: false, message: "Unable to load the category-wise report right now" });
     }
 });
-// Read-only category master for an assigned outlet. Nothing is written to Firestore.
+// Read-only category master for an assigned outlet.
 app.get("/api/outlets/:outletId/categories", async (req, res) => {
     const token = readAccessToken(req);
     if (!token) {
@@ -824,7 +936,7 @@ app.get("/api/outlets/:outletId/categories", async (req, res) => {
         return;
     }
     try {
-        const db = getFirestoreDb();
+        const db = (0, firebase_js_2.getFirestoreDb)();
         const profileDocument = await db.collection("USER_PROFILE").doc(token.profileDocId).get();
         const profile = profileDocument.data();
         if (!profileDocument.exists || !profile || profile.active !== true) {
@@ -858,7 +970,8 @@ app.get("/api/outlets/:outletId/categories", async (req, res) => {
                 active: typeof category.inActive === "boolean" || typeof category.active === "boolean"
                     ? category.inActive !== true && category.active !== false : null,
                 productCount: productCounts.get(document.id) ?? 0,
-                createdAt: document.createTime?.toDate().toISOString() ?? ""
+                createdAt: document.createTime?.toDate().toISOString() ?? "",
+                ...(typeof category.imagePath === 'string' ? { imagePath: category.imagePath } : {})
             };
         })
             .sort((left, right) => (left.categoryNo ?? 0) - (right.categoryNo ?? 0) || left.name.localeCompare(right.name));
@@ -867,6 +980,407 @@ app.get("/api/outlets/:outletId/categories", async (req, res) => {
     catch (error) {
         console.error("Loading outlet categories failed:", error);
         res.status(503).json({ success: false, message: "Unable to load categories right now" });
+    }
+});
+const imageBodyParser = (req, res, next) => {
+    express_1.default.raw({ type: () => true, limit: '5mb' })(req, res, error => {
+        if (!error) {
+            next();
+            return;
+        }
+        const status = error.status === 413 ? 413 : 400;
+        res.status(status).json({ success: false, message: status === 413 ? 'Images must be 5 MB or smaller.' : 'The image upload could not be read.' });
+    });
+};
+async function authorizeImageTarget(req, res, collection) {
+    const token = readAccessToken(req);
+    if (!token) {
+        res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' });
+        return null;
+    }
+    const outletId = String(req.params.outletId ?? '');
+    const documentId = String(req.params.documentId ?? '');
+    if (![outletId, documentId].every(id => id && id.length <= 200 && !id.includes('/') && id !== '.' && id !== '..')) {
+        res.status(400).json({ success: false, message: 'A valid outlet and record ID are required.' });
+        return null;
+    }
+    try {
+        const db = (0, firebase_js_2.getFirestoreDb)();
+        const profile = (await db.collection('USER_PROFILE').doc(token.profileDocId).get()).data();
+        (0, productCreation_js_1.requireProductOutlet)(token.profileDocId, outletId, profile, assignedOutletIds);
+        const document = db.collection('OUTLET').doc(outletId).collection(collection).doc(documentId);
+        const snapshot = await document.get();
+        if (!snapshot.exists) {
+            res.status(404).json({ success: false, message: 'This record no longer exists.' });
+            return null;
+        }
+        return { db, outletId, documentId, profileId: token.profileDocId, snapshot };
+    }
+    catch (error) {
+        const status = error instanceof productCreation_js_1.ProductCreationError ? error.status : 503;
+        res.status(status).json({ success: false, message: error instanceof productCreation_js_1.ProductCreationError
+                ? error.message : 'Image service is unavailable.' });
+        return null;
+    }
+}
+function imageApiError(res, error) {
+    if (error instanceof productCreation_js_1.ProductCreationError) {
+        res.status(error.status).json({ success: false, message: error.message });
+        return;
+    }
+    if (error instanceof imageStorage_js_1.ImageStorageError) {
+        res.status(error.status).json({ success: false, message: error.message });
+        return;
+    }
+    if (error instanceof firebase_js_2.FirebaseConfigurationError) {
+        const message = error.check === 'missing_storage_bucket'
+            ? 'Firebase Storage bucket is not configured in the running backend. Restart the backend after setting FIREBASE_STORAGE_BUCKET.'
+            : 'Firebase Storage configuration is invalid. Check the backend Firebase configuration.';
+        res.status(503).json({ success: false, message });
+        return;
+    }
+    const code = error && typeof error === 'object' && 'code' in error
+        ? error.code : undefined;
+    const safeCode = typeof code === 'number' || (typeof code === 'string' && /^[A-Z0-9_/-]{1,40}$/i.test(code))
+        ? code : 'unknown';
+    console.error('Firebase image operation failed', { code: safeCode });
+    const message = safeCode === 403
+        ? 'Firebase Storage denied access. Check the backend service account permissions for this bucket.'
+        : safeCode === 404
+            ? 'The configured Firebase Storage bucket was not found. Check FIREBASE_STORAGE_BUCKET.'
+            : 'Firebase Storage could not complete the request. Check the backend logs and bucket configuration.';
+    res.status(503).json({ success: false, message });
+}
+app.post('/api/outlets/:outletId/product-images/verify-quick-pin', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const token = readAccessToken(req);
+    if (!token) {
+        res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' });
+        return;
+    }
+    try {
+        const data = await (0, productImageAuthorization_js_1.verifyProductImagePin)((0, firebase_js_2.getFirestoreDb)(), String(req.params.outletId ?? ''), token.profileDocId, assignedOutletIds, IMAGE_JWT_SECRET, req.header('authorization') ?? '', req.body);
+        res.json({ success: true, data });
+    }
+    catch (error) {
+        res.status(error instanceof productCreation_js_1.ProductCreationError ? error.status : 503).json({ success: false,
+            message: error instanceof productCreation_js_1.ProductCreationError ? error.message : 'Unable to verify your Quick PIN. Please try again.' });
+    }
+});
+app.post('/api/outlets/:outletId/product-image-assignments', async (req, res) => {
+    const token = readAccessToken(req);
+    if (!token) {
+        res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' });
+        return;
+    }
+    try {
+        (0, productImageAuthorization_js_1.requireProductImageAuthorization)(IMAGE_JWT_SECRET, req.header('x-image-token'), token.profileDocId, String(req.params.outletId ?? ''), req.header('authorization') ?? '', ['bulk', 'shared']);
+        const data = await (0, productImageAssignments_js_1.assignProductImage)((0, firebase_js_2.getFirestoreDb)(), (0, firebase_js_2.getFirebaseStorageBucket)(), String(req.params.outletId ?? ''), token.profileDocId, assignedOutletIds, req.body);
+        res.json({ success: true, data });
+    }
+    catch (error) {
+        if (error instanceof productCreation_js_1.ProductCreationError) {
+            res.status(error.status).json({ success: false, message: error.message });
+            return;
+        }
+        imageApiError(res, error);
+    }
+});
+// Bulk removal has its own route so omitting a review cannot bypass the PIN gate.
+app.delete('/api/outlets/:outletId/product-image-removals/:documentId', async (req, res) => {
+    const target = await authorizeImageTarget(req, res, 'PRODUCT');
+    if (!target)
+        return;
+    try {
+        (0, productImageAuthorization_js_1.requireProductImageAuthorization)(IMAGE_JWT_SECRET, req.header('x-image-token'), target.profileId, target.outletId, req.header('authorization') ?? '', ['remove']);
+        if (!req.body)
+            throw new imageStorage_js_1.ImageStorageError(400, 'The reviewed image references are required.');
+        const data = await (0, imageStorage_js_1.removeMasterImage)(target.db, 'products', target.outletId, target.documentId, req.body);
+        res.json({ success: true, data });
+    }
+    catch (error) {
+        imageApiError(res, error);
+    }
+});
+for (const [routeCollection, firestoreCollection] of [['products', 'PRODUCT'], ['categories', 'CATEGORY']]) {
+    const imagePath = `/api/outlets/:outletId/${routeCollection}/:documentId/image`;
+    const imageKind = routeCollection;
+    app.put(imagePath, imageBodyParser, async (req, res) => {
+        const target = await authorizeImageTarget(req, res, firestoreCollection);
+        if (!target)
+            return;
+        try {
+            const declaredType = String(req.header('content-type') ?? '').split(';', 1)[0].trim().toLowerCase();
+            const requestId = req.header('X-Image-Upload-Id');
+            let operation;
+            if (requestId && imageKind === 'products') {
+                let expectedReference;
+                try {
+                    expectedReference = JSON.parse(req.header('X-Image-Expected-Reference') ?? '');
+                }
+                catch {
+                    throw new imageStorage_js_1.ImageStorageError(400, 'The reviewed image reference is missing or invalid.');
+                }
+                if (expectedReference !== null && typeof expectedReference !== 'string')
+                    throw new imageStorage_js_1.ImageStorageError(400, 'Invalid reviewed image reference.');
+                operation = { requestId, expectedReference };
+            }
+            const data = await (0, imageStorage_js_1.uploadMasterImage)(target.db, (0, firebase_js_2.getFirebaseStorageBucket)(), imageKind, target.outletId, target.documentId, Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0), declaredType, operation);
+            res.json({ success: true, data });
+        }
+        catch (error) {
+            imageApiError(res, error);
+        }
+    });
+    app.get(imagePath, async (req, res) => {
+        const target = await authorizeImageTarget(req, res, firestoreCollection);
+        if (!target)
+            return;
+        try {
+            const image = await (0, imageStorage_js_1.readMasterImage)(target.db, (0, firebase_js_2.getFirebaseStorageBucket)(), imageKind, target.outletId, target.documentId, target.snapshot);
+            res.setHeader('Cache-Control', 'private, no-store');
+            res.setHeader('X-Content-Type-Options', 'nosniff');
+            res.setHeader('Content-Type', image.contentType);
+            res.send(image.bytes);
+        }
+        catch (error) {
+            imageApiError(res, error);
+        }
+    });
+    app.delete(imagePath, async (req, res) => {
+        const target = await authorizeImageTarget(req, res, firestoreCollection);
+        if (!target)
+            return;
+        try {
+            const data = await (0, imageStorage_js_1.removeMasterImage)(target.db, imageKind, target.outletId, target.documentId, imageKind === 'products' ? req.body : undefined);
+            res.json({ success: true, data });
+        }
+        catch (error) {
+            imageApiError(res, error);
+        }
+    });
+}
+// Explicit Web POS storage initialization only. This does not start accounting or enforce login limits.
+app.post('/api/outlets/:outletId/usage/initialize', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const token = readAccessToken(req);
+    if (!token) {
+        res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' });
+        return;
+    }
+    try {
+        const data = await (0, dailyUsage_js_1.initializeOutletDailyUsage)((0, firebase_js_2.getFirestoreDb)(), String(req.params.outletId ?? ''), token.profileDocId, assignedOutletIds, req.body ?? {});
+        res.json({ success: true, data });
+    }
+    catch (error) {
+        res.status(error instanceof productCreation_js_1.ProductCreationError ? error.status : 503).json({ success: false,
+            message: error instanceof productCreation_js_1.ProductCreationError ? error.message : 'Unable to initialize daily usage. Please try again.' });
+    }
+});
+// Explicit Web POS lifecycle only. JWT login remains available for outlet selection/recovery.
+app.post('/api/outlets/:outletId/usage/:action', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const token = readAccessToken(req);
+    if (!token) {
+        res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' });
+        return;
+    }
+    try {
+        const body = req.body ?? {};
+        if (!body || typeof body !== 'object' || Array.isArray(body) || 'action' in body)
+            throw new dailyUsage_js_1.DailyUsageError(422, 'USAGE_INVALID_REQUEST', 'Invalid usage request.');
+        if (!['start', 'heartbeat', 'stop', 'status'].includes(String(req.params.action)))
+            throw new dailyUsage_js_1.DailyUsageError(404, 'USAGE_INVALID_REQUEST', 'Unknown usage action.');
+        const data = await (0, dailyUsage_js_1.operateOutletDailyUsage)((0, firebase_js_2.getFirestoreDb)(), String(req.params.outletId ?? ''), token.profileDocId, assignedOutletIds, { ...body, action: String(req.params.action) });
+        res.json({ success: true, data });
+    }
+    catch (error) {
+        res.status(error instanceof productCreation_js_1.ProductCreationError ? error.status : 503).json({ success: false,
+            code: error instanceof dailyUsage_js_1.DailyUsageError ? error.code : 'USAGE_UNAVAILABLE',
+            message: error instanceof productCreation_js_1.ProductCreationError ? error.message : 'Unable to verify Web POS usage. Access has not been granted.' });
+    }
+});
+// Credential verification uses POST to keep the PIN out of URLs. This handler only reads records.
+app.post('/api/outlets/:outletId/transfer-preview/verify-quick-pin', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const token = readAccessToken(req);
+    if (!token) {
+        res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' });
+        return;
+    }
+    try {
+        const data = await (0, transferPreviewPin_js_1.verifyTransferPreviewPin)((0, firebase_js_2.getFirestoreDb)(), String(req.params.outletId ?? ''), token.profileDocId, assignedOutletIds, req.body);
+        res.json({ success: true, data: { ...data, transferToken: (0, masterTransfer_js_1.issueTransferAuthorization)(TRANSFER_JWT_SECRET, token.profileDocId, String(req.params.outletId ?? ''), data.destinationOutletId) } });
+    }
+    catch (error) {
+        res.status(error instanceof productCreation_js_1.ProductCreationError ? error.status : 503).json({ success: false,
+            message: error instanceof productCreation_js_1.ProductCreationError ? error.message : 'Unable to verify your QuickPin. Please try again.' });
+    }
+});
+// Create-only copies, authorized for both outlets by the short-lived QuickPin grant.
+app.post('/api/outlets/:outletId/master-transfer', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const token = readAccessToken(req);
+    if (!token) {
+        res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' });
+        return;
+    }
+    try {
+        const data = await (0, masterTransfer_js_1.transferOutletMasters)((0, firebase_js_2.getFirestoreDb)(), String(req.params.outletId ?? ''), token.profileDocId, assignedOutletIds, TRANSFER_JWT_SECRET, req.header('x-transfer-token'), req.body);
+        res.json({ success: true, data });
+    }
+    catch (error) {
+        res.status(error instanceof productCreation_js_1.ProductCreationError ? error.status : 503).json({ success: false,
+            message: error instanceof productCreation_js_1.ProductCreationError ? error.message : 'Transfer could not be confirmed. Retry the same selection safely; existing copies will not be duplicated.' });
+    }
+});
+// Existing outlet multicounter configuration only. Never infer configured counters from devices.
+app.get("/api/outlets/:outletId/multicounter", async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const token = readAccessToken(req);
+    if (!token) {
+        res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' });
+        return;
+    }
+    try {
+        const data = await (0, multicounter_js_1.readOutletMulticounter)((0, firebase_js_2.getFirestoreDb)(), String(req.params.outletId ?? ''), token.profileDocId, assignedOutletIds);
+        res.json({ success: true, data });
+    }
+    catch (error) {
+        res.status(error instanceof productCreation_js_1.ProductCreationError ? error.status : 503).json({ success: false,
+            message: error instanceof productCreation_js_1.ProductCreationError ? error.message : 'Unable to load multicounter configuration. Please try again.' });
+    }
+});
+// Display existing device status only; registration/activation behavior is unchanged.
+app.get("/api/outlets/:outletId/devices", async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const token = readAccessToken(req);
+    if (!token) {
+        res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' });
+        return;
+    }
+    try {
+        const data = await (0, devices_js_1.listOutletDevices)((0, firebase_js_2.getFirestoreDb)(), String(req.params.outletId ?? ''), token.profileDocId, assignedOutletIds);
+        res.json({ success: true, data });
+    }
+    catch (error) {
+        res.status(error instanceof productCreation_js_1.ProductCreationError ? error.status : 503).json({ success: false,
+            message: error instanceof productCreation_js_1.ProductCreationError ? error.message : 'Unable to load devices. Please try again.' });
+    }
+});
+// Customer reads and creates are scoped to the signed-in user's assigned outlet.
+app.get("/api/outlets/:outletId/customers", async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const token = readAccessToken(req);
+    if (!token) {
+        res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' });
+        return;
+    }
+    try {
+        const data = await (0, customers_js_1.listOutletCustomers)((0, firebase_js_2.getFirestoreDb)(), String(req.params.outletId ?? ''), token.profileDocId, assignedOutletIds);
+        res.json({ success: true, data });
+    }
+    catch (error) {
+        res.status(error instanceof productCreation_js_1.ProductCreationError ? error.status : 503).json({ success: false,
+            message: error instanceof productCreation_js_1.ProductCreationError ? error.message : 'Unable to load customers. Please try again.' });
+    }
+});
+app.post("/api/outlets/:outletId/customers", async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const token = readAccessToken(req);
+    if (!token) {
+        res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' });
+        return;
+    }
+    try {
+        const data = await (0, customers_js_1.createOutletCustomer)((0, firebase_js_2.getFirestoreDb)(), String(req.params.outletId ?? ''), token.profileDocId, assignedOutletIds, req.body);
+        res.json({ success: true, data });
+    }
+    catch (error) {
+        res.status(error instanceof productCreation_js_1.ProductCreationError ? error.status : 503).json({ success: false,
+            message: error instanceof productCreation_js_1.ProductCreationError ? error.message : 'Unable to confirm the customer save. Retry without changing the form to confirm the outcome.' });
+    }
+});
+// Reuse the Android outlet's employee pool for employee/captain/salesman selection.
+app.get("/api/outlets/:outletId/employees", async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const token = readAccessToken(req);
+    if (!token) {
+        res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' });
+        return;
+    }
+    try {
+        const data = await (0, employees_js_1.listOutletEmployees)((0, firebase_js_2.getFirestoreDb)(), String(req.params.outletId ?? ''), token.profileDocId, assignedOutletIds);
+        res.json({ success: true, data });
+    }
+    catch (error) {
+        res.status(error instanceof productCreation_js_1.ProductCreationError ? error.status : 503).json({ success: false,
+            message: error instanceof productCreation_js_1.ProductCreationError ? error.message : 'Unable to load employees. Please try again.' });
+    }
+});
+app.post("/api/outlets/:outletId/employees", async (req, res) => {
+    const token = readAccessToken(req);
+    if (!token) {
+        res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' });
+        return;
+    }
+    try {
+        const data = await (0, employees_js_1.createOutletEmployee)((0, firebase_js_2.getFirestoreDb)(), String(req.params.outletId ?? ''), token.profileDocId, assignedOutletIds, req.body);
+        res.json({ success: true, data });
+    }
+    catch (error) {
+        res.status(error instanceof productCreation_js_1.ProductCreationError ? error.status : 503).json({ success: false,
+            message: error instanceof productCreation_js_1.ProductCreationError ? error.message : 'Unable to confirm the employee save. Retry without changing the form to confirm the outcome.' });
+    }
+});
+app.get('/api/outlets/:outletId/premises', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const token = readAccessToken(req);
+    if (!token) {
+        res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' });
+        return;
+    }
+    try {
+        const data = await (0, premises_js_1.listOutletPremises)((0, firebase_js_2.getFirestoreDb)(), String(req.params.outletId ?? ''), token.profileDocId, assignedOutletIds);
+        res.json({ success: true, data });
+    }
+    catch (error) {
+        res.status(error instanceof productCreation_js_1.ProductCreationError ? error.status : 503).json({ success: false,
+            message: error instanceof productCreation_js_1.ProductCreationError ? error.message : 'Unable to load premises. Please try again.' });
+    }
+});
+app.post('/api/outlets/:outletId/premises', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const token = readAccessToken(req);
+    if (!token) {
+        res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' });
+        return;
+    }
+    try {
+        const context = (0, firebase_js_1.getFirestoreRestContext)();
+        const data = await (0, premises_js_1.createOutletPremise)((0, premisesFirestore_js_1.premisesTransactionRunner)(context.database, context.accessToken), String(req.params.outletId ?? ''), token.profileDocId, assignedOutletIds, req.body);
+        res.status(201).json({ success: true, data });
+    }
+    catch (error) {
+        res.status(error instanceof productCreation_js_1.ProductCreationError ? error.status : 503).json({ success: false,
+            message: error instanceof productCreation_js_1.ProductCreationError ? error.message : 'Unable to confirm the premises save. Retry the same form to confirm the outcome.' });
+    }
+});
+app.patch('/api/outlets/:outletId/premises/:documentId', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const token = readAccessToken(req);
+    if (!token) {
+        res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' });
+        return;
+    }
+    try {
+        const context = (0, firebase_js_1.getFirestoreRestContext)();
+        const data = await (0, premises_js_1.updateOutletPremise)((0, premisesFirestore_js_1.premisesTransactionRunner)(context.database, context.accessToken), String(req.params.outletId ?? ''), String(req.params.documentId ?? ''), token.profileDocId, assignedOutletIds, req.body);
+        res.json({ success: true, data });
+    }
+    catch (error) {
+        res.status(error instanceof productCreation_js_1.ProductCreationError ? error.status : 503).json({ success: false,
+            message: error instanceof productCreation_js_1.ProductCreationError ? error.message : 'Unable to confirm the premises update. Retry the same changes to confirm the outcome.' });
     }
 });
 // Read the complete product documents without renaming fields or writing to Firestore.
@@ -883,7 +1397,7 @@ app.get("/api/outlets/:outletId/products", async (req, res) => {
         return;
     }
     try {
-        const db = getFirestoreDb();
+        const db = (0, firebase_js_2.getFirestoreDb)();
         const profileDocument = await db.collection("USER_PROFILE").doc(token.profileDocId).get();
         const profile = profileDocument.data();
         if (!profileDocument.exists || !profile || profile.active !== true) {
@@ -912,26 +1426,43 @@ app.get("/api/outlets/:outletId/products/:documentId/edit-options", async (req, 
         const outletId = String(req.params.outletId ?? '');
         const id = String(req.params.documentId ?? '');
         const deps = productImportDependencies();
-        requireProductOutlet(token?.profileDocId ?? null, outletId, token ? await deps.readProfile(token.profileDocId) : undefined, assignedOutletIds);
+        (0, productCreation_js_1.requireProductOutlet)(token?.profileDocId ?? null, outletId, token ? await deps.readProfile(token.profileDocId) : undefined, assignedOutletIds);
         if (!id || id.includes('/') || id === '.' || id === '..')
-            throw new ProductCreationError(400, 'A valid product ID is required.');
-        const [snapshot, categories, taxes] = await Promise.all([
-            getFirestoreDb().collection('OUTLET').doc(outletId).collection('PRODUCT').doc(id).get(),
-            deps.readCategories(outletId), deps.readTaxes(),
+            throw new productCreation_js_1.ProductCreationError(400, 'A valid product ID is required.');
+        const [snapshot, categories, premises] = await Promise.all([
+            (0, firebase_js_2.getFirestoreDb)().collection('OUTLET').doc(outletId).collection('PRODUCT').doc(id).get(),
+            deps.readCategories(outletId),
+            deps.readPremises(outletId),
         ]);
         if (!snapshot.exists)
-            throw new ProductCreationError(404, 'This product no longer exists.');
+            throw new productCreation_js_1.ProductCreationError(404, 'This product no longer exists.');
         const fields = snapshot.data();
         res.json({ success: true, data: { code: typeof fields.code === 'string' || typeof fields.code === 'number' ? fields.code : '',
-                categories, taxes: productTaxes(taxes), units: PRODUCT_UNITS, product: { documentId: id, fields } } });
+                categories, taxes: androidTaxes_js_1.ANDROID_TAX_OPTIONS, units: productCreation_js_1.PRODUCT_UNITS, premises, product: { documentId: id, fields } } });
     }
     catch (error) {
         productCreationResponse(res, error);
     }
 });
+app.post("/api/outlets/:outletId/stock-adjustments", async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const token = readAccessToken(req);
+    if (!token) {
+        res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' });
+        return;
+    }
+    try {
+        const data = await (0, stockAdjustment_js_1.saveStockAdjustment)((0, firebase_js_2.getFirestoreDb)(), String(req.params.outletId ?? ''), token.profileDocId, assignedOutletIds, req.body);
+        res.json({ success: true, data });
+    }
+    catch (error) {
+        res.status(error instanceof productCreation_js_1.ProductCreationError ? error.status : 503).json({ success: false,
+            message: error instanceof productCreation_js_1.ProductCreationError ? error.message : 'The stock save could not be confirmed. Retry the same confirmation to reconcile the outcome.' });
+    }
+});
 app.patch("/api/outlets/:outletId/products/:documentId", async (req, res) => {
     try {
-        const data = await updateOutletProduct(getFirestoreDb(), String(req.params.outletId ?? ''), String(req.params.documentId ?? ''), readAccessToken(req)?.profileDocId ?? null, assignedOutletIds, req.body);
+        const data = await (0, productUpdate_js_1.updateOutletProduct)((0, firebase_js_2.getFirestoreDb)(), String(req.params.outletId ?? ''), String(req.params.documentId ?? ''), readAccessToken(req)?.profileDocId ?? null, assignedOutletIds, req.body);
         res.json({ success: true, data });
     }
     catch (error) {
@@ -940,24 +1471,24 @@ app.patch("/api/outlets/:outletId/products/:documentId", async (req, res) => {
 });
 app.patch("/api/outlets/:outletId/categories/:documentId", async (req, res) => {
     try {
-        const data = await updateCategoryNames(getFirestoreDb(), String(req.params.outletId ?? ''), String(req.params.documentId ?? ''), readAccessToken(req)?.profileDocId ?? null, assignedOutletIds, req.body);
+        const data = await (0, categoryUpdate_js_1.updateCategoryNames)((0, firebase_js_2.getFirestoreDb)(), String(req.params.outletId ?? ''), String(req.params.documentId ?? ''), readAccessToken(req)?.profileDocId ?? null, assignedOutletIds, req.body);
         res.json({ success: true, data });
     }
     catch (error) {
-        res.status(error instanceof CategoryUpdateError ? error.status : 503).json({ success: false,
-            message: error instanceof CategoryUpdateError ? error.message : 'Unable to update category. Retry with the same names to confirm the outcome.' });
+        res.status(error instanceof categoryUpdate_js_1.CategoryUpdateError ? error.status : 503).json({ success: false,
+            message: error instanceof categoryUpdate_js_1.CategoryUpdateError ? error.message : 'Unable to update category. Retry with the same names to confirm the outcome.' });
     }
 });
 // Existing outlet master documents only; never use the legacy in-memory category API.
 for (const [route, collection] of [['categories', 'CATEGORY'], ['products', 'PRODUCT']]) {
     app.delete(`/api/outlets/:outletId/${route}/:documentId`, async (req, res) => {
         try {
-            const result = await deleteOutletRecord(getFirestoreDb(), String(req.params.outletId ?? ''), collection, String(req.params.documentId ?? ''), readAccessToken(req)?.profileDocId ?? null, assignedOutletIds);
+            const result = await (0, outletDeletion_js_1.deleteOutletRecord)((0, firebase_js_2.getFirestoreDb)(), String(req.params.outletId ?? ''), collection, String(req.params.documentId ?? ''), readAccessToken(req)?.profileDocId ?? null, assignedOutletIds);
             res.json({ success: true, data: result });
         }
         catch (error) {
-            res.status(error instanceof OutletDeletionError ? error.status : 503).json({ success: false,
-                message: error instanceof OutletDeletionError ? error.message : 'Unable to delete this record. Retry to confirm the outcome.' });
+            res.status(error instanceof outletDeletion_js_1.OutletDeletionError ? error.status : 503).json({ success: false,
+                message: error instanceof outletDeletion_js_1.OutletDeletionError ? error.message : 'Unable to delete this record. Retry to confirm the outcome.' });
         }
     });
 }
@@ -968,12 +1499,12 @@ app.get("/api/outlets/:outletId/products/create-options", async (req, res) => {
         const outletId = String(req.params.outletId ?? '');
         const deps = productImportDependencies();
         const profile = token ? await deps.readProfile(token.profileDocId) : undefined;
-        requireProductOutlet(token?.profileDocId ?? null, outletId, profile, assignedOutletIds);
-        const [categories, taxes, products] = await Promise.all([
-            deps.readCategories(outletId), deps.readTaxes(), deps.readProducts(outletId),
+        (0, productCreation_js_1.requireProductOutlet)(token?.profileDocId ?? null, outletId, profile, assignedOutletIds);
+        const [categories, products, premises] = await Promise.all([
+            deps.readCategories(outletId), deps.readProducts(outletId), deps.readPremises(outletId),
         ]);
-        res.json({ success: true, data: { code: nextProductCode(products), categories,
-                taxes: productTaxes(taxes), units: PRODUCT_UNITS } });
+        res.json({ success: true, data: { code: (0, productImportValidation_js_1.nextProductCode)(products), categories,
+                taxes: androidTaxes_js_1.ANDROID_TAX_OPTIONS, units: productCreation_js_1.PRODUCT_UNITS, premises } });
     }
     catch (error) {
         productCreationResponse(res, error);
@@ -981,7 +1512,7 @@ app.get("/api/outlets/:outletId/products/create-options", async (req, res) => {
 });
 app.post("/api/outlets/:outletId/products", async (req, res) => {
     try {
-        const product = await createOutletProduct(getFirestoreDb(), String(req.params.outletId ?? ''), readAccessToken(req)?.profileDocId ?? null, assignedOutletIds, req.body);
+        const product = await (0, productCreation_js_1.createOutletProduct)((0, firebase_js_2.getFirestoreDb)(), String(req.params.outletId ?? ''), readAccessToken(req)?.profileDocId ?? null, assignedOutletIds, req.body);
         res.status(201).json({ success: true, data: product });
     }
     catch (error) {
@@ -989,7 +1520,7 @@ app.post("/api/outlets/:outletId/products", async (req, res) => {
     }
 });
 function productCreationResponse(res, error) {
-    if (error instanceof ProductCreationError) {
+    if (error instanceof productCreation_js_1.ProductCreationError) {
         res.status(error.status).json({ success: false, message: error.message, errors: error.errors, nextCode: error.nextCode });
     }
     else {
@@ -1000,46 +1531,85 @@ function productCreationResponse(res, error) {
 // Existing readers and authentication are reused; production writes remain gated.
 function productImportDependencies() {
     return {
-        readProfile: async (id) => (await getFirestoreDb().collection("USER_PROFILE").doc(id).get()).data(),
+        readProfile: async (id) => (await (0, firebase_js_2.getFirestoreDb)().collection("USER_PROFILE").doc(id).get()).data(),
         assignedOutlets: assignedOutletIds,
         readCategories: async (id) => {
-            const snapshot = await getFirestoreDb().collection("OUTLET").doc(id).collection("CATEGORY").get();
+            const snapshot = await (0, firebase_js_2.getFirestoreDb)().collection("OUTLET").doc(id).collection("CATEGORY").get();
             return snapshot.docs.map(document => ({ id: document.id, name: stringValue(document.data().name),
                 categoryNo: typeof document.data().categoryNo === "number" ? document.data().categoryNo : null }));
         },
-        readProducts: async (id) => (await getFirestoreDb().collection("OUTLET").doc(id).collection("PRODUCT").get()).docs
+        readProducts: async (id) => (await (0, firebase_js_2.getFirestoreDb)().collection("OUTLET").doc(id).collection("PRODUCT").get()).docs
             .map(document => ({ id: document.id, fields: document.data() })),
+        readPremises: async (id) => (await (0, firebase_js_2.getFirestoreDb)().collection('OUTLET').doc(id).collection('PREMISES').get()).docs
+            .map(document => ({ id: document.id, name: stringValue(document.data().name) })),
         readTaxes: async () => {
-            const snapshot = await getFirestoreDb().collection("MASTERS").doc("masters").collection("TAX_MASTER").get();
+            const snapshot = await (0, firebase_js_2.getFirestoreDb)().collection("MASTERS").doc("masters").collection("TAX_MASTER").get();
             return snapshot.docs.map(document => document.data()).filter(data => typeof data.percent === "number" && Number.isFinite(data.percent)
                 && typeof data.index === "number" && Number.isSafeInteger(data.index)
                 && typeof data.type === "number" && Number.isSafeInteger(data.type)).map(data => ({ percent: data.percent, index: data.index, type: data.type }));
         },
     };
 }
+// Quota inspection is authorized and never consumes an upload attempt.
+app.get("/api/outlets/:outletId/products/import/quota", async (req, res) => {
+    const token = readAccessToken(req);
+    const parameter = req.params.outletId;
+    const outletId = Array.isArray(parameter) ? parameter[0] ?? "" : parameter ?? "";
+    res.setHeader("Cache-Control", "no-store");
+    try {
+        if (!token)
+            throw new productCreation_js_1.ProductCreationError(401, "Your session has expired. Please sign in again.");
+        const profile = await productImportDependencies().readProfile(token.profileDocId);
+        (0, productCreation_js_1.requireProductOutlet)(token.profileDocId, outletId, profile, assignedOutletIds);
+        const quota = productImportQuota.check(outletId);
+        res.json({ success: true, ...quota });
+    }
+    catch (error) {
+        if (error instanceof productImportQuota_js_1.ProductImportQuotaError) {
+            res.setHeader("Retry-After", String(error.retryAfterSeconds));
+            res.status(429).json({ success: false, message: error.message, nextAvailableAt: error.nextAvailableAt });
+        }
+        else {
+            res.status(error instanceof productCreation_js_1.ProductCreationError ? error.status : 503).json({ success: false,
+                message: error instanceof productCreation_js_1.ProductCreationError ? error.message : "Unable to check the upload limit." });
+        }
+    }
+});
 app.post("/api/outlets/:outletId/products/import/validate", async (req, res) => {
     const token = readAccessToken(req);
     const parameter = req.params.outletId;
     const outletId = Array.isArray(parameter) ? parameter[0] ?? "" : parameter ?? "";
     try {
-        const result = await checkAuthorizedProductImport(token?.profileDocId ?? null, outletId, req.body?.source, productImportDependencies());
-        res.status(result.status).json({ ...result.body, writesEnabled: PRODUCT_IMPORT_WRITES_ENABLED });
+        const result = await (0, productImportValidation_js_1.checkAuthorizedProductImport)(token?.profileDocId ?? null, outletId, req.body?.source, productImportDependencies(), () => productImportQuota.check(outletId));
+        res.status(result.status).json({ ...result.body, writesEnabled: productImportValidation_js_1.PRODUCT_IMPORT_WRITES_ENABLED });
     }
-    catch {
+    catch (error) {
+        if (error instanceof productImportQuota_js_1.ProductImportQuotaError) {
+            res.setHeader("Retry-After", String(error.retryAfterSeconds));
+            res.status(429).json({ success: false, message: error.message, nextAvailableAt: error.nextAvailableAt });
+            return;
+        }
         res.status(503).json({ success: false, message: "Unable to validate the import. No products were written." });
     }
 });
-app.post("/api/outlets/:outletId/products/import", async (req, res) => {
+// Both entry points share the same outlet counter. Premises persistence stays disabled.
+app.post(["/api/outlets/:outletId/products/import", "/api/outlets/:outletId/products/import/premises"], async (req, res) => {
     const token = readAccessToken(req);
     const parameter = req.params.outletId;
     const outletId = Array.isArray(parameter) ? parameter[0] ?? "" : parameter ?? "";
     try {
-        const checked = await checkAuthorizedProductImport(token?.profileDocId ?? null, outletId, req.body?.source, productImportDependencies());
+        const checked = await (0, productImportValidation_js_1.checkAuthorizedProductImport)(token?.profileDocId ?? null, outletId, req.body?.source, productImportDependencies(), () => {
+            productImportQuota.accept(outletId);
+            // Never strip premises columns or pass a premises request to the standard writer.
+            if (/\/premises\/?$/i.test(req.path)) {
+                throw new productCreation_js_1.ProductCreationError(422, "Premises prices cannot be imported until the columns are mapped to this outlet's configured premises. No products were saved.");
+            }
+        });
         if (checked.status !== 200 || !checked.body.data?.canUpload) {
             res.status(checked.status).json(checked.body);
             return;
         }
-        if (!PRODUCT_IMPORT_WRITES_ENABLED) {
+        if (!productImportValidation_js_1.PRODUCT_IMPORT_WRITES_ENABLED) {
             res.status(403).json({ success: false, message: "File validated. Production upload is disabled pending review and approval. No products were saved." });
             return;
         }
@@ -1049,15 +1619,24 @@ app.post("/api/outlets/:outletId/products/import", async (req, res) => {
             res.status(409).json({ success: false, message: "Search Codes changed or were not previewed. Review the updated preview before uploading again." });
             return;
         }
-        const result = await persistProductImport(outletId, checked.body.data.documents, {
-            enabled: PRODUCT_IMPORT_WRITES_ENABLED,
-            readExisting: async (id) => (await getFirestoreDb().collection("OUTLET").doc(id).collection("PRODUCT").get()).docs
+        const result = await (0, productImportValidation_js_1.persistProductImport)(outletId, checked.body.data.documents, {
+            enabled: productImportValidation_js_1.PRODUCT_IMPORT_WRITES_ENABLED,
+            readExisting: async (id) => (await (0, firebase_js_2.getFirestoreDb)().collection("OUTLET").doc(id).collection("PRODUCT").get()).docs
                 .map(document => ({ id: document.id, fields: document.data() })),
-            createChunk: (id, documents) => createProductImportChunk(getFirestoreDb(), id, documents),
+            createChunk: (id, documents) => (0, productImportWriter_js_1.createProductImportChunk)((0, firebase_js_2.getFirestoreDb)(), id, documents),
         });
         res.status(result.success ? 200 : 503).json({ success: result.success, data: result });
     }
     catch (error) {
+        if (error instanceof productImportQuota_js_1.ProductImportQuotaError) {
+            res.setHeader("Retry-After", String(error.retryAfterSeconds));
+            res.status(429).json({ success: false, message: error.message, nextAvailableAt: error.nextAvailableAt });
+            return;
+        }
+        if (error instanceof productCreation_js_1.ProductCreationError) {
+            res.status(error.status).json({ success: false, message: error.message });
+            return;
+        }
         res.status(409).json({ success: false, message: error instanceof Error && /^(Row \d+ already|Search Codes changed|An existing product differs|An existing numeric Search Code|No safe numeric Search Codes)/.test(error.message)
                 ? error.message : "Import could not be completed. Keep the same file for reconciliation; existing products were not overwritten." });
     }
@@ -1071,18 +1650,18 @@ app.post("/api/outlets/:outletId/categories", async (req, res) => {
     }
     const outletParam = req.params.outletId;
     const outletId = Array.isArray(outletParam) ? outletParam[0] : outletParam;
-    const input = z.object({
-        categoryNo: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-        name: z.string().trim().min(1).max(200),
-        regionalName: z.string().trim().max(200).default(""),
-        dayType: z.string().trim().max(100).default(""),
+    const input = zod_1.z.object({
+        categoryNo: zod_1.z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+        name: zod_1.z.string().trim().min(1).max(200),
+        regionalName: zod_1.z.string().trim().max(200).default(""),
+        dayType: zod_1.z.string().trim().max(100).default(""),
     }).safeParse(req.body);
     if (!outletId || !input.success) {
         res.status(400).json({ success: false, message: "A category name and positive whole category number are required." });
         return;
     }
     try {
-        const db = getFirestoreDb();
+        const db = (0, firebase_js_2.getFirestoreDb)();
         const profileDocument = await db.collection("USER_PROFILE").doc(token.profileDocId).get();
         const profile = profileDocument.data();
         if (!profileDocument.exists || !profile || profile.active !== true) {
@@ -1148,7 +1727,7 @@ app.get("/api/outlets/:outletId/reports/stock", async (req, res) => {
         return;
     }
     try {
-        const db = getFirestoreDb();
+        const db = (0, firebase_js_2.getFirestoreDb)();
         const profileDocument = await db.collection("USER_PROFILE").doc(token.profileDocId).get();
         const profile = profileDocument.data();
         if (!profileDocument.exists || !profile || profile.active !== true) {
@@ -1235,7 +1814,7 @@ app.get("/api/outlets/:outletId/reports/gst", async (req, res) => {
     const taxTypeFilter = typeof req.query.taxType === "string" ? req.query.taxType.trim().toLowerCase() : "";
     const search = typeof req.query.search === "string" ? req.query.search.trim().toLowerCase() : "";
     try {
-        const db = getFirestoreDb();
+        const db = (0, firebase_js_2.getFirestoreDb)();
         const profileDocument = await db.collection("USER_PROFILE").doc(token.profileDocId).get();
         const profile = profileDocument.data();
         if (!profileDocument.exists || !profile || profile.active !== true) {
@@ -1380,7 +1959,7 @@ app.get("/api/outlets/:outletId/reports/products", async (req, res) => {
     const shiftId = typeof req.query.shiftId === "string" ? req.query.shiftId.trim().toLowerCase() : "";
     const search = typeof req.query.search === "string" ? req.query.search.trim().toLowerCase() : "";
     try {
-        const db = getFirestoreDb();
+        const db = (0, firebase_js_2.getFirestoreDb)();
         const profileDocument = await db.collection("USER_PROFILE").doc(token.profileDocId).get();
         const profile = profileDocument.data();
         if (!profileDocument.exists || !profile || profile.active !== true) {
@@ -1508,7 +2087,7 @@ app.get("/api/outlets/:outletId/reports/shifts", async (req, res) => {
     const shiftNo = typeof req.query.shiftNo === "string" ? Number.parseInt(req.query.shiftNo, 10) : Number.NaN;
     const deviceId = typeof req.query.deviceId === "string" ? req.query.deviceId.trim().toLowerCase() : "";
     try {
-        const db = getFirestoreDb();
+        const db = (0, firebase_js_2.getFirestoreDb)();
         const profileDocument = await db.collection("USER_PROFILE").doc(token.profileDocId).get();
         const profile = profileDocument.data();
         if (!profileDocument.exists || !profile || profile.active !== true) {
@@ -1674,10 +2253,10 @@ app.delete("/api/categories/:id", (req, res) => {
 app.listen(PORT, () => {
     console.log(`Web POS API running on http://localhost:${PORT}`);
     try {
-        getFirebaseApp();
+        (0, firebase_js_2.getFirebaseApp)();
     }
     catch (error) {
-        logFirebaseConfigurationError(error, "startup");
+        (0, firebase_js_2.logFirebaseConfigurationError)(error, "startup");
     }
 });
 //# sourceMappingURL=server.js.map

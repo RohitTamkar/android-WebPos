@@ -1,10 +1,19 @@
 import { loadProductList, ProductListRequestError } from './productListApi.ts';
 import { DeleteConfirmation } from './DeleteConfirmation.tsx';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Layers, Package, Pencil, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
+import { CheckCircle2, ChevronDown, FileSpreadsheet, ImagePlus, Images, MoreVertical, Package, PackageCheck, Pencil, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
 import type { OutletSummary } from './OutletSelectionPage.tsx';
 import './ProductsPage.css';
 import { AddProductForm } from './AddProductForm.tsx';
+import { ProductImageUpload } from './ProductImageUpload.tsx';
+import { productImageReference } from './imageApi.ts';
+import { ProductImageBatch } from './ProductImageBatch.tsx';
+import { ProductImagePinDialog, type ImageAction } from './ProductImagePinDialog.tsx';
+import { ProductImageRemoval } from './ProductImageRemoval.tsx';
+import { ProductFlagsBulkUpdate } from './ProductFlagsBulkUpdate.tsx';
+import { ProductExcelDialog } from './ProductExcelDialog.tsx';
+import { ProductServicePointAssignment } from './ProductServicePointAssignment.tsx';
+import { ProductTaxSettings } from './ProductTaxSettings.tsx';
 
 interface ProductDocument {
   documentId: string;
@@ -26,20 +35,62 @@ function productText(value: unknown): string {
   return typeof value === 'string' || typeof value === 'number' ? String(value) : '—';
 }
 
-export function ProductsPage({ outlet, token, onSessionExpired }: ProductsPageProps) {
+function TaxSuccessConfirmation({ onClose }: { onClose: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const ok = useRef<HTMLButtonElement>(null);
+  useEffect(() => { dialog.current?.showModal(); ok.current?.focus(); }, []);
+  return <dialog ref={dialog} className="category-modal product-tax-success" role="alertdialog" aria-modal="true"
+    aria-labelledby="tax-success-title" aria-describedby="tax-success-description"
+    onCancel={event => { event.preventDefault(); onClose(); }}>
+    <CheckCircle2 className="tax-success-icon" size={52} aria-hidden="true" />
+    <h2 id="tax-success-title">Success</h2>
+    <p id="tax-success-description">Tax updated successfully.</p>
+    <button ref={ok} type="button" className="btn-primary-add" aria-label="Dismiss tax success message" onClick={onClose}>OK</button>
+  </dialog>;
+}
+
+export function ProductsPage(props: ProductsPageProps) {
+  return <ProductsPageContent key={`${props.outlet.id}:${props.token}`} {...props} />;
+}
+
+function ProductsPageContent({ outlet, token, onSessionExpired }: ProductsPageProps) {
   const [products, setProducts] = useState<ProductDocument[]>([]);
   const [categories, setCategories] = useState<ProductCategory[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [openMenu, setOpenMenu] = useState<'images' | 'more' | null>(null);
+  const headerActions = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!openMenu) return;
+    const close = (event: MouseEvent | KeyboardEvent) => {
+      if (event instanceof KeyboardEvent ? event.key === 'Escape' : !headerActions.current?.contains(event.target as Node)) setOpenMenu(null);
+    };
+    document.addEventListener('mousedown', close); document.addEventListener('keydown', close);
+    return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', close); };
+  }, [openMenu]);
+  const toggleMenu = (menu: 'images' | 'more') => setOpenMenu(value => value === menu ? null : menu);
   const [error, setError] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
   const [search, setSearch] = useState('');
   const [addOpen, setAddOpen] = useState(false);
+  const [pendingImageAction, setPendingImageAction] = useState<ImageAction | null>(null);
+  const [imageGrant, setImageGrant] = useState('');
+  const requestImageAction = (action: ImageAction) => {
+    if (pendingImageAction) return;
+    setOpenMenu(null); setImageGrant(''); setPendingImageAction(action);
+  };
+  const [imageBatchMode, setImageBatchMode] = useState<'bulk' | 'shared' | null>(null);
+  const [flagsOpen, setFlagsOpen] = useState(false);
+  const [taxOpen, setTaxOpen] = useState(false);
+  const [taxSuccess, setTaxSuccess] = useState(false);
+  const [assignmentOpen, setAssignmentOpen] = useState(false);
+  const [excelOpen, setExcelOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<ProductDocument | null>(null);
   const [notice, setNotice] = useState('');
   const [noticeIsError, setNoticeIsError] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [imageRemovalTargets, setImageRemovalTargets] = useState<ProductDocument[] | null>(null);
   const deleteBusy = useRef(false);
 
   useEffect(() => {
@@ -57,7 +108,8 @@ export function ProductsPage({ outlet, token, onSessionExpired }: ProductsPagePr
           loadProductList<ProductCategory>(`${base}/categories`, token, controller.signal, 'categories'),
         ]);
         if (!controller.signal.aborted) {
-          setProducts(loadedProducts);
+          // Keep products created while the initial list request was still loading.
+          setProducts(current => [...new Map([...loadedProducts, ...current].map(product => [product.documentId, product])).values()]);
           setCategories(loadedCategories);
         }
       } catch (requestError) {
@@ -89,19 +141,57 @@ export function ProductsPage({ outlet, token, onSessionExpired }: ProductsPagePr
     finally { deleteBusy.current = false; setDeleting(false); setDeleteTarget(null); }
   };
 
+  const categoryProducts = useMemo(() => products.filter(product =>
+    selectedCategory === null || product.fields.category === selectedCategory
+  ), [products, selectedCategory]);
+
   const visibleProducts = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return products.filter(product =>
-      (selectedCategory === null || product.fields.category === selectedCategory)
-      && (!query || ['name', 'code', 'description'].some(field =>
-        productText(product.fields[field]).toLowerCase().includes(query))));
-  }, [products, selectedCategory, search]);
+    return categoryProducts.filter(product =>
+      !query || ['name', 'code', 'regionalName'].some(field =>
+        productText(product.fields[field]).toLowerCase().includes(query)))
+      .sort((left, right) => productText(left.fields.code).localeCompare(
+        productText(right.fields.code), 'en', { numeric: true, sensitivity: 'base' }
+      ));
+  }, [categoryProducts, search]);
+
+  if (imageBatchMode) return <ProductImageBatch key={`${outlet.id}:${imageBatchMode}`} mode={imageBatchMode} products={products}
+    outletId={outlet.id} token={token} imageGrant={imageGrant} onSessionExpired={onSessionExpired} onClose={() => { setImageBatchMode(null); setImageGrant(''); }}
+    onSaved={(documentId, image) => setProducts(current => current.map(product => product.documentId === documentId
+      ? { ...product, fields: { ...product.fields, image } } : product))} />;
+
+  if ((taxOpen || flagsOpen || assignmentOpen) && (loading || error)) return <section className="products-page-shell" aria-busy={loading}>
+    <div className="products-header"><h1>{taxOpen ? 'Tax Settings' : flagsOpen ? 'Update Stockable & Weighable' : 'Assign Service Point'}</h1>
+      <button type="button" className="btn-secondary" onClick={() => { setTaxOpen(false); setFlagsOpen(false); setAssignmentOpen(false); }}>Cancel</button></div>
+    <div className="products-empty" role={error ? 'alert' : 'status'}>{error || 'Loading products and categories…'}
+      {error && <button type="button" className="btn-secondary" onClick={() => setReloadKey(value => value + 1)}>Retry</button>}</div>
+  </section>;
+
+  if (taxOpen) return <ProductTaxSettings products={products} categories={categories} outletId={outlet.id} token={token} onSessionExpired={onSessionExpired}
+    onSaved={updated => setProducts(current => current.map(product => product.documentId === updated.documentId ? updated : product))}
+    onClose={updatedCount => {
+      setTaxOpen(false);
+      if (updatedCount) setTaxSuccess(true);
+    }} />;
+
+  if (flagsOpen) return <ProductFlagsBulkUpdate key={outlet.id} products={products} outletId={outlet.id} token={token} onSessionExpired={onSessionExpired}
+    onSaved={updated => setProducts(current => current.map(product => product.documentId === updated.documentId ? updated : product))}
+    onClose={updatedCount => {
+      setFlagsOpen(false);
+      if (updatedCount) {
+        setNoticeIsError(false);
+        setNotice(`Stockable & Weighable updated successfully for ${updatedCount} ${updatedCount === 1 ? 'product' : 'products'}.`);
+        setReloadKey(value => value + 1);
+      }
+    }} />;
 
   if (editTarget) return <AddProductForm key={`edit-${editTarget.documentId}`} outletId={outlet.id} token={token}
     initialCategory={selectedCategory} product={editTarget} onSessionExpired={onSessionExpired}
     onCancel={() => setEditTarget(null)} onCreated={updated => {
       setProducts(current => current.map(product => product.documentId === updated.documentId ? updated : product));
-      setEditTarget(null); setNoticeIsError(false); setNotice('Product updated successfully.');
+      const imageChanged = productImageReference(updated.fields) !== productImageReference(editTarget.fields);
+      setEditTarget(null); setNoticeIsError(false);
+      setNotice(`Product updated successfully.${imageChanged ? productImageReference(updated.fields) ? ' Image uploaded successfully.' : ' Image removed successfully.' : ''}`);
     }} />;
 
   if (addOpen) return (<AddProductForm key={outlet.id} outletId={outlet.id} token={token} initialCategory={selectedCategory}
@@ -109,12 +199,40 @@ export function ProductsPage({ outlet, token, onSessionExpired }: ProductsPagePr
           setProducts(current => [...current.filter(existing => existing.documentId !== product.documentId), product]);
           setAddOpen(false);
           setNoticeIsError(false);
-          setNotice('Product saved successfully.');
+          setNotice(`Product saved successfully.${productImageReference(product.fields) ? ' Image uploaded successfully.' : ''}`);
         }} />
   );
 
   return (
     <section className="products-page-shell" aria-label="Products" aria-busy={loading}>
+      {assignmentOpen && <ProductServicePointAssignment outletId={outlet.id} token={token} categories={categories} onSessionExpired={onSessionExpired}
+        onCancel={() => setAssignmentOpen(false)} onAssigned={result => {
+          setProducts(current => current.map(product => product.fields.category === result.categoryId ? { ...product, fields: { ...product.fields, kitchenId: result.servicePointId } } : product));
+          setAssignmentOpen(false); setNoticeIsError(false);
+          setNotice(`Successfully assigned the service point to ${result.assignedCount} ${result.assignedCount === 1 ? 'product' : 'products'}.`);
+        }} />}
+      {excelOpen && <ProductExcelDialog outletId={outlet.id} token={token} onSessionExpired={onSessionExpired}
+        onCancel={() => setExcelOpen(false)} onComplete={message => { setExcelOpen(false); setNoticeIsError(false); setNotice(message); }} />}
+      {pendingImageAction && <ProductImagePinDialog key={`${outlet.id}:${token}:${pendingImageAction}`} outletId={outlet.id} token={token} action={pendingImageAction}
+        onSessionExpired={onSessionExpired} onCancel={() => setPendingImageAction(null)} onVerified={grant => {
+          const action = pendingImageAction; setPendingImageAction(null); setImageGrant(grant);
+          if (action === 'remove') setImageRemovalTargets(products.filter(product => productImageReference(product.fields)));
+          else setImageBatchMode(action);
+        }} />}
+      {imageRemovalTargets && <ProductImageRemoval products={imageRemovalTargets} outletId={outlet.id} outletName={outlet.name} token={token} imageGrant={imageGrant}
+        onSessionExpired={onSessionExpired} onRemoved={documentId => setProducts(current => current.map(product => {
+          if (product.documentId !== documentId) return product;
+          const fields = { ...product.fields }; delete fields.imagePath;
+          if (typeof fields.image === 'string') fields.image = null;
+          return { ...product, fields };
+        }))} onClose={summary => {
+          setImageRemovalTargets(null); setImageGrant('');
+          if (summary) {
+            setNoticeIsError(summary.failed > 0);
+            setNotice(summary.failed ? `${summary.removed} product images removed; ${summary.failed} failed. Review the failed products and try again.`
+              : `Product images removed successfully from ${summary.removed} products.`);
+          }
+        }} />}
       {deleteTarget && <DeleteConfirmation kind="product" name={deleteTarget.name} busy={deleting}
         onCancel={() => { if (!deleteBusy.current) setDeleteTarget(null); }} onConfirm={() => void deleteProduct(deleteTarget.id)} />}
       <div className="products-header">
@@ -122,24 +240,44 @@ export function ProductsPage({ outlet, token, onSessionExpired }: ProductsPagePr
           <h1><Package size={22} />Products</h1>
           <p>Manage your product inventory and details.</p>
         </div>
-        <div className="products-header-actions">
-          <button type="button" className="products-add" disabled={loading || !!error} onClick={() => { setNotice(''); setAddOpen(true); }}><Plus size={15} />Add New Product</button>
+        <div className="products-header-actions" ref={headerActions}>
+          <div className="products-primary-actions">
+            <button type="button" className="products-add" onClick={() => { setNotice(''); setAddOpen(true); }}><Plus size={15} />Add New Product</button>
+            <div className="products-menu-anchor">
+              <button type="button" className="products-images-toggle" aria-label="Product image options" aria-haspopup="menu" aria-expanded={openMenu === 'images'}
+                aria-controls="products-images-menu" onClick={() => toggleMenu('images')}><Images size={15} />Product Images<ChevronDown size={14} className="products-chevron" /></button>
+              {openMenu === 'images' && <div id="products-images-menu" className="products-options-menu" role="menu">
+                <button type="button" role="menuitem" disabled={loading || !!error} onClick={() => requestImageAction('bulk')}>
+                  <span className="products-menu-icon"><ImagePlus size={15} /></span>Bulk Upload Images</button>
+                <button type="button" role="menuitem" disabled={loading || !!error} onClick={() => requestImageAction('shared')}>
+                  <span className="products-menu-icon"><Images size={15} /></span>One Image for Multiple Products</button>
+                <div className="products-menu-divider" role="separator" />
+                <button type="button" role="menuitem" className="danger" disabled={loading || !!error || !products.some(product => productImageReference(product.fields))}
+                  onClick={() => requestImageAction('remove')}><span className="products-menu-icon"><Trash2 size={15} /></span>Remove all product images</button>
+              </div>}
+            </div>
+          </div>
           <button type="button" className="products-refresh" disabled={loading} onClick={() => setReloadKey(value => value + 1)}>
             <RefreshCw size={15} />Refresh
           </button>
+          <div className="products-menu-anchor">
+            <button type="button" className="products-menu-toggle" aria-label="More options" aria-haspopup="menu" aria-expanded={openMenu === 'more'}
+              aria-controls="products-more-menu" onClick={() => toggleMenu('more')}><MoreVertical size={17} /></button>
+            {openMenu === 'more' && <div id="products-more-menu" className="products-options-menu" role="menu">
+              <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); setNotice(''); setExcelOpen(true); }}>
+                <span className="products-menu-icon"><FileSpreadsheet size={15} /></span>Save Excel</button>
+              <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); setNotice(''); setFlagsOpen(true); }}>
+                <span className="products-menu-icon"><PackageCheck size={15} /></span>Update Stockable &amp; Weighable</button>
+              <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); setNotice(''); setAssignmentOpen(true); }}>
+                <span className="products-menu-icon"><PackageCheck size={15} /></span>Assign Service Point</button>
+              <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); setNotice(''); setTaxSuccess(false); setTaxOpen(true); }}>
+                <span className="products-menu-icon"><PackageCheck size={15} /></span>Tax</button>
+            </div>}
+          </div>
         </div>
       </div>
       {notice && <p className={noticeIsError ? 'category-form-error' : 'products-notice'} role={noticeIsError ? 'alert' : 'status'}>{notice}</p>}
-      <div className="products-summary" aria-label="Product totals">
-        <article className="products-summary-card">
-          <span className="products-summary-icon categories"><Layers size={20} aria-hidden="true" /></span>
-          <div><span className="products-summary-label">Total Categories</span><strong>{loading || error ? '—' : categories.length}</strong></div>
-        </article>
-        <article className="products-summary-card">
-          <span className="products-summary-icon items"><Package size={20} aria-hidden="true" /></span>
-          <div><span className="products-summary-label">Total Products</span><strong>{loading || error ? '—' : products.length}</strong></div>
-        </article>
-      </div>
+      {taxSuccess && <TaxSuccessConfirmation onClose={() => setTaxSuccess(false)} />}
       <nav className="products-category-tabs" aria-label="Product categories">
         <button type="button" className={selectedCategory === null ? 'selected' : ''}
           aria-pressed={selectedCategory === null} onClick={() => setSelectedCategory(null)}>All</button>
@@ -153,9 +291,13 @@ export function ProductsPage({ outlet, token, onSessionExpired }: ProductsPagePr
       <div className="products-toolbar">
         <label className="products-search">
           <Search size={16} aria-hidden="true" />
-          <input type="search" aria-label="Search products" placeholder="Search product name, code, description…"
+          <input type="search" aria-label="Search products" placeholder="Search product name, code, regional name…"
             value={search} onChange={event => setSearch(event.target.value)} />
         </label>
+        <article className="products-summary-card">
+          <span className="products-summary-icon items"><Package size={20} aria-hidden="true" /></span>
+          <div><span className="products-summary-label">Total Products</span><strong aria-live="polite">{loading || error ? '—' : categoryProducts.length}</strong></div>
+        </article>
         <select aria-label="Filter by category" value={selectedCategory ?? ''}
           onChange={event => setSelectedCategory(event.target.value || null)}>
           <option value="">All Categories</option>
@@ -170,18 +312,25 @@ export function ProductsPage({ outlet, token, onSessionExpired }: ProductsPagePr
       ) : (
         <div className="products-table-card" role="region" aria-label="Product list" tabIndex={0}>
           <table className="products-table">
-            <thead><tr><th>Code</th><th>Product Name</th><th>Description</th><th>Sale Price</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Code</th><th>Product Name</th><th>Regional Name</th><th>Sale Price</th><th>Image Preview</th><th className="products-actions-heading">Actions</th></tr></thead>
             <tbody>
               {visibleProducts.map(product => (
                 <tr key={product.documentId}>
                   <td><span className="products-code">{productText(product.fields.code)}</span></td>
                   <td className="products-name">{productText(product.fields.name)}</td>
-                  <td>{productText(product.fields.description)}</td>
+                  <td>{productText(product.fields.regionalName) || '—'}</td>
                   <td><span className="products-price"><Package size={15} />₹ {productText(product.fields.price)}</span></td>
-                  <td><span className="products-status">{typeof product.fields.inActive === 'boolean'
-                    ? product.fields.inActive ? 'Inactive' : 'Active'
-                    : typeof product.fields.active === 'boolean' ? product.fields.active ? 'Active' : 'Inactive' : '—'}</span></td>
-                  <td>{productText(product.fields.createdAt)}</td>
+                  <td><ProductImageUpload name={productText(product.fields.name)} outletId={outlet.id} documentId={product.documentId}
+                    image={productImageReference(product.fields)} token={token} paused={!!pendingImageAction} onSessionExpired={onSessionExpired}
+                    onUploadStart={() => setNotice('')}
+                    onSaved={image => {
+                      setNoticeIsError(false); setNotice('Image uploaded successfully.');
+                      setProducts(current => current.map(item => {
+                        if (item.documentId !== product.documentId) return item;
+                        const fields: Record<string, unknown> = { ...item.fields, image }; delete fields.imagePath;
+                        return { ...item, fields };
+                      }));
+                    }} /></td>
                   <td><div className="products-row-actions">
                     <button type="button" disabled={deleting} aria-label="Edit product" title="Edit product" onClick={() => { setNotice(''); setEditTarget(product); }}><Pencil size={14} /></button>
                     <button type="button" disabled={deleting} aria-label="Delete product" title="Delete product" onClick={() => setDeleteTarget({ id: product.documentId, name: productText(product.fields.name) })}><Trash2 size={14} /></button>

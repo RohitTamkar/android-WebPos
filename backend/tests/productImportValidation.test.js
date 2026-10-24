@@ -323,4 +323,19 @@ test('reconciliation preserves a legacy stored numeric string without modifying 
     assert.equal(result.existing, 1);
     assert.deepEqual(store.get(id), before);
 });
+test('lowercase padded headers and padded cells import clean values with existing references', () => {
+    const padded = row.map(value => `  ${value}  `);
+    const headers = PRODUCT_COLUMNS.map(header => ` ${header.toLowerCase().replaceAll(' ', '  ')} `);
+    const csv = [headers.join(','), padded.join(',')].join('\n');
+    const result = validateProductImport(csv, categories, taxes);
+    assert.equal(result.canUpload, true);
+    const fields = result.documents[0].fields;
+    assert.equal(fields.name, row[0]);
+    assert.equal(fields.regionalName, row[1]);
+    assert.equal(fields.category, categories[0].id);
+    assert.equal(fields.price, 20);
+    assert.equal(fields.barcode, '0001');
+    assert.equal(fields.weighable, false);
+    assert.equal(fields.unitId, 2);
+});
 //# sourceMappingURL=productImportValidation.test.js.map

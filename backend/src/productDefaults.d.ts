@@ -12,6 +12,8 @@ export interface NewProductFields {
     unitId: number;
     weighable: boolean;
     stockable: boolean;
+    wholeSaleAmount?: number | undefined;
+    onlinePrice?: number | undefined;
 }
 export declare function productFields(input: NewProductFields, code: number, barcode?: string): {
     active: boolean;
