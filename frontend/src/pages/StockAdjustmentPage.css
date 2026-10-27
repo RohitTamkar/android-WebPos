@@ -24,3 +24,52 @@
 .stock-confirm-dialog > div { display: flex; justify-content: end; gap: 12px; margin-top: 24px; }
 .stock-adjustment-page :is(button, input, select):focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
 @media (max-width: 680px) { .stock-choice-grid { grid-template-columns: 1fr; } .stock-choice-card { min-height: 230px; padding: 24px; } .stock-entry-footer .stock-primary { width: 100%; } }
+
+/* Stock movement workspace; shared receipt forms keep their own layout. */
+.stock-movement-page .devices-heading p { margin-bottom: 0; }
+.stock-movement-page .stock-workspace { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: var(--card); box-shadow: 0 3px 14px rgb(15 23 42 / 3%); }
+.stock-movement-page .stock-workspace-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 22px 24px; }
+.stock-movement-page .stock-workspace-heading h2 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -.02em; }
+.stock-movement-page .stock-workspace-heading p { margin: 6px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.stock-movement-page .stock-entry-toolbar { margin: 0 24px 22px; padding: 18px; border: 1px solid var(--line); border-radius: 10px; background: color-mix(in srgb, var(--workspace) 55%, var(--card)); }
+.stock-movement-page .stock-entry-toolbar label { position: relative; flex: 0 1 420px; color: var(--ink); font-size: 12px; font-weight: 500; }
+.stock-movement-page .stock-label-hint { position: absolute; top: 0; right: 0; color: var(--muted); font-size: 11px; font-weight: 400; }
+.stock-movement-page .stock-entry-toolbar :is(select, input) { font-size: 13px; font-weight: 400; min-height: 44px; }
+.stock-movement-page .stock-entry-toolbar > button { min-height: 44px; }
+.stock-movement-page .stock-entry-table { border: 0; border-top: 1px solid var(--line); border-radius: 0; }
+.stock-movement-page .stock-entry-table table { min-width: 640px; }
+.stock-movement-page .stock-entry-table th { padding: 14px 24px; font-size: 11px; }
+.stock-movement-page .stock-entry-table td { padding: 18px 24px; vertical-align: middle; }
+.stock-movement-page .stock-entry-table td:last-child, .stock-movement-page .stock-entry-table th:last-child { width: 62px; text-align: right; }
+.stock-movement-page .stock-product-code { display: inline-block; padding: 4px 8px; border: 1px solid var(--line); border-radius: 5px; background: var(--workspace); font-size: 11px; color: var(--muted); }
+.stock-movement-page .stock-product-name { font-size: 13px; font-weight: 600; }
+.stock-movement-page .stock-current-quantity { font-variant-numeric: tabular-nums; font-weight: 600; }
+.stock-movement-page .stock-entry-table input { font-size: 13px; }
+.stock-movement-page .stock-entry-table input[type=number] { width: 140px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stock-movement-page input[aria-invalid=true] { border-color: var(--red); }
+.stock-movement-page .stock-entry-table td:last-child button { padding: 9px; background: transparent; color: var(--muted); border-color: transparent; }
+.stock-movement-page .stock-entry-table td:last-child button:hover:not(:disabled) { background: color-mix(in srgb, var(--red) 7%, var(--card)); color: var(--red); }
+.stock-movement-page .stock-empty { min-height: 245px; align-content: center; gap: 10px; padding: 20px; }
+.stock-movement-page .stock-empty-icon { display: grid; place-items: center; width: 58px; height: 58px; margin-bottom: 6px; border: 1px solid color-mix(in srgb, var(--blue) 15%, var(--line)); border-radius: 16px; background: color-mix(in srgb, var(--blue) 5%, var(--card)); color: var(--blue); }
+.stock-movement-page .stock-empty-icon svg { width: 27px; height: 27px; stroke-width: 1.5; }
+.stock-movement-page .stock-empty strong { color: var(--ink); font-size: 15px; font-weight: 600; }
+.stock-movement-page .stock-empty p { margin: 0; font-size: 13px; line-height: 1.5; }
+.stock-movement-page .stock-empty > span { font-size: 11px; }
+.stock-movement-page .stock-entry-footer { justify-content: flex-end; padding: 20px 24px; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--workspace) 30%, var(--card)); }
+.stock-movement-page .stock-primary { min-height: 44px; font-size: 13px; }
+.stock-movement-page .stock-primary:hover:not(:disabled) { filter: brightness(.96); }
+.stock-movement-page .stock-save-note { display: flex; align-items: center; justify-content: center; gap: 7px; margin: -4px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.stock-movement-page .stock-save-note svg { flex-shrink: 0; width: 15px; height: 15px; }
+@media (max-width: 680px) {
+  .stock-movement-page .stock-workspace-heading { align-items: flex-start; padding: 18px 16px; }
+  .stock-movement-page .stock-workspace-heading p { max-width: 200px; }
+  .stock-movement-page .stock-entry-toolbar { margin: 0 16px 18px; padding: 14px; gap: 14px; }
+  .stock-movement-page .stock-entry-toolbar label { flex-basis: 100%; }
+  .stock-movement-page .stock-entry-toolbar > button { width: 100%; }
+  .stock-movement-page .stock-entry-table :is(th, td) { padding: 14px 16px; }
+  .stock-movement-page .stock-entry-table:has(.stock-empty) table { min-width: 0; }
+  .stock-movement-page .stock-entry-table:has(.stock-empty) thead { display: none; }
+  .stock-movement-page .stock-empty { min-height: 230px; padding-inline: 0; }
+  .stock-movement-page .stock-entry-footer { padding: 18px 16px; }
+  .stock-movement-page .stock-save-note { align-items: flex-start; padding-inline: 12px; }
+}

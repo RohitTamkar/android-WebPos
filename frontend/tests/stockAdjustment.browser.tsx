@@ -15,8 +15,11 @@ window.fetch = async (url, init) => {
   const path = String(url);
   assert(new Headers(init?.headers).get('Authorization') === 'Bearer token', 'Requests retain authorization');
   if (path.endsWith('/products')) return Response.json({ success: true, data: [
-    { documentId: 'p1', fields: { code: 15, name: 'Tea', currentStock: stock } },
-    { documentId: 'p2', fields: { code: 20, name: 'Coffee', currentStock: 3 } },
+    { documentId: 'p1', fields: { code: 15, name: 'Tea', currentStock: stock, stockable: true } },
+    { documentId: 'hidden', fields: { name: 'Not stockable', currentStock: 500, stockable: false } },
+    { documentId: 'missing', fields: { name: 'Missing stockable flag', currentStock: 20 } },
+    { documentId: 'string-flag', fields: { name: 'String flag', currentStock: 20, stockable: 'true' } },
+    { documentId: 'p2', fields: { code: 20, name: 'Coffee', currentStock: 3, stockable: true } },
   ] });
   if (path.includes('/reports/stock-movements?')) return Response.json({ success: true, data: { movements: [{ items: [{ remark: 'Damaged' }] }] } });
   if (path.endsWith('/stock-adjustments')) {
@@ -29,7 +32,8 @@ window.fetch = async (url, init) => {
       committed.add(body.requestId);
       if (loseResponse) { loseResponse = false; throw new Error('Lost response after saving'); }
     }
-    return Response.json({ success: true, data: { documentId: `stock-${body.requestId}` } });
+    assert(/^[A-Za-z0-9]{20}$/.test(body.requestId), 'Stock confirmations use an auto-ID-format document ID');
+    return Response.json({ success: true, data: { documentId: body.requestId } });
   }
   throw new Error(`Unexpected request: ${path}`);
 };
@@ -51,13 +55,21 @@ async function inputValue(selector: string, value: string) {
 void (async () => {
   await until(() => document.querySelector('[aria-label="Go ahead with Stock In"]'), 'stock choices');
   if (location.hash === '#preview') {
-    document.getElementById('test-results')!.textContent = JSON.stringify({ passed: ['Stock In and Out layout preview'] });
+    document.documentElement.dataset.theme = 'light';
+    document.body.style.background = 'var(--workspace)';
+    document.body.style.padding = '24px';
+    document.querySelector<HTMLButtonElement>('[aria-label="Go ahead with Stock In"]')!.click();
+    await until(() => document.querySelector('select option[value="p1"]'), 'stock entry preview');
+    document.getElementById('test-results')!.textContent = JSON.stringify({ passed: ['Stock In layout preview'] });
     return;
   }
   assert(writes.length === 0, 'Opening makes no writes');
   document.querySelector<HTMLButtonElement>('[aria-label="Go ahead with Stock In"]')!.click();
   await until(() => document.querySelector('select option[value="p1"]'), 'products');
-  await inputValue('[aria-label="Select product"]', 'p1'); document.querySelector<HTMLButtonElement>('[aria-label="Add selected product"]')!.click();
+  assert(!document.querySelector('.stock-direction-badge, .stock-entry-summary'), 'Stock In badges and totals are removed');
+  assert(!document.querySelector('select option[value="hidden"], select option[value="missing"], select option[value="string-flag"]'), 'Only boolean stockable products are selectable');
+  assert(!document.querySelector('[aria-label="Add selected product"]'), 'Separate add-product button is removed');
+  await inputValue('[aria-label="Select product"]', 'p1');
   await until(() => document.querySelector('[aria-label="Quantity for Tea"]'), 'stock entry row');
   await inputValue('[aria-label="Quantity for Tea"]', '2.5');
   assert(document.querySelector('tbody')?.textContent?.includes('10'), 'Current stock is shown');
@@ -77,9 +89,12 @@ void (async () => {
   button('Back').click(); await pause();
   document.querySelector<HTMLButtonElement>('[aria-label="Go ahead with Stock Out"]')!.click();
   await until(() => document.querySelector('#stock-remark-options option'), 'existing remark suggestions');
-  await inputValue('[aria-label="Select product"]', 'p1'); await inputValue('[aria-label="Select remark"]', 'Damaged');
-  document.querySelector<HTMLButtonElement>('[aria-label="Add selected product"]')!.click();
+  assert(!document.querySelector('.stock-direction-badge, .stock-entry-summary'), 'Stock Out badges and totals are removed');
+  assert(!document.querySelector('select option[value="hidden"], select option[value="missing"], select option[value="string-flag"]'), 'Only boolean stockable products are selectable');
+  await inputValue('[aria-label="Select product"]', 'p1');
   await until(() => document.querySelector('[aria-label="Quantity for Tea"]'), 'stock out row');
+  assert(button('Remove Stock').disabled, 'Stock Out adds immediately but still requires a remark before saving');
+  await inputValue('[aria-label="Remark for Tea"]', 'Damaged');
   await inputValue('[aria-label="Quantity for Tea"]', '20'); assert(button('Remove Stock').disabled, 'Insufficient stock cannot be submitted');
   await inputValue('[aria-label="Quantity for Tea"]', '2');
   button('Remove Stock').click(); await until(() => document.querySelector('dialog[open]'), 'stock out review');
@@ -91,8 +106,10 @@ void (async () => {
   assert(stock === 10.5 && writes[2]!.items[0]!.remark === 'Damaged', 'Stock out sends its remark and subtracts quantity');
   passed.push('Stock Out uses existing remark suggestions, rejects insufficient stock, and saves only after confirmation');
   await until(() => document.querySelector('select option[value="p2"]'), 'refreshed products');
-  await inputValue('[aria-label="Select product"]', 'p2'); document.querySelector<HTMLButtonElement>('[aria-label="Add selected product"]')!.click();
+  await inputValue('[aria-label="Select remark"]', 'Damaged');
+  await inputValue('[aria-label="Select product"]', 'p2');
   await until(() => document.querySelector('[aria-label="Remove Coffee"]'), 'added draft row');
+  assert(document.querySelector<HTMLInputElement>('[aria-label="Remark for Coffee"]')!.value === 'Damaged', 'A preselected remark is copied to the new stock-out row');
   document.querySelector<HTMLButtonElement>('[aria-label="Remove Coffee"]')!.click(); await pause();
   assert(button('Remove Stock').disabled && writes.length === 3, 'Deleting a draft row does not change saved stock');
   passed.push('Removing a draft row is local; selected outlet data is refreshed after successful saves');

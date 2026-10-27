@@ -65,7 +65,8 @@ void (async () => {
   assert(parseFloat(getComputedStyle(search).minHeight) >= 40 && getComputedStyle(search).outlineStyle === 'none', 'Search has a comfortable height and no nested input outline');
   for (const item of ['Save Excel', 'Update Stockable & Weighable', 'Assign Service Point']) {
     await click(document.querySelector<HTMLButtonElement>('[aria-label="More options"]')!);
-    assert([...document.querySelectorAll<HTMLButtonElement>('#products-more-menu [role="menuitem"]')].every(node => !node.disabled), 'All menu actions are available during loading');
+    assert([...document.querySelectorAll<HTMLButtonElement>('#products-more-menu [role="menuitem"]')].filter(node => node.textContent?.trim() !== 'Delete All').every(node => !node.disabled), 'Non-destructive menu actions are available during loading');
+    assert(button('Delete All').disabled, 'Delete All stays disabled until products load');
     await click(button(item));
     assert(item === 'Save Excel' ? document.querySelector('dialog[open]') : document.querySelector('[role="status"]')?.textContent?.includes('Loading products'), `${item} opens before products finish loading`);
     await click(button('Cancel'));

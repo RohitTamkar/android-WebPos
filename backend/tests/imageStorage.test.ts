@@ -1,3 +1,4 @@
+import { PRODUCT_IMAGE_MAX_BYTES } from '../../shared/productImageLimits.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Bucket } from '@google-cloud/storage';
@@ -92,7 +93,7 @@ test('declared type mismatch and oversized files are rejected', async () => {
   const db = fakeDatabase(new Map([['OUTLET/outlet/PRODUCT/product', new FakeDocument({ name: 'Tea' })]]));
   const { bucket, objects } = fakeBucket();
   await assert.rejects(uploadMasterImage(db, bucket, 'products', 'outlet', 'product', png, 'image/jpeg'), /does not match/);
-  await assert.rejects(uploadMasterImage(db, bucket, 'products', 'outlet', 'product', Buffer.alloc(30 * 1024 + 1), 'image/png'), /30 KB or smaller/);
+  await assert.rejects(uploadMasterImage(db, bucket, 'products', 'outlet', 'product', Buffer.alloc(PRODUCT_IMAGE_MAX_BYTES + 1), 'image/png'), /512 KB or smaller/);
   assert.equal(objects.size, 0);
 });
 
@@ -311,14 +312,14 @@ test('new product upload creates only image and no imagePath', async () => {
   assert.equal(typeof saved.image, 'string'); assert.equal(saved.imagePath, undefined);
 });
 
- test('product upload accepts the exact 30 KB boundary; reading larger legacy images remains supported', async () => {
+ test('product upload accepts the exact safety boundary above the preferred 30 KB target; reading larger legacy images remains supported', async () => {
   const document = new FakeDocument({ image: 'legacy.png' });
   const db = fakeDatabase(new Map([['OUTLET/outlet/PRODUCT/product', document]]));
   const { bucket, objects } = fakeBucket();
   const large = Buffer.concat([png, Buffer.alloc(30 * 1024)]);
   objects.set('product_images/legacy.png', large);
   assert.equal((await readMasterImage(db, bucket, 'products', 'outlet', 'product')).bytes.length, large.length);
-  const boundary = Buffer.concat([png, Buffer.alloc(30 * 1024 - png.length)]);
+  const boundary = Buffer.concat([png, Buffer.alloc(PRODUCT_IMAGE_MAX_BYTES - png.length)]);
   const result = await uploadMasterImage(db, bucket, 'products', 'outlet', 'product', boundary, 'image/png');
-  assert.equal(objects.get(`product_images/${result.image}`)?.length, 30 * 1024);
+  assert.equal(objects.get(`product_images/${result.image}`)?.length, PRODUCT_IMAGE_MAX_BYTES);
 });

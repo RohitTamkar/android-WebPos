@@ -35,6 +35,10 @@ const options = [
 export function UploadExcelPage({ outletId, token, onSessionExpired }: { outletId: string; token: string; onSessionExpired: () => void }) {
   const [selectedOption, setSelectedOption] = useState<(typeof options)[number] | null>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const closePreview = () => {
+    dialogRef.current?.close();
+    setSelectedOption(null);
+  };
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -78,8 +82,8 @@ export function UploadExcelPage({ outletId, token, onSessionExpired }: { outletI
           <button type="button" className="upload-excel-close-icon" aria-label="Close information" onClick={() => setSelectedOption(null)}><X size={18} /></button>
         </div>
         <p id="upload-excel-dialog-description">{selectedOption?.title === 'Upload Excel' ? 'Select a spreadsheet to validate and preview. Upload adds new products to the selected outlet.' : selectedOption?.message}</p>
-        {selectedOption?.title === 'Upload Excel' && <CsvUploadPreview key="standard" outletId={outletId} token={token} onSessionExpired={onSessionExpired} onSuccessAcknowledged={() => setSelectedOption(null)} />}
-        {selectedOption?.title === 'Upload with Premises' && <CsvUploadPreview key="premises" mode="premises" outletId={outletId} token={token} onSessionExpired={onSessionExpired} onSuccessAcknowledged={() => setSelectedOption(null)} />}
+        {selectedOption?.title === 'Upload Excel' && <CsvUploadPreview key="standard" outletId={outletId} token={token} onSessionExpired={onSessionExpired} onSuccessAcknowledged={closePreview} />}
+        {selectedOption?.title === 'Upload with Premises' && <CsvUploadPreview key="premises" mode="premises" outletId={outletId} token={token} onSessionExpired={onSessionExpired} onSuccessAcknowledged={closePreview} />}
         {selectedOption?.title === 'Excel Sheet Instructions' && <ExcelSheetInstructions />}
         <div className="upload-excel-dialog-actions">
           <button type="button" onClick={() => setSelectedOption(null)}>Close</button>

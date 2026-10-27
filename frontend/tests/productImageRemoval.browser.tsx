@@ -78,8 +78,7 @@ async function openImageAction(label: string) {
     const transfer = new DataTransfer(); transfer.items.add(new File([png], 'tea.png', { type: 'image/png' })); picker.files = transfer.files;
     picker.dispatchEvent(new Event('change', { bubbles: true }));
     await wait(() => button('Save') && !button('Save').disabled, 'crop loaded'); button('Save').click();
-    await wait(() => button('Upload processed image'), 'processed review'); button('Upload processed image').click();
-    await wait(() => document.querySelector('.product-image-upload [role="status"]')?.textContent === 'Product image uploaded successfully.', 'inline success confirmation');
+    await wait(() => !document.querySelector('.product-crop-dialog, .product-image-upload-status') && document.querySelector('tbody img'), 'image upload finished');
     const search = document.querySelector<HTMLInputElement>('input[aria-label="Search products"]')!;
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, 'Tea A'); search.dispatchEvent(new Event('input', { bubbles: true }));
     await wait(() => document.querySelectorAll('tbody tr').length === 1, 'filtered Products');
@@ -108,7 +107,7 @@ async function openImageAction(label: string) {
     document.querySelector<HTMLButtonElement>('[aria-label="Product image options"]')!.click();
     await wait(() => button('Remove all product images'), 'menu after removal');
     assert(button('Remove all product images').disabled, 'Remove-all action is disabled when no images remain');
-    assert(document.querySelector('.products-notice')?.textContent?.includes('Product images removed successfully'), 'Final confirmation remains visible on Products');
+    assert(!document.querySelector('.products-notice'), 'Completed removal leaves no success banner');
     assert(products.every(product => !product.fields.image && !product.fields.imagePath), 'Filename and legacy references are cleared');
     assert(before === JSON.stringify(products.map(product => [product.documentId, product.fields.name, product.fields.price, product.fields.currentStock])), 'All products and unrelated values are preserved');
     passed.push('Upload confirmation; outlet-wide removal confirmation and cancellation; partial results; failed-only retry; concurrent-image protection; cleared previews; preserved product data');

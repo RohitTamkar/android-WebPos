@@ -1,3 +1,4 @@
+import { useTimedNotice } from '../utils/useTimedNotice.ts';
 import { EditCategoryForm, CategoryUpdatedPopup } from './EditCategoryForm.tsx';
 import { DeleteConfirmation } from './DeleteConfirmation.tsx';
 import { DeleteAllError, deleteAllRecords } from './deleteAllApi.ts';
@@ -86,15 +87,14 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
   const [reloadKey, setReloadKey] = useState(0);
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'All' | 'Active' | 'Inactive'>('All');
   const [addOpen, setAddOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<Category | null>(null);
   const [updatedPopup, setUpdatedPopup] = useState(false);
   const [draft, setDraft] = useState({ name: '', regionalName: '' });
   const [saving, setSaving] = useState(false);
   const [addError, setAddError] = useState('');
-  const [notice, setNotice] = useState('');
   const [noticeIsError, setNoticeIsError] = useState(false);
+  const [notice, setNotice] = useTimedNotice(!noticeIsError);
   const [deleting, setDeleting] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const deleteBusy = useRef(false);
@@ -145,10 +145,9 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
         cat.name.toLowerCase().includes(query) ||
         cat.code.toLowerCase().includes(query) ||
         cat.regionalName.toLowerCase().includes(query);
-      const matchesStatus = statusFilter === 'All' || cat.status === statusFilter;
-      return matchesSearch && matchesStatus;
+      return matchesSearch;
     });
-  }, [categories, searchQuery, statusFilter]);
+  }, [categories, searchQuery]);
 
   // Statistics
   const stats = useMemo(() => {
@@ -231,7 +230,6 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
       setCategories(current => [...current, toCategory(added, current.length)]
         .sort((left, right) => (Number(left.code) || 0) - (Number(right.code) || 0)));
       setSearchQuery('');
-      setStatusFilter('All');
       setAddOpen(false);
       setNoticeIsError(false);
       setNotice('Category added successfully.');
@@ -317,17 +315,6 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
           </div>
         </div>
 
-        <div className="toolbar-filters">
-          <select
-            className="filter-select"
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as 'All' | 'Active' | 'Inactive')}
-          >
-            <option value="All">All Statuses ({categories.length})</option>
-            <option value="Active">Active ({stats.active})</option>
-            <option value="Inactive">Inactive ({stats.inactive})</option>
-          </select>
-        </div>
       </div>
 
       {/* Categories Table */}
@@ -432,8 +419,8 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
                     <FolderPlus size={36} className="empty-state-icon" />
                     <h3>No categories found</h3>
                     <p>
-                      {searchQuery || statusFilter !== 'All'
-                        ? 'Try adjusting your search query or status filter.'
+                      {searchQuery
+                        ? 'Try adjusting your search query.'
                         : 'This outlet has no categories in Firebase yet.'}
                     </p>
                   </div>

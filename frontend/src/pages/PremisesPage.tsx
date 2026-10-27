@@ -1,3 +1,4 @@
+import { useTimedNotice } from '../utils/useTimedNotice.ts';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { ArrowLeft, Plus, RefreshCw, Search, Store, X } from 'lucide-react';
 import type { OutletSummary } from './OutletSelectionPage.tsx';
@@ -31,7 +32,7 @@ export function PremisesPage({ outlet, token, onSessionExpired, onClose }: {
   const [editing, setEditing] = useState<Premise | null>(null);
   const [saveError, setSaveError] = useState('');
   const [saving, setSaving] = useState(false);
-  const [notice, setNotice] = useState('');
+  const [notice, setNotice] = useTimedNotice();
   const busy = useRef(false);
   const requests = useRef<AbortController | null>(null);
   const endpoint = `/api/outlets/${encodeURIComponent(outlet.id)}/premises`;

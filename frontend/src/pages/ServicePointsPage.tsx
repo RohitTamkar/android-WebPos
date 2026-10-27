@@ -1,3 +1,4 @@
+import { useTimedNotice } from '../utils/useTimedNotice.ts';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Plus, Printer, RefreshCw, Save, Trash2, X } from 'lucide-react';
 import { DeleteConfirmation } from './DeleteConfirmation.tsx';
@@ -21,7 +22,7 @@ export function ServicePointsPage(props: Props) {
 }
 function ServicePointsContent({ outlet, token, onSessionExpired }: Props) {
   const [rows, setRows] = useState<ServicePoint[] | null>(null);
-  const [error, setError] = useState(''), [notice, setNotice] = useState('');
+  const [error, setError] = useState(''), [notice, setNotice] = useTimedNotice();
   const [reload, setReload] = useState(0);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [editing, setEditing] = useState<ServicePoint | null>(null);

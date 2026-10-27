@@ -11,13 +11,13 @@ function isolatedFirestore() {
   const versions = new Map<string, number>();
   let retries = 0;
   type Ref = { outlet: string; id: string };
-  type Query = { outlet: string; doc: (id: string) => Ref };
+  type Query = { outlet: string; kind: string; doc: (id: string) => Ref };
   const db = {
     collection(name: string) {
       assert.equal(name, 'OUTLET');
       return { doc: (outlet: string) => ({ collection: (name: string): Query => {
-        assert.equal(name, 'PRODUCT');
-        return { outlet, doc: id => ({ outlet, id }) };
+        assert.ok(['PRODUCT', 'CATEGORY'].includes(name));
+        return { outlet, kind: name, doc: id => ({ outlet, id }) };
       } }) };
     },
     async runTransaction<T>(callback: (transaction: {
@@ -30,6 +30,7 @@ function isolatedFirestore() {
         const result = await callback({
           get: async query => {
             assert.equal(writes.length, 0, 'all reads must precede writes');
+            if (query.kind === 'CATEGORY') return { docs: [{ id: 'cat', data: () => ({ name: 'Food', categoryNo: 1 }) }] };
             readOutlet = query.outlet;
             version = versions.get(readOutlet) ?? 0;
             const docs = [...(outlets.get(readOutlet) ?? [])].map(([id, fields]) => ({ id, data: () => ({ ...fields }) }));
@@ -50,7 +51,17 @@ function isolatedFirestore() {
   };
   return { db: db as unknown as Firestore, outlets, retries: () => retries };
 }
-const document = (name: string): ImportDocument => ({ rowNumber: 2, sourceIdentity: name, fields: { name, code: 1, barcode: '0001' } });
+const document = (name: string): ImportDocument => ({ rowNumber: 2, sourceIdentity: name, fields: { name, code: 1, category: 'cat', barcode: '0001' } });
+
+test('a missing category blocks product creation before product allocation or writes', async () => {
+  let writes = 0, reads = 0;
+  const reference = { doc: () => reference, collection: () => reference };
+  const db = { collection: () => reference, runTransaction: async (work: any) => work({
+    get: async () => { reads++; return { docs: [] }; }, create: () => { writes++; },
+  }) } as unknown as Firestore;
+  await assert.rejects(createProductImportChunk(db, 'outlet', [document('A')]), /category no longer exists/);
+  assert.equal(writes, 0); assert.equal(reads, 1);
+});
 
 test('concurrent empty-outlet imports retry the query; stale preview cannot commit duplicate code', async () => {
   const mock = isolatedFirestore();

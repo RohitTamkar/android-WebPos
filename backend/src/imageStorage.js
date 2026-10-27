@@ -1,32 +1,16 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.ImageStorageError = exports.PRODUCT_IMAGE_MAX_BYTES = void 0;
-exports.detectImage = detectImage;
-exports.isMasterImagePath = isMasterImagePath;
-exports.productImageStoragePath = productImageStoragePath;
-exports.resolveProductImagePath = resolveProductImagePath;
-exports.verifyStorageCopy = verifyStorageCopy;
-exports.verifyExistingProductImage = verifyExistingProductImage;
-exports.copyMasterImageFromPath = copyMasterImageFromPath;
-exports.verifyMasterImageCopy = verifyMasterImageCopy;
-exports.storeVerifiedProductImage = storeVerifiedProductImage;
-exports.uploadMasterImage = uploadMasterImage;
-exports.readMasterImage = readMasterImage;
-exports.copyMasterImage = copyMasterImage;
-exports.removeMasterImage = removeMasterImage;
-const node_crypto_1 = require("node:crypto");
-const firestore_1 = require("firebase-admin/firestore");
+import { createHash, randomUUID } from 'node:crypto';
+import { FieldValue } from 'firebase-admin/firestore';
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-exports.PRODUCT_IMAGE_MAX_BYTES = 30 * 1024;
+import { PRODUCT_IMAGE_MAX_BYTES } from '../../shared/productImageLimits.js';
+export { PRODUCT_IMAGE_MAX_BYTES };
 const mimeExtension = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
-class ImageStorageError extends Error {
+export class ImageStorageError extends Error {
     status;
     constructor(status, message) {
         super(message);
         this.status = status;
     }
 }
-exports.ImageStorageError = ImageStorageError;
 function validateRecordIds(outletId, documentId) {
     for (const id of [outletId, documentId]) {
         if (!id || id.length > 200 || id.includes('/') || id === '.' || id === '..') {
@@ -34,7 +18,7 @@ function validateRecordIds(outletId, documentId) {
         }
     }
 }
-function detectImage(bytes) {
+export function detectImage(bytes) {
     if (bytes.length > MAX_IMAGE_BYTES)
         throw new ImageStorageError(413, 'Images must be 5 MB or smaller.');
     if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])))
@@ -86,16 +70,16 @@ function isExpectedPath(path, prefix) {
     const suffix = path.slice(prefix.length);
     return new RegExp('^[a-f0-9-]+\\.(?:jpg|png|webp)$').exec(suffix)?.[0] === suffix;
 }
-function isMasterImagePath(path, kind, outletId, documentId) {
+export function isMasterImagePath(path, kind, outletId, documentId) {
     return typeof path === 'string' && isExpectedPath(path, expectedPath(kind, outletId, documentId));
 }
 // Product documents store a filename; the authenticated backend resolves it in the
 // configured bucket. Scoped Web POS paths remain supported for legacy records.
-function productImageStoragePath(image) {
+export function productImageStoragePath(image) {
     return typeof image === 'string' && /^[a-z0-9][a-z0-9_-]{0,199}\.(?:png|jpe?g|webp)$/i.exec(image)?.[0] === image
         ? `product_images/${image}` : undefined;
 }
-function resolveProductImagePath(fields, outletId, documentId) {
+export function resolveProductImagePath(fields, outletId, documentId) {
     const image = fields.image;
     if (image !== undefined && image !== null && image !== '') {
         return isMasterImagePath(image, 'products', outletId, documentId) ? image : productImageStoragePath(image);
@@ -113,7 +97,7 @@ async function readStorageImage(bucket, imagePath) {
     return { bytes, contentType: detectImage(bytes) };
 }
 function masterImageCopyPath(kind, sourceOutletId, sourceDocumentId, sourceImagePath, destinationOutletId, destinationDocumentId, contentType) {
-    const imageId = (0, node_crypto_1.createHash)('sha256').update(JSON.stringify([
+    const imageId = createHash('sha256').update(JSON.stringify([
         'master-image-transfer-v1', kind, sourceOutletId, sourceDocumentId,
         destinationOutletId, destinationDocumentId, sourceImagePath,
     ])).digest('hex');
@@ -126,7 +110,7 @@ function isPreconditionFailure(error) {
     const value = error;
     return value.code === 412 || value.statusCode === 412;
 }
-async function verifyStorageCopy(bucket, imagePath, expectedBytes, expectedType) {
+export async function verifyStorageCopy(bucket, imagePath, expectedBytes, expectedType) {
     try {
         const [metadata] = await bucket.file(imagePath).getMetadata();
         if (metadata.contentType !== expectedType || Number(metadata.size) !== expectedBytes.length)
@@ -138,7 +122,7 @@ async function verifyStorageCopy(bucket, imagePath, expectedBytes, expectedType)
         return false;
     }
 }
-async function verifyExistingProductImage(bucket, image) {
+export async function verifyExistingProductImage(bucket, image) {
     const path = productImageStoragePath(image);
     if (!path)
         return false;
@@ -151,7 +135,7 @@ async function verifyExistingProductImage(bucket, image) {
     }
 }
 // Copies one already-validated source reference without overwriting a destination object.
-async function copyMasterImageFromPath(bucket, kind, sourceOutletId, sourceDocumentId, sourceImagePath, destinationOutletId, destinationDocumentId) {
+export async function copyMasterImageFromPath(bucket, kind, sourceOutletId, sourceDocumentId, sourceImagePath, destinationOutletId, destinationDocumentId) {
     validateRecordIds(sourceOutletId, sourceDocumentId);
     validateRecordIds(destinationOutletId, destinationDocumentId);
     if (!isReadableImagePath(sourceImagePath, kind, sourceOutletId, sourceDocumentId)) {
@@ -184,7 +168,7 @@ async function copyMasterImageFromPath(bucket, kind, sourceOutletId, sourceDocum
     }
     return { imagePath: destinationImagePath, sourceImagePath, contentType: source.contentType };
 }
-async function verifyMasterImageCopy(bucket, kind, sourceOutletId, sourceDocumentId, sourceImagePath, destinationOutletId, destinationDocumentId, destinationImagePath) {
+export async function verifyMasterImageCopy(bucket, kind, sourceOutletId, sourceDocumentId, sourceImagePath, destinationOutletId, destinationDocumentId, destinationImagePath) {
     if (!isReadableImagePath(sourceImagePath, kind, sourceOutletId, sourceDocumentId)
         || !isReadableImagePath(destinationImagePath, kind, destinationOutletId, destinationDocumentId))
         return false;
@@ -199,7 +183,7 @@ async function verifyMasterImageCopy(bucket, kind, sourceOutletId, sourceDocumen
 function reference(db, outletId, collection, documentId) {
     return db.collection('OUTLET').doc(outletId).collection(collection).doc(documentId);
 }
-async function storeVerifiedProductImage(bucket, filename, bytes, contentType) {
+export async function storeVerifiedProductImage(bucket, filename, bytes, contentType) {
     const path = productImageStoragePath(filename);
     if (!path)
         throw new ImageStorageError(400, 'Invalid generated image filename.');
@@ -224,12 +208,12 @@ async function storeVerifiedProductImage(bucket, filename, bytes, contentType) {
         throw new ImageStorageError(503, 'The uploaded image could not be verified. Product references were not changed. Retry this operation.');
     }
 }
-async function uploadMasterImage(db, bucket, kind, outletId, documentId, bytes, declaredType, operation) {
+export async function uploadMasterImage(db, bucket, kind, outletId, documentId, bytes, declaredType, operation) {
     validateRecordIds(outletId, documentId);
     if (!Buffer.isBuffer(bytes) || !bytes.length)
         throw new ImageStorageError(400, 'Choose an image before uploading.');
-    if (kind === 'products' && bytes.length > exports.PRODUCT_IMAGE_MAX_BYTES)
-        throw new ImageStorageError(413, 'Product images must be 30 KB or smaller.');
+    if (kind === 'products' && bytes.length > PRODUCT_IMAGE_MAX_BYTES)
+        throw new ImageStorageError(413, 'Product images must be 512 KB or smaller.');
     const detectedType = detectImage(bytes);
     if (declaredType !== detectedType)
         throw new ImageStorageError(415, 'The image content does not match its declared file type.');
@@ -242,8 +226,8 @@ async function uploadMasterImage(db, bucket, kind, outletId, documentId, bytes, 
         || (operation.expectedReference !== null && (typeof operation.expectedReference !== 'string' || operation.expectedReference.length > 600)))) {
         throw new ImageStorageError(400, 'Invalid image upload operation.');
     }
-    const name = operation ? (0, node_crypto_1.createHash)('sha256').update(JSON.stringify(['single-product-image-v1', outletId, documentId,
-        operation.requestId, (0, node_crypto_1.createHash)('sha256').update(bytes).digest('hex')])).digest('hex') : (0, node_crypto_1.randomUUID)();
+    const name = operation ? createHash('sha256').update(JSON.stringify(['single-product-image-v1', outletId, documentId,
+        operation.requestId, createHash('sha256').update(bytes).digest('hex')])).digest('hex') : randomUUID();
     const filename = `${name}.${mimeExtension[detectedType]}`;
     if (operation) {
         const checkReference = (snapshot) => {
@@ -288,7 +272,7 @@ async function uploadMasterImage(db, bucket, kind, outletId, documentId, bytes, 
     }
     try {
         await documentRef.update(kind === 'products'
-            ? { image: filename, ...(existing.get('imagePath') !== undefined ? { imagePath: firestore_1.FieldValue.delete() } : {}) }
+            ? { image: filename, ...(existing.get('imagePath') !== undefined ? { imagePath: FieldValue.delete() } : {}) }
             : { imagePath });
     }
     catch {
@@ -298,7 +282,7 @@ async function uploadMasterImage(db, bucket, kind, outletId, documentId, bytes, 
     }
     return kind === 'products' ? { image: filename } : { imagePath };
 }
-async function readMasterImage(db, bucket, kind, outletId, documentId, authorizedSnapshot) {
+export async function readMasterImage(db, bucket, kind, outletId, documentId, authorizedSnapshot) {
     validateRecordIds(outletId, documentId);
     const collection = kind === 'products' ? 'PRODUCT' : 'CATEGORY';
     const snapshot = authorizedSnapshot ?? await reference(db, outletId, collection, documentId).get();
@@ -322,11 +306,11 @@ async function readMasterImage(db, bucket, kind, outletId, documentId, authorize
         throw new ImageStorageError(404, 'The saved image is unavailable.');
     }
 }
-async function copyMasterImage(db, bucket, kind, sourceOutletId, sourceDocumentId, destinationOutletId, destinationDocumentId) {
+export async function copyMasterImage(db, bucket, kind, sourceOutletId, sourceDocumentId, destinationOutletId, destinationDocumentId) {
     const source = await readMasterImage(db, bucket, kind, sourceOutletId, sourceDocumentId);
     return (await copyMasterImageFromPath(bucket, kind, sourceOutletId, sourceDocumentId, source.imagePath, destinationOutletId, destinationDocumentId)).imagePath;
 }
-async function removeMasterImage(db, kind, outletId, documentId, reviewed) {
+export async function removeMasterImage(db, kind, outletId, documentId, reviewed) {
     validateRecordIds(outletId, documentId);
     const collection = kind === 'products' ? 'PRODUCT' : 'CATEGORY';
     const documentRef = reference(db, outletId, collection, documentId);
@@ -352,7 +336,7 @@ async function removeMasterImage(db, kind, outletId, documentId, reviewed) {
             if (typeof current.get('image') === 'string')
                 changes.image = null;
             if (typeof current.get('imagePath') === 'string')
-                changes.imagePath = firestore_1.FieldValue.delete();
+                changes.imagePath = FieldValue.delete();
             if (Object.keys(changes).length)
                 transaction.update(documentRef, changes);
         });
@@ -363,7 +347,7 @@ async function removeMasterImage(db, kind, outletId, documentId, reviewed) {
         throw new ImageStorageError(404, 'This record no longer exists.');
     const changes = {};
     if (typeof snapshot.get('imagePath') === 'string')
-        changes.imagePath = firestore_1.FieldValue.delete();
+        changes.imagePath = FieldValue.delete();
     if (kind === 'products' && typeof snapshot.get('image') === 'string')
         changes.image = null;
     if (Object.keys(changes).length)

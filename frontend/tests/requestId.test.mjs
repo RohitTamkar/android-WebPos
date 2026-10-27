@@ -1,6 +1,19 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createRequestId } from '../src/utils/requestId.ts';
+import { createFirestoreDocumentId, createRequestId } from '../src/utils/requestId.ts';
+
+test('stock document IDs use 20 random alphanumeric characters', () => {
+  const ids = Array.from({ length: 100 }, () => createFirestoreDocumentId());
+  assert.ok(ids.every(id => /^[A-Za-z0-9]{20}$/.test(id)));
+  assert.equal(new Set(ids).size, ids.length);
+});
+
+test('document ID generation rejects bytes outside the unbiased character range', () => {
+  let calls = 0;
+  const id = createFirestoreDocumentId({ getRandomValues: bytes => bytes.fill(calls++ === 0 ? 255 : 61) });
+  assert.equal(id, '99999999999999999999');
+  assert.equal(calls, 2);
+});
 
 const uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 

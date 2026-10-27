@@ -92,7 +92,7 @@ void (async () => {
   assert(scroll.clientWidth <= modal.clientWidth && scroll.scrollWidth > scroll.clientWidth, 'all columns remain readable inside a bounded horizontal scroller');
 
   assert(button('Confirm Upload').disabled, 'confirmation remains disabled without verified premises persistence');
-  assert(document.querySelector('.upload-excel-preview-dialog')?.textContent?.includes('price columns are mapped'), 'model limitation is disclosed');
+  assert(document.querySelector('.upload-excel-preview-dialog')?.textContent?.includes('Saving premises requires a supported premises mapping'), 'existing premises limitation is disclosed');
   button('Next').click(); await pause();
   assert(document.querySelectorAll('tbody tr').length === 2, 'preview paginates remaining rows');
   button('Remove File').click(); select(PREMISES_TEMPLATE_COLUMNS);

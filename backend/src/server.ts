@@ -14,6 +14,8 @@ import { readUserAccount, updateUserAccount, UserAccountError } from "./userAcco
 import { updateOutletProduct } from "./productUpdate.js";
 import { updateProductPrices } from "./productPriceUpdate.js";
 import { saveStockAdjustment } from "./stockAdjustment.js";
+import { loadGoodsReceived, saveGoodsReceived } from './goodsReceived.js';
+import { createOutletSupplier } from './suppliers.js';
 import { assignProductImage } from "./productImageAssignments.js";
 import { createOutletPremise, listOutletPremises, updateOutletPremise } from "./premises.js";
 import { ANDROID_TAX_OPTIONS } from "../../shared/androidTaxes.js";
@@ -34,7 +36,10 @@ import { ImageStorageError, readMasterImage, removeMasterImage, uploadMasterImag
 import { summarizeDay } from "./daywiseSummary.js";
 import { stockDirection, stockMovementRecord } from "./stockMovementReport.js";
 import { isStockTransfer, stockTransferRecord } from "./stockTransferReport.js";
-import { checkAuthorizedProductImport, persistProductImport, nextProductCode, PRODUCT_IMPORT_WRITES_ENABLED } from "./productImportValidation.js";
+import { checkAuthorizedProductImport, nextProductCode, PRODUCT_IMPORT_WRITES_ENABLED } from "./productImportValidation.js";
+import { persistProductImportWithCategories } from './productImportFlow.js';
+import { resolveImportCategories } from './productImportCategories.js';
+import { categoryCreationFields, categoryCreationSchema } from './categoryCreation.js';
 import { createProductImportChunk } from "./productImportWriter.js";
 import { ProductImportQuotaError } from "./productImportQuota.js";
 import { createFileProductImportQuota } from "./productImportQuotaFile.js";
@@ -53,7 +58,7 @@ const TRANSFER_JWT_SECRET = process.env.MASTER_TRANSFER_SECRET || process.env.JW
 
 app.use(cors());
 app.use("/api/outlets/:outletId/products/import", express.json({ limit: "12mb" }));
-app.use('/api/outlets/:outletId/product-image-assignments', express.json({ limit: '160kb' }));
+app.use('/api/outlets/:outletId/product-image-assignments', express.json({ limit: '800kb' }));
 app.use(express.json());
 // All outlet-scoped routes in this Express backend belong to Web POS.
 // Checks never renew leases; dashboard polling therefore cannot keep a session active.
@@ -1554,6 +1559,48 @@ app.get("/api/outlets/:outletId/products/:documentId/edit-options", async (req: 
   } catch (error) { productCreationResponse(res, error); }
 });
 
+app.post('/api/outlets/:outletId/suppliers', async (req: Request, res: Response): Promise<void> => {
+  const token = readAccessToken(req);
+  if (!token) { res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' }); return; }
+  try {
+    const outletId = String(req.params.outletId ?? '');
+    const context = getFirestoreRestContext();
+    const saved = await createOutletSupplier(premisesTransactionRunner(context.database, context.accessToken),
+      outletId, token.profileDocId, assignedOutletIds, req.body);
+    const nextDocumentId = getFirestoreDb().collection('OUTLET').doc(outletId).collection('SUPPLIER').doc().id;
+    res.json({ success: true, data: { ...saved, nextDocumentId } });
+  } catch (error) {
+    res.status(error instanceof ProductCreationError ? error.status : 503).json({ success: false,
+      message: error instanceof ProductCreationError ? error.message : 'The supplier save could not be confirmed. Retry the same confirmation.' });
+  }
+});
+
+app.get('/api/outlets/:outletId/goods-received', async (req: Request, res: Response): Promise<void> => {
+  const token = readAccessToken(req);
+  if (!token) { res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' }); return; }
+  try {
+    res.json({ success: true, data: await loadGoodsReceived(getFirestoreDb(), String(req.params.outletId ?? ''),
+      token.profileDocId, assignedOutletIds) });
+  } catch (error) {
+    res.status(error instanceof ProductCreationError ? error.status : 503).json({ success: false,
+      message: error instanceof ProductCreationError ? error.message : 'Unable to load goods receipts.' });
+  }
+});
+
+app.post('/api/outlets/:outletId/goods-received', async (req: Request, res: Response): Promise<void> => {
+  const token = readAccessToken(req);
+  if (!token) { res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' }); return; }
+  try {
+    const context = getFirestoreRestContext();
+    const data = await saveGoodsReceived(premisesTransactionRunner(context.database, context.accessToken),
+      String(req.params.outletId ?? ''), token.profileDocId, assignedOutletIds, req.body);
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(error instanceof ProductCreationError ? error.status : 503).json({ success: false,
+      message: error instanceof ProductCreationError ? error.message : 'The receipt save could not be confirmed. Retry the same confirmation.' });
+  }
+});
+
 app.post("/api/outlets/:outletId/stock-adjustments", async (req: Request, res: Response): Promise<void> => {
   res.setHeader('Cache-Control', 'no-store');
   const token = readAccessToken(req);
@@ -1747,7 +1794,8 @@ app.post(["/api/outlets/:outletId/products/import", "/api/outlets/:outletId/prod
       || codes.some((code, index) => code !== checked.body.data!.documents[index]!.fields.code)) {
       res.status(409).json({ success: false, message: "Search Codes changed or were not previewed. Review the updated preview before uploading again." }); return;
     }
-    const result = await persistProductImport(outletId, checked.body.data!.documents, {
+    const result = await persistProductImportWithCategories(outletId, token!.profileDocId, req.body.source, codes, productImportDependencies(),
+      () => resolveImportCategories(getFirestoreDb(), outletId, token!.profileDocId, assignedOutletIds, req.body.source), {
       enabled: PRODUCT_IMPORT_WRITES_ENABLED,
       readExisting: async id => (await getFirestoreDb().collection("OUTLET").doc(id).collection("PRODUCT").get()).docs
         .map(document => ({ id: document.id, fields: document.data() })),
@@ -1778,12 +1826,7 @@ app.post("/api/outlets/:outletId/categories", async (req: Request, res: Response
   }
   const outletParam = req.params.outletId;
   const outletId = Array.isArray(outletParam) ? outletParam[0] : outletParam;
-  const input = z.object({
-    categoryNo: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-    name: z.string().trim().min(1).max(200),
-    regionalName: z.string().trim().max(200).default(""),
-    dayType: z.string().trim().max(100).default(""),
-  }).safeParse(req.body);
+  const input = categoryCreationSchema.safeParse(req.body);
   if (!outletId || !input.success) {
     res.status(400).json({ success: false, message: "A category name and positive whole category number are required." });
     return;
@@ -1811,15 +1854,7 @@ app.post("/api/outlets/:outletId/categories", async (req: Request, res: Response
       });
       if (exists) return true;
       // Match the existing CATEGORY document format; UI metadata is never stored.
-      transaction.create(reference, {
-        categoryNo: input.data.categoryNo,
-        dayType: input.data.dayType,
-        id: reference.id,
-        name: input.data.name,
-        onlineSynced: false,
-        regionalName: input.data.regionalName,
-        selected: false,
-      });
+      transaction.create(reference, categoryCreationFields(reference.id, input.data));
       return false;
     });
     if (duplicate) {
@@ -1840,8 +1875,10 @@ app.post("/api/outlets/:outletId/categories", async (req: Request, res: Response
   }
 });
 
-// Stock report: current stock count for the stockable products of an assigned outlet (read-only).
+// Current balances are authoritative; movement history must not be applied again.
+// Only explicitly stockable products participate in the inventory report.
 app.get("/api/outlets/:outletId/reports/stock", async (req: Request, res: Response): Promise<void> => {
+  res.setHeader('Cache-Control', 'no-store');
   const token = readAccessToken(req);
   if (!token) {
     res.status(401).json({ success: false, message: "Your session has expired. Please sign in again." });

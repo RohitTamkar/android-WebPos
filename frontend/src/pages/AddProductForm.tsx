@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { createRequestId } from '../utils/requestId.ts';
 import { productFormErrors, productFormPayload, productDraftFromFields, productUpdatePayload, type ProductDraft } from './productForm.ts';
-import { productPremisesPrices } from './productPremisesPrices.ts';
+import { productPremisesPrices, productPremisesPriceKey } from './productPremisesPrices.ts';
 import { ANDROID_TAX_OPTIONS } from '../../../shared/androidTaxes.ts';
 import { LocalImagePicker } from './LocalImagePicker.tsx';
 import { masterImageUrl, productImageReference, removeMasterImage, uploadMasterImage } from './imageApi.ts';
@@ -15,6 +15,7 @@ interface Options {
   taxes: { percent: number; index: number; type: number }[]; units: { id: number; name: string }[];
   premises?: { id: string; name: string }[];
   servicePointName?: string;
+  servicePoints?: { id: string; name: string }[];
 }
 interface Props {
   outletId: string; token: string; initialCategory: string | null; product?: CreatedProduct;
@@ -57,6 +58,16 @@ export function AddProductForm({ outletId, token, initialCategory, onCancel, onC
         if (controller.signal.aborted) return;
         if (!response.ok || !result.data) throw new Error(result.message || 'Unable to load product options.');
         const config = result.data;
+        if (product) {
+          const pointsResponse = await fetch(`/api/outlets/${encodeURIComponent(outletId)}/service-points`, {
+            headers: { Authorization: `Bearer ${token}` }, signal: controller.signal,
+          });
+          if (pointsResponse.status === 401) { onSessionExpired(); return; }
+          const pointsResult = await pointsResponse.json() as { data?: { servicePoints: { documentId: string; name: string }[] }; message?: string };
+          if (controller.signal.aborted) return;
+          if (!pointsResponse.ok || !pointsResult.data) throw new Error(pointsResult.message || 'Unable to load service points.');
+          config.servicePoints = pointsResult.data.servicePoints.map(point => ({ id: point.documentId, name: point.name }));
+        }
         setOptions(config);
         if (product && config.product) {
           setStoredProduct(config.product);
@@ -128,11 +139,11 @@ export function AddProductForm({ outletId, token, initialCategory, onCancel, onC
     finally { savingRef.current = false; setSaving(false); }
   };
   const issue = (key: string) => errors[key] ? <span id={`product-${key}-error`} className="category-form-error" role="alert">{errors[key]}</span> : null;
-  const text = (key: 'name' | 'price' | 'mrpPrice' | 'costPrice' | 'regionalName' | 'discount' | 'shortName' | 'hsnCode' | 'wholeSaleAmount' | 'onlinePrice', label: string, numeric = false) => (
+  const text = (key: 'name' | 'price' | 'mrpPrice' | 'costPrice' | 'regionalName' | 'discount' | 'shortName' | 'hsnCode' | 'wholeSaleAmount' | 'onlinePrice' | 'barcode', label: string, numeric = false) => (
     <div className="form-field" key={key}><label htmlFor={`product-${key}`}>{label}</label>
       <input ref={key === 'name' ? nameRef : undefined} id={`product-${key}`} type={numeric ? 'number' : 'text'}
         {...(numeric ? { min: 0, step: 'any', ...(key === 'discount' ? { max: 100 } : {}) } : { maxLength: 200 })}
-        disabled={saving || (!!product && !options) || (!!product && (key === 'wholeSaleAmount' || key === 'onlinePrice') && draft[key] === undefined)} value={draft[key] ?? ''} aria-invalid={!!errors[key]} aria-describedby={errors[key] ? `product-${key}-error` : undefined}
+        disabled={saving || (!!product && !options) || (!!product && key === 'wholeSaleAmount' && draft[key] === undefined)} value={draft[key] ?? ''} aria-invalid={!!errors[key]} aria-describedby={errors[key] ? `product-${key}-error` : undefined}
         onChange={event => update(key, event.target.value)} />{issue(key)}</div>
   );
   const storedText = (key: string) => {
@@ -170,11 +181,18 @@ export function AddProductForm({ outletId, token, initialCategory, onCancel, onC
           </div>
           <label className="product-checkbox product-wide"><input type="checkbox" checked={allDefaultPrices} disabled />Default price set to all premises</label>
           {text('onlinePrice', 'Online Price', true)}
-          {premisePrices.map(({ name, label, price }) => <div className="form-field" key={name}><label>{label}
-            <input aria-label={label} readOnly value={typeof price === 'number' || typeof price === 'string' ? String(price) : ''} placeholder={`Default: ${draft.price || '0'}`} /></label></div>)}
-          <p className="product-field-note product-wide">Premises prices show saved values. Fields without saved settings are shown for reference.</p>
+          {premisePrices.map(({ name, label, price }) => {
+            const key = productPremisesPriceKey(name, priceTable);
+            return <div className="form-field" key={name}><label>{label}
+              <input aria-label={label} type="number" min="0" step="any" readOnly={!product} disabled={saving || !options}
+                aria-invalid={!!errors[`premises:${key}`] || !!errors.premisesPrices}
+                value={draft.premisesPrices?.[key] ?? (typeof price === 'number' || typeof price === 'string' ? String(price) : '')}
+                placeholder={`Default: ${draft.price || '0'}`} onChange={event => update('premisesPrices', { ...draft.premisesPrices, [key]: event.target.value })} /></label>
+              {issue(`premises:${key}`)}</div>;
+          })}
+          {issue('premisesPrices')}
           <div className="form-field"><label htmlFor="product-code">Search Code</label><input id="product-code" readOnly value={options?.code ?? storedText('code')} placeholder="Loading…" /></div>
-          {savedDetail('barcode', 'Barcode')}
+          {product ? text('barcode', 'Barcode') : savedDetail('barcode', 'Barcode')}
           <fieldset className="product-inventory product-wide"><legend>Track inventory for this item</legend>
             <label className="product-checkbox"><input type="checkbox" aria-label="Stockable" checked={draft.stockable} disabled={saving || (!!product && !options)} onChange={event => update('stockable', event.target.checked)} />Stockable</label>
           </fieldset>
@@ -198,8 +216,14 @@ export function AddProductForm({ outletId, token, initialCategory, onCancel, onC
                 </select>{issue('unitId')}
               </div>
           <div className="form-field"><label htmlFor="product-kitchenId">Service Point</label>
-            <input id="product-kitchenId" readOnly value={options?.servicePointName ?? ''}
-              placeholder={storedText('kitchenId') ? (options ? 'Service point unavailable' : 'Loading…') : 'Not set'} />
+            {product ? <select id="product-kitchenId" disabled={saving || !options} value={draft.kitchenId ?? ''}
+              aria-invalid={!!errors.kitchenId} onChange={event => update('kitchenId', event.target.value)}>
+              <option value="">Not set</option>
+              {options?.servicePoints?.map(point => <option key={point.id} value={point.id}>{point.name}</option>)}
+              {draft.kitchenId && options && !options.servicePoints?.some(point => point.id === draft.kitchenId)
+                && <option value={draft.kitchenId}>Service point unavailable</option>}
+            </select> : <input id="product-kitchenId" readOnly value="" placeholder="Not set" />}
+            {issue('kitchenId')}
           </div>
           <div className="form-field"><label htmlFor="product-variant">Variant</label><input id="product-variant" disabled value="" placeholder="Not configured" /></div>
           <div className="form-field"><label htmlFor="product-addon">Addon</label><input id="product-addon" disabled value="" placeholder="Not configured" /></div>

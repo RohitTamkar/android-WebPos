@@ -1,9 +1,10 @@
+import { useTimedNotice, useSuccessDismiss } from '../utils/useTimedNotice.ts';
 import { loadProductList, ProductListRequestError } from './productListApi.ts';
 import { DeleteConfirmation } from './DeleteConfirmation.tsx';
 import { DeleteAllError, deleteAllRecords } from './deleteAllApi.ts';
 import { SuccessPopup } from './SuccessPopup.tsx';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDownUp, Check, CheckCircle2, ChevronDown, FileSpreadsheet, IndianRupee, ImagePlus, Images, MoreVertical, Package, PackageCheck, Pencil, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
+import { ArrowDownUp, Check, CheckCircle2, ChevronDown, FileSpreadsheet, IndianRupee, ImagePlus, Images, MoreVertical, Package, PackageCheck, Pencil, Percent, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react';
 import type { OutletSummary } from './OutletSelectionPage.tsx';
 import './ProductsPage.css';
 import { AddProductForm } from './AddProductForm.tsx';
@@ -18,6 +19,7 @@ import { isProductSort, PRODUCT_SORTS, sortProducts, type ProductSort } from './
 import { ProductExcelDialog } from './ProductExcelDialog.tsx';
 import { ProductServicePointAssignment } from './ProductServicePointAssignment.tsx';
 import { ProductTaxSettings } from './ProductTaxSettings.tsx';
+import { ProductDiscountSettings } from './ProductDiscountSettings.tsx';
 import { PremisesPage } from './PremisesPage.tsx';
 
 interface ProductDocument {
@@ -41,6 +43,7 @@ function productText(value: unknown): string {
 }
 
 function TaxSuccessConfirmation({ onClose }: { onClose: () => void }) {
+  useSuccessDismiss('Tax updated successfully.', onClose);
   const dialog = useRef<HTMLDialogElement>(null);
   const ok = useRef<HTMLButtonElement>(null);
   useEffect(() => { dialog.current?.showModal(); ok.current?.focus(); }, []);
@@ -98,13 +101,14 @@ function ProductsPageContent({ outlet, token, onSessionExpired }: ProductsPagePr
   const [flagsOpen, setFlagsOpen] = useState(false);
   const [pricesOpen, setPricesOpen] = useState(false);
   const [taxOpen, setTaxOpen] = useState(false);
+  const [discountOpen, setDiscountOpen] = useState(false);
   const [premisesOpen, setPremisesOpen] = useState(false);
   const [taxSuccess, setTaxSuccess] = useState(false);
   const [assignmentOpen, setAssignmentOpen] = useState(false);
   const [excelOpen, setExcelOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<ProductDocument | null>(null);
-  const [notice, setNotice] = useState('');
   const [noticeIsError, setNoticeIsError] = useState(false);
+  const [notice, setNotice] = useTimedNotice(!noticeIsError);
   const [deleting, setDeleting] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const [imageRemovalTargets, setImageRemovalTargets] = useState<ProductDocument[] | null>(null);
@@ -190,15 +194,25 @@ function ProductsPageContent({ outlet, token, onSessionExpired }: ProductsPagePr
     onSaved={(documentId, image) => setProducts(current => current.map(product => product.documentId === documentId
       ? { ...product, fields: { ...product.fields, image } } : product))} />;
 
-  if ((taxOpen || flagsOpen || pricesOpen || assignmentOpen) && (loading || error)) return <section className="products-page-shell" aria-busy={loading}>
-    <div className="products-header"><h1>{taxOpen ? 'Tax Settings' : flagsOpen ? 'Update Stockable & Weighable' : pricesOpen ? 'Update Bulk Price' : 'Assign Service Point'}</h1>
-      <button type="button" className="btn-secondary" onClick={() => { setTaxOpen(false); setFlagsOpen(false); setPricesOpen(false); setAssignmentOpen(false); }}>Cancel</button></div>
+  if ((taxOpen || discountOpen || flagsOpen || pricesOpen || assignmentOpen) && (loading || error)) return <section className="products-page-shell" aria-busy={loading}>
+    <div className="products-header"><h1>{taxOpen ? 'Tax Settings' : discountOpen ? 'Update Discount' : flagsOpen ? 'Update Stockable & Weighable' : pricesOpen ? 'Update Bulk Price' : 'Assign Service Point'}</h1>
+      <button type="button" className="btn-secondary" onClick={() => { setTaxOpen(false); setDiscountOpen(false); setFlagsOpen(false); setPricesOpen(false); setAssignmentOpen(false); }}>Cancel</button></div>
     <div className="products-empty" role={error ? 'alert' : 'status'}>{error || 'Loading products and categories…'}
       {error && <button type="button" className="btn-secondary" onClick={() => setReloadKey(value => value + 1)}>Retry</button>}</div>
   </section>;
 
   if (premisesOpen) return <PremisesPage outlet={outlet} token={token} onSessionExpired={onSessionExpired}
     onClose={() => setPremisesOpen(false)} />;
+
+  if (discountOpen) return <ProductDiscountSettings products={products} categories={categories} outletId={outlet.id} token={token} onSessionExpired={onSessionExpired}
+    onSaved={updated => setProducts(current => current.map(product => product.documentId === updated.documentId ? updated : product))}
+    onClose={updatedCount => {
+      setDiscountOpen(false);
+      if (updatedCount) {
+        setNoticeIsError(false);
+        setNotice(`Discount updated successfully for ${updatedCount} ${updatedCount === 1 ? 'product' : 'products'}.`);
+      }
+    }} />;
 
   if (taxOpen) return <ProductTaxSettings products={products} categories={categories} outletId={outlet.id} token={token} onSessionExpired={onSessionExpired}
     onSaved={updated => setProducts(current => current.map(product => product.documentId === updated.documentId ? updated : product))}
@@ -334,6 +348,8 @@ function ProductsPageContent({ outlet, token, onSessionExpired }: ProductsPagePr
                 <span className="products-menu-icon"><PackageCheck size={15} /></span>Assign Service Point</button>
               <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); setNotice(''); setTaxSuccess(false); setTaxOpen(true); }}>
                 <span className="products-menu-icon"><PackageCheck size={15} /></span>Tax</button>
+              <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); setNotice(''); setDiscountOpen(true); }}>
+                <span className="products-menu-icon"><Percent size={15} /></span>Update Discount</button>
               <div className="products-menu-divider" role="separator" />
               <button type="button" role="menuitem" className="danger" disabled={loading || !!error || !products.length}
                 onClick={() => { setOpenMenu(null); setNotice(''); setDeleteAllError(''); setDeleteAllOpen(true); }}>
@@ -342,7 +358,10 @@ function ProductsPageContent({ outlet, token, onSessionExpired }: ProductsPagePr
           </div>
         </div>
       </div>
-      {notice && <p className={noticeIsError ? 'category-form-error' : 'products-notice'} role={noticeIsError ? 'alert' : 'status'}>{notice}</p>}
+      {notice && noticeIsError && <div className="products-feedback">
+        <p className="category-form-error" role="alert">{notice}</p>
+        <button type="button" className="products-feedback-close" aria-label="Dismiss notification" onClick={() => setNotice('')}><X size={16} aria-hidden="true" /></button>
+      </div>}
       {taxSuccess && <TaxSuccessConfirmation onClose={() => setTaxSuccess(false)} />}
       <nav className="products-category-tabs" aria-label="Product categories">
         <button type="button" className={selectedCategory === null ? 'selected' : ''}

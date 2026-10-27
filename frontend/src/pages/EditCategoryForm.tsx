@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useSuccessDismiss } from '../utils/useTimedNotice.ts';
 import { CheckCircle2, X } from 'lucide-react';
 import './CategoryPage.css';
 export interface UpdatedCategoryNames { id: string; name: string; regionalName: string; imagePath?: string; imageRemoved?: boolean }
@@ -49,6 +50,7 @@ export function EditCategoryForm({ category, outletId, token, onCancel, onUpdate
   </section>;
 }
 export function CategoryUpdatedPopup({ onDismiss }: { onDismiss: () => void }) {
+  useSuccessDismiss('Category updated successfully', onDismiss);
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => { dialog.current?.showModal(); }, []);
   return <dialog ref={dialog} className="category-modal category-updated-popup" aria-labelledby="category-updated-title"

@@ -1,8 +1,10 @@
+import { useSuccessDismiss } from '../utils/useTimedNotice.ts';
 import { useEffect, useRef } from 'react';
 import { CheckCircle2 } from 'lucide-react';
 import './CategoryPage.css';
 
 export function SuccessPopup({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+  useSuccessDismiss(message, onDismiss);
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => { dialog.current?.showModal(); }, []);
   return <dialog ref={dialog} className="category-modal category-updated-popup" role="alertdialog" aria-labelledby="success-popup-title"

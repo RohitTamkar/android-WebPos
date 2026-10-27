@@ -62,10 +62,10 @@ void (async () => {
   passed.push('JPEG EXIF orientation is corrected before crop calculations');
   const noise = await fixture(1024, 1024, true); const noisy = await decodeProductImage(noise);
   const adjusted = await processProductImage(noisy, cropRegion(1024,1024,1,0.5,0.5));
-  assert(adjusted.size <= PRODUCT_IMAGE_MAX_BYTES && ['image/webp', 'image/jpeg', 'image/png'].includes(adjusted.type), 'Detailed image automatically fits 30 KB with quality-searched encoding');
+  assert(adjusted.size <= PRODUCT_IMAGE_MAX_BYTES && ['image/webp', 'image/jpeg', 'image/png'].includes(adjusted.type), 'Detailed image remains within safety limit');
   const adjustedBitmap = await decodeProductImage(adjusted);
   assert(adjustedBitmap.width < 1024 && adjustedBitmap.width === adjustedBitmap.height, 'Oversized image is resized without changing crop shape');
-  assert(adjustedBitmap.width >= 256, 'Detailed fixture retains a usable thumbnail resolution');
+  assert(adjustedBitmap.width >= 768, 'Detailed fixture retains product-detail resolution');
   passed.push(`Detailed noise: ${adjusted.size} bytes, ${adjustedBitmap.width}px, ${adjusted.type}`);
   adjustedBitmap.close(); noisy.close();
   const labelCanvas = document.createElement('canvas'); labelCanvas.width = labelCanvas.height = 900;
@@ -77,24 +77,50 @@ void (async () => {
   const labelBitmap = await decodeProductImage(new File([labelBlob], 'label.png', { type: 'image/png' }));
   const labelFile = await processProductImage(labelBitmap, cropRegion(900, 900, 1, 0.5, 0.5));
   const labelResult = await decodeProductImage(labelFile);
-  assert(labelFile.size <= PRODUCT_IMAGE_MAX_BYTES && labelResult.width >= 350, 'Fine text retains useful resolution within the actual byte limit');
+  assert(labelFile.size <= PRODUCT_IMAGE_MAX_BYTES && labelResult.width >= 768, 'Fine text retains useful resolution within the actual byte limit');
   passed.push(`Fine text: ${labelFile.size} bytes, ${labelResult.width}px, ${labelFile.type}`);
   labelBitmap.close(); labelResult.close();
   // A broken encoder must never allow oversized bytes through.
   const originalToBlob = HTMLCanvasElement.prototype.toBlob;
-  HTMLCanvasElement.prototype.toBlob = function(callback, type) { callback(new Blob([new Uint8Array(30721)], { type })); };
+  HTMLCanvasElement.prototype.toBlob = function(callback, type) { callback(new Blob([new Uint8Array(PRODUCT_IMAGE_MAX_BYTES + 1)], { type })); };
   const small = await decodeProductImage(source);
   try {
-    let failed = false; try { await processProductImage(small, cropRegion(320,160,1,0.5,0.5)); } catch (error) { failed = String(error).includes('Unable to prepare'); }
+    let failed = false; try { await processProductImage(small, cropRegion(320,160,1,0.5,0.5)); } catch (error) { failed = String(error).includes('512 KB'); }
     assert(failed, 'Oversized output never silently accepted');
   } finally { HTMLCanvasElement.prototype.toBlob = originalToBlob; small.close(); }
-  passed.push('Detailed images progressively resize within 30 KB; broken encoders never upload oversized bytes');
+  passed.push('Detail keeps at least 768px; output exceeding safety limit is rejected');
+  // Simulate browsers without a WebP encoder. Alpha must use PNG; opaque
+  // content may use JPEG, and neither path forces the preferred byte target.
+  const alphaSource = await fixture(320, 320, true);
+  const alphaBitmap = await decodeProductImage(alphaSource);
+  const alphaCanvas = document.createElement('canvas'); alphaCanvas.width = alphaCanvas.height = 320;
+  const alphaContext = alphaCanvas.getContext('2d')!; alphaContext.drawImage(alphaBitmap, 0, 0); alphaBitmap.close();
+  alphaContext.clearRect(240, 240, 80, 80);
+  const alphaBlob = await new Promise<Blob>(resolve => alphaCanvas.toBlob(blob => resolve(blob!), 'image/png'));
+  const alphaImage = await decodeProductImage(new File([alphaBlob], 'alpha.png', { type: 'image/png' }));
+  const fallbackOpaque = await decodeProductImage(alphaSource);
+  HTMLCanvasElement.prototype.toBlob = function(callback, type, quality) {
+    originalToBlob.call(this, callback, type === 'image/webp' ? 'image/png' : type, quality);
+  };
+  try {
+    const alphaResult = await processProductImage(alphaImage, cropRegion(320,320,1,0.5,0.5));
+    assert(alphaResult.type === 'image/png' && alphaResult.size > 30 * 1024, 'Unsupported WebP preserves detailed alpha as PNG above target');
+    const data = await pixels(alphaResult);
+    assert(data.data[(319 * 320 + 319) * 4 + 3] === 0, 'Fallback alpha is unchanged');
+    const opaqueResult = await processProductImage(fallbackOpaque, cropRegion(320,320,1,0.5,0.5));
+    assert(opaqueResult.type === 'image/jpeg', 'Unsupported WebP uses JPEG for opaque content');
+  } finally { HTMLCanvasElement.prototype.toBlob = originalToBlob; alphaImage.close(); fallbackOpaque.close(); }
+  passed.push('Unavailable WebP encoder preserves alpha with PNG and uses JPEG only for opaque content');
+
   let applied: File | null = null; let canceled = 0;
   const render = (file: File) => root.render(<ProductImageCropper file={file} onCancel={() => { canceled++; }} onApply={value => { applied = value; }} />);
   render(source);
   await waitFor(() => button('Save') && !button('Save')!.disabled, 'decoded crop UI');
   assert(!document.querySelector('input'), 'Crop settings fields have been removed');
   assert(!button('Preview Crop') && !button('Apply Crop'), 'There is no separate preview step');
+  assert(button('Square crop'), 'Full image is default; square crop is explicit');
+  button('Square crop')!.click();
+  await new Promise(resolve => setTimeout(resolve, 20));
   const cropCanvas = document.querySelector('canvas')!;
   const sample = () => cropCanvas.getContext('2d')!.getImageData(0, 0, 640, 640).data;
   const initial = sample();

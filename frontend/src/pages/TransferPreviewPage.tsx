@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { ArrowRight, Database } from 'lucide-react';
+import { ArrowRight, Database, LoaderCircle } from 'lucide-react';
 import { AuthenticatedImagePreview } from './AuthenticatedImagePreview.tsx';
 import { masterImageUrl, productImageReference } from './imageApi.ts';
 import { proposeCategoryNumbers, proposeProductCodes } from './transferNumberProposals.ts';
@@ -11,11 +11,11 @@ interface Category { id: string; name: string; regionalName?: string; dayType?: 
 interface Product { documentId: string; fields: Record<string, unknown> }
 interface TransferResult { created: number; unchanged: number; skipped: number; items: { type: string; sourceId: string; name: string; status: string; reason: string; destinationNumber?: number }[] }
 type Mode = 'categories' | 'products';
-type TransferOptions = { stock: boolean; weighable: boolean; images: boolean; taxes: boolean; prices: boolean };
+type TransferOptions = { stock: boolean; weighable: boolean; images: boolean; taxes: boolean; prices: boolean; barcode: boolean };
 // Images were always copied before these options existed, so that remains the default.
-const defaultOptions: TransferOptions = { stock: false, weighable: false, images: true, taxes: false, prices: false };
+const defaultOptions: TransferOptions = { stock: false, weighable: false, images: true, taxes: false, prices: false, barcode: false };
 const transferOptions: [keyof TransferOptions, string][] = [
-  ['stock', 'Stock'], ['weighable', 'Weighable'], ['images', 'Images'], ['taxes', 'Assigned Taxes'], ['prices', 'Prices'],
+  ['stock', 'Stock'], ['weighable', 'Weighable'], ['images', 'Images'], ['taxes', 'Assigned Taxes'], ['prices', 'Prices'], ['barcode', 'Barcode'],
 ];
 const fields = [
   ['name', 'Product Name'], ['regionalName', 'Regional Name'], ['shortName', 'Short Name'],
@@ -97,7 +97,22 @@ export function TransferPreviewPage({ outlet, token, onSessionExpired }: {
     {pendingDestination && <QuickPinDialog key={`${outlet.id}:${pendingDestination.id}:${token}`} sourceId={outlet.id} destination={pendingDestination} token={token} onSessionExpired={onSessionExpired}
       onCancel={() => setPendingDestinationId('')} onVerified={authorization => { setGrant(authorization); setDestinationId(pendingDestination.id); setPendingDestinationId(''); }} />}
     {destination && <OutletPreview key={`${outlet.id}:${destination.id}:${mode}:${token}`} source={outlet} destination={destination} mode={mode} token={token} grant={grant} busy={busy} onBusy={setBusy} onAuthExpired={() => { setGrant(''); setPendingDestinationId(destination.id); }} onSessionExpired={onSessionExpired} />}
+    {busy && <TransferProgress mode={mode} />}
   </section>;
+}
+
+function TransferProgress({ mode }: { mode: Mode }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => { dialog.current?.showModal(); }, []);
+  return <dialog ref={dialog} className="transfer-preview-pin transfer-progress" aria-modal="true"
+    aria-labelledby="transfer-progress-title" aria-describedby="transfer-progress-description"
+    onCancel={event => event.preventDefault()}>
+    <div role="status">
+      <LoaderCircle className="transfer-progress-spinner" size={42} aria-hidden="true" />
+      <h2 id="transfer-progress-title">{mode === 'categories' ? 'Transferring categories and products…' : 'Transferring products…'}</h2>
+      <p id="transfer-progress-description">Please wait while the selected items are copied.</p>
+    </div>
+  </dialog>;
 }
 
 function QuickPinDialog({ sourceId, destination, token, onSessionExpired, onCancel, onVerified }: {

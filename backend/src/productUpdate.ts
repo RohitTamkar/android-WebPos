@@ -1,9 +1,14 @@
 import type { Firestore } from 'firebase-admin/firestore';
+import { z } from 'zod';
 import { newProductSchema, ProductCreationError, validateProductReferences } from './productCreation.js';
 import { ANDROID_TAX_OPTIONS } from '../../shared/androidTaxes.js';
 
 const editableSchema = newProductSchema.omit({ requestId: true, code: true });
-const patchSchema = editableSchema.partial().strict();
+const patchSchema = editableSchema.partial().extend({
+  barcode: z.string().max(200).optional(),
+  kitchenId: z.string().max(200).refine(value => !value.includes('/') && value !== '.' && value !== '..').optional(),
+  premisesPrices: z.record(z.string().min(1).max(200), z.number().finite().nonnegative()).optional(),
+}).strict();
 
 export async function updateOutletProduct(db: Firestore, outletId: string, id: string, profileId: string | null,
   assignedOutlets: (profile: Record<string, unknown>) => string[], raw: unknown) {
@@ -40,15 +45,36 @@ export async function updateOutletProduct(db: Firestore, outletId: string, id: s
     const categoryChoices = categories.docs.map(doc => doc.id);
     if (parsed.data.category === stored.category && !categoryChoices.includes(parsed.data.category)) categoryChoices.push(parsed.data.category);
     validateProductReferences(parsed.data, categoryChoices, taxChoices);
-    if ('price' in changes && changes.price !== stored.price) {
+    if (typeof changes.kitchenId === 'string' && changes.kitchenId && changes.kitchenId !== stored.kitchenId) {
+      const point = await transaction.get(outlet.collection('SERVICE_POINT').doc(changes.kitchenId));
+      if (!point.exists) throw new ProductCreationError(422, 'Select an existing service point.', { kitchenId: 'This service point no longer exists in this outlet.' });
+    }
+    const premisesPrices = patch.data.premisesPrices;
+    delete changes.premisesPrices;
+    if (('price' in changes && changes.price !== stored.price) || (premisesPrices && Object.keys(premisesPrices).length)) {
       let table: unknown;
       try { table = typeof stored.priceTable === 'string' ? JSON.parse(stored.priceTable) : null; } catch { table = null; }
       if (!table || typeof table !== 'object' || Array.isArray(table) || !Object.hasOwn(table, 'default price')) {
         throw new ProductCreationError(422, 'The existing price table cannot be updated safely.', { price: 'The product must have a valid existing default price table before changing Selling Price.' });
       }
-      changes.priceTable = JSON.stringify({ ...table, 'default price': parsed.data.price });
+      const currentTable = table as Record<string, unknown>;
+      if (premisesPrices && Object.keys(premisesPrices).length) {
+        const premises = await transaction.get(outlet.collection('PREMISES'));
+        const normalize = (value: string) => value.trim().replace(/\s+/g, ' ').toLowerCase();
+        const allowed = new Set(premises.docs.flatMap(doc => {
+          const name = doc.data().name;
+          return typeof name === 'string' ? [normalize(name), normalize(/\bprice$/i.test(name) ? name : `${name} price`)] : [];
+        }));
+        for (const key of Object.keys(premisesPrices)) {
+          if (normalize(key) === 'default price' || (!Object.hasOwn(currentTable, key) && !allowed.has(normalize(key)))) {
+            throw new ProductCreationError(422, 'Select an existing premises price.', { premisesPrices: 'An edited premises price is no longer available.' });
+          }
+        }
+      }
+      changes.priceTable = JSON.stringify({ ...currentTable, ...premisesPrices,
+        ...('price' in changes ? { 'default price': parsed.data.price } : {}) });
     }
-    // No set/create: preserve code, ID, barcode, stock, timestamps, flags and custom fields.
+    // Update only submitted fields on the existing product document.
     if (Object.keys(changes).length) transaction.update(reference, changes);
     return { documentId: id, fields: { ...stored, ...changes } };
   });

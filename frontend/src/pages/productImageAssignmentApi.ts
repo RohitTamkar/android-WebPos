@@ -4,7 +4,7 @@ import { PRODUCT_IMAGE_MAX_BYTES } from './productImageProcessing.ts';
 import type { ImageResult, ImageTarget } from './productImageBatch.ts';
 
 export async function assignProductImage(outletId: string, token: string, requestId: string, file: File, targets: ImageTarget[], imageGrant?: string) {
-  if (!file.size || file.size > PRODUCT_IMAGE_MAX_BYTES) throw new Error('Product images must be 30 KB or smaller.');
+  if (!file.size || file.size > PRODUCT_IMAGE_MAX_BYTES) throw new Error('Product images must be 512 KB or smaller.');
   const bytes = new Uint8Array(await file.arrayBuffer());
   let binary = '';
   for (const byte of bytes) binary += String.fromCharCode(byte);

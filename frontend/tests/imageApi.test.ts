@@ -1,3 +1,4 @@
+import { PRODUCT_IMAGE_MAX_BYTES } from '../../shared/productImageLimits.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { masterImageUrl, productImageReference, removeMasterImage, uploadMasterImage } from '../src/pages/imageApi.ts';
@@ -47,7 +48,7 @@ test('upload failures, missing references and expired sessions never return a sa
  test('oversized product files are rejected before sending a request', async t => {
   let requests = 0;
   t.mock.method(globalThis, 'fetch', async () => { requests++; return Response.json({}); });
-  await assert.rejects(uploadMasterImage('o', 'products', 'p', 'token', new File([new Uint8Array(30 * 1024 + 1)], 'large.png', { type: 'image/png' })), /30 KB/);
+  await assert.rejects(uploadMasterImage('o', 'products', 'p', 'token', new File([new Uint8Array(PRODUCT_IMAGE_MAX_BYTES + 1)], 'large.png', { type: 'image/png' })), /512 KB/);
   assert.equal(requests, 0);
 });
 

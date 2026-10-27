@@ -9,6 +9,7 @@ export function ProductImageCropper({ file, onCancel, onApply, onError }: {
 }) {
   const [image, setImage] = useState<ImageBitmap | null>(null);
   const [zoom, setZoom] = useState(1);
+  const [squareCrop, setSquareCrop] = useState(false);
   const [position, setPosition] = useState({ x: 0.5, y: 0.5 });
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -48,8 +49,13 @@ export function ProductImageCropper({ file, onCancel, onApply, onError }: {
     const context = target.getContext('2d')!;
     const crop = cropRegion(image.width, image.height, zoom, position.x, position.y);
     context.clearRect(0, 0, 640, 640);
-    context.drawImage(image, crop.x, crop.y, crop.size, crop.size, 0, 0, 640, 640);
-  }, [image, zoom, position]);
+    if (squareCrop) context.drawImage(image, crop.x, crop.y, crop.size, crop.size, 0, 0, 640, 640);
+    else {
+      const scale = Math.min(640 / image.width, 640 / image.height);
+      const width = image.width * scale, height = image.height * scale;
+      context.drawImage(image, (640 - width) / 2, (640 - height) / 2, width, height);
+    }
+  }, [image, zoom, position, squareCrop]);
   const prepare = async () => {
     if (!image || saving.current) return;
     saving.current = true; setBusy(true); setError('');
@@ -57,7 +63,8 @@ export function ProductImageCropper({ file, onCancel, onApply, onError }: {
       // Let React paint the loader before rendering and encoding the crop.
       await new Promise<void>(resolve => setTimeout(resolve, 0));
       if (!active.current) return;
-      const processed = await processProductImage(image, cropRegion(image.width, image.height, zoom, position.x, position.y));
+      const processed = await processProductImage(image, squareCrop ? cropRegion(image.width, image.height, zoom, position.x, position.y)
+        : { x: 0, y: 0, size: Math.max(image.width, image.height), width: image.width, height: image.height }, file);
       if (active.current) onApply(processed);
     }
     catch (reason) {
@@ -70,13 +77,14 @@ export function ProductImageCropper({ file, onCancel, onApply, onError }: {
   };
   return createPortal(<div className="product-crop-backdrop" onClick={event => event.stopPropagation()}>
     <div ref={panel} className="product-crop-dialog" aria-busy={busy} role="dialog" aria-modal="true" aria-labelledby="product-crop-title" tabIndex={-1}>
-      <h3 id="product-crop-title">Crop product image</h3>
-      <p id="product-crop-help">Drag to reposition. Scroll or pinch to zoom.</p>
+      <h3 id="product-crop-title">Prepare product image</h3>
+      <p id="product-crop-help">{squareCrop ? 'Drag to reposition. Scroll or pinch to zoom.' : 'Full image selected. Aspect ratio is preserved.'}</p>
+      <button type="button" className="btn-secondary" disabled={busy} aria-pressed={squareCrop} onClick={() => setSquareCrop(value => !value)}>{squareCrop ? 'Keep full image' : 'Square crop'}</button>
       <div className="product-crop-stage">
-        <canvas ref={canvas} width={640} height={640} aria-label="Square crop preview" aria-describedby="product-crop-help" tabIndex={0}
-          onWheel={event => { if (!saving.current) setZoom(value => Math.max(1, Math.min(5, value * Math.exp(-event.deltaY * 0.002)))); }}
+        <canvas ref={canvas} width={640} height={640} aria-label={squareCrop ? 'Square crop preview' : 'Full image preview'} aria-describedby="product-crop-help" tabIndex={0}
+          onWheel={event => { if (squareCrop && !saving.current) setZoom(value => Math.max(1, Math.min(5, value * Math.exp(-event.deltaY * 0.002)))); }}
           onKeyDown={event => {
-            if (saving.current) return;
+            if (saving.current || !squareCrop) return;
             if (['+', '=', '-', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) event.preventDefault();
             if (event.key === '+' || event.key === '=') setZoom(value => Math.min(5, value + 0.1));
             if (event.key === '-') setZoom(value => Math.max(1, value - 0.1));
@@ -84,7 +92,7 @@ export function ProductImageCropper({ file, onCancel, onApply, onError }: {
               y: Math.max(0, Math.min(1, value.y + (event.key === 'ArrowUp' ? -0.02 : event.key === 'ArrowDown' ? 0.02 : 0))) }));
           }}
           onPointerDown={event => {
-            if (saving.current) return;
+            if (saving.current || !squareCrop) return;
             event.currentTarget.setPointerCapture(event.pointerId);
             pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
             if (pointers.current.size === 2) {
@@ -95,7 +103,7 @@ export function ProductImageCropper({ file, onCancel, onApply, onError }: {
           onPointerUp={event => { pointers.current.delete(event.pointerId); drag.current = null; pinch.current = null; }}
           onPointerCancel={event => { pointers.current.delete(event.pointerId); drag.current = null; pinch.current = null; }}
           onPointerMove={event => {
-            if (saving.current) return;
+            if (saving.current || !squareCrop) return;
             if (pointers.current.has(event.pointerId)) pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
             if (pointers.current.size === 2 && pinch.current) {
               const [a, b] = [...pointers.current.values()];
@@ -107,7 +115,7 @@ export function ProductImageCropper({ file, onCancel, onApply, onError }: {
             setPosition({ x: Math.max(0, Math.min(1, drag.current.px - (event.clientX - drag.current.x) / (Math.max(1, image.width - size) * scale))),
               y: Math.max(0, Math.min(1, drag.current.py - (event.clientY - drag.current.y) / (Math.max(1, image.height - size) * scale))) });
           }} />
-        <span className="product-crop-corners" aria-hidden="true" />
+        {squareCrop && <span className="product-crop-corners" aria-hidden="true" />}
       </div>
       {busy && <div className="product-crop-saving" role="status"><LoaderCircle className="product-image-spinner" size={28} aria-hidden="true" /><span>Saving image…</span></div>}
       {error && <p className="local-image-error" role="alert">{error}</p>}

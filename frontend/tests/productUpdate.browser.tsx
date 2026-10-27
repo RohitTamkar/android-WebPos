@@ -17,6 +17,9 @@ window.fetch = async (url, init) => {
   const path = String(url);
   if (path === '/api/outlets/outlet/products') return Response.json({ success: true, data: [product, other] });
   if (path === '/api/outlets/outlet/categories') return Response.json({ success: true, data: categories });
+  if (path === '/api/outlets/outlet/service-points') return Response.json({ success: true, data: { servicePoints: [
+    { documentId: 'kitchen', name: 'Kitchen Printer' }, { documentId: 'bar', name: 'Bar' },
+  ] } });
   if (path === '/api/outlets/outlet/products/p1/edit-options') {
     return Response.json({ success: true, data: { code: product.fields.code, categories, product, servicePointName: 'Kitchen Printer',
       taxes: [{ percent: 5, index: 7, type: 0 }, { percent: 0, index: 1, type: 0 }], units: [{ id: 2, name: 'number' }],
@@ -47,7 +50,8 @@ async function value(el: HTMLInputElement | HTMLSelectElement, text: string) {
   Object.getOwnPropertyDescriptor(proto, 'value')!.set!.call(el, text);
   el.dispatchEvent(new Event(el instanceof HTMLSelectElement ? 'change' : 'input', { bubbles: true })); await pause();
 }
-async function open() { edit().click(); await waitFor(() => input('product-code')?.value === '00196', 'prefilled edit options'); }
+async function open() { edit().click(); await waitFor(() => input('product-code')?.value === '00196'
+  && document.querySelector<HTMLSelectElement>('#product-kitchenId')?.disabled === false, 'prefilled edit options'); }
 void (async () => {
   await waitFor(() => edit(), 'product list');
   await value(document.querySelector<HTMLInputElement>('[aria-label="Search products"]')!, 'Product');
@@ -59,8 +63,8 @@ void (async () => {
     regionalName: 'Local', discount: '5', shortName: 'Short', taxIndex: '7', hsnCode: '123', unitId: '2' };
   for (const [key, text] of Object.entries(expected)) assert(input(`product-${key}`).value === text, `${key} is prefilled`);
   assert(input('product-wholeSaleAmount').value === '40' && input('product-onlinePrice').value === '60', 'saved additional prices displayed');
-  assert(input('product-barcode').value === '00000123456' && input('product-barcode').readOnly, 'barcode string preserved');
-  assert(input('product-kitchenId').value === 'Kitchen Printer' && input('product-kitchenId').readOnly, 'service point name displayed read-only instead of its ID');
+  assert(input('product-barcode').value === '00000123456' && !input('product-barcode').readOnly, 'barcode string preserved and editable');
+  assert(input('product-kitchenId').value === 'kitchen' && document.querySelector('#product-kitchenId option:checked')?.textContent === 'Kitchen Printer', 'service point selected by ID and displayed by name');
   assert(product.fields.kitchenId === 'kitchen' && input('product-recipeId').value === 'recipe', 'saved service point ID and recipe preserved');
   const taxOptions = [...document.querySelectorAll<HTMLOptionElement>('#product-taxIndex option')].filter(option => option.value);
   assert(taxOptions.length === 12 && taxOptions[5]!.value === '6' && taxOptions[5]!.textContent === 'VAT 22'
@@ -103,7 +107,6 @@ void (async () => {
   assert(document.querySelector('tbody')?.textContent?.includes('Product Updated'), 'updated product shown');
   assert(document.querySelector('tbody')?.textContent?.includes('55.5'), 'updated price shown');
   assert(document.querySelector('tbody')?.textContent?.includes('00196'), 'existing code retained');
-  assert(document.querySelector('[role="status"]')?.textContent?.includes('Product updated successfully'), 'success message');
   assert(document.querySelector<HTMLInputElement>('[aria-label="Search products"]')!.value === 'Product', 'search preserved');
   assert(document.querySelector<HTMLSelectElement>('[aria-label="Filter by category"]')!.value === 'c1', 'category filter preserved');
   assert(product.fields.currentStock === 35 && product.fields.barcode === '00000123456', 'no stock or barcode changes');
@@ -111,6 +114,17 @@ void (async () => {
 
   await open(); assert(input('product-name').value === 'Product Updated', 'reopened editor uses updated product');
   assert(input('product-taxIndex').value === '1', 'updated tax retained');
+  await value(input('product-barcode'), '000009999');
+  await value(input('product-onlinePrice'), '85');
+  await value(document.getElementById('product-kitchenId') as HTMLSelectElement, 'bar');
+  await value(document.querySelector<HTMLInputElement>('[aria-label="AC Table Price"]')!, '70');
+  await value(document.querySelector<HTMLInputElement>('[aria-label="TABLE Price"]')!, '0');
+  button('Update').click(); await waitFor(() => !input('product-name'), 'additional edits saved');
+  const additional = patches.at(-1)!.body;
+  assert(additional.barcode === '000009999' && additional.onlinePrice === 85 && additional.kitchenId === 'bar', 'barcode, online price and service point edits submitted');
+  assert(JSON.stringify(additional.premisesPrices) === JSON.stringify({ 'AC Table price': 70, 'TABLE price': 0 }), 'premises prices submitted with original keys, including zero');
+  results.push('Barcode, online price, premises prices and existing service point are editable and saved');
+  await open();
   mode = 'expired'; button('Update').click(); await waitFor(() => expired === 1, 'expired session');
   assert(JSON.stringify(patches.at(-1)!.body) === '{}', 'unchanged form submits no field replacements');
   results.push('Reopening reflects saved values; unchanged fields omitted; expired session handled');

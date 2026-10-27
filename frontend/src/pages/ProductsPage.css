@@ -219,3 +219,10 @@
 .products-options-menu .products-sort-menu button[aria-checked="true"] { background: #f1efff; color: #5547ff; font-weight: 600; }
 .products-sort-check { margin-left: auto; }
 .products-menu-divider { height: 1px; margin: 4px 6px; background: var(--line, #e2e8f0); }
+
+/* Keep actionable errors dismissible without leaving completed-activity banners. */
+.products-feedback { display: flex; align-items: center; gap: 16px; padding: 12px 14px; border: 1px solid var(--line, #e4e8ec); border-radius: 10px; background: var(--card, #fff); }
+.products-feedback > p { flex: 1; min-width: 0; margin: 0; overflow-wrap: anywhere; line-height: 1.5; }
+.products-feedback-close { display: grid; place-items: center; flex: 0 0 32px; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted, #7c8791); cursor: pointer; }
+.products-feedback-close:focus-visible { outline: 2px solid var(--blue, #3567f0); outline-offset: 2px; }
+@media print { .products-feedback { display: none; } }

@@ -112,7 +112,8 @@ void (async () => {
 
   failIds.clear(); patches.length = 0;
   await click(button('Update'));
-  await waitFor(() => document.querySelector('.products-notice')?.textContent?.includes('updated successfully for 1 product'), 'success notice');
+  await waitFor(() => document.querySelector('[aria-label="More options"]'), 'return to Products');
+  assert(!document.querySelector('.products-notice'), 'Completed update leaves no success banner');
   assert(JSON.stringify(patches) === JSON.stringify([{ id: 'p2', body: { weighable: false } }]), 'retry resends only failed product');
   await waitFor(() => listLoads === 2, 'product list reloaded');
   for (const [id, fields] of untouched) {

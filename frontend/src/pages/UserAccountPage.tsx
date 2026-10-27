@@ -1,3 +1,4 @@
+import { useTimedNotice } from '../utils/useTimedNotice.ts';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { RefreshCw, Save, UserRound } from 'lucide-react';
 import './UserAccountPage.css';
@@ -14,7 +15,7 @@ export function UserAccountPage({ token, onSessionExpired, onSaved }: UserAccoun
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
+  const [success, setSuccess] = useTimedNotice();
   const [saving, setSaving] = useState(false);
   const [reload, setReload] = useState(0);
   const request = useRef<AbortController | null>(null);

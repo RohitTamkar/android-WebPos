@@ -26,7 +26,7 @@ async function imageRequest(url: string, token: string, init: RequestInit, fallb
 const imageOperations = new WeakMap<File, Map<string, { requestId: string; expectedReference: string | null }>>();
 
 export async function uploadMasterImage(outletId: string, entity: ImageEntity, documentId: string, token: string, file: File, expectedReference?: string | null) {
-  if (entity === 'products' && file.size > PRODUCT_IMAGE_MAX_BYTES) throw new Error('Product images must be 30 KB or smaller. Apply a crop before uploading.');
+  if (entity === 'products' && file.size > PRODUCT_IMAGE_MAX_BYTES) throw new Error('Product images must be 512 KB or smaller. Prepare the image before uploading.');
   const headers: Record<string, string> = { 'Content-Type': file.type };
   if (entity === 'products' && expectedReference !== undefined) {
     const key = JSON.stringify([outletId, documentId]);

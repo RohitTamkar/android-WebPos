@@ -21,8 +21,8 @@ const requestSchema = z.object({
   products: z.array(z.object({ sourceProductId: recordId, fields: z.array(copyFields).min(1).max(14) }).strict()).max(100),
   categoryMappings: z.record(recordId, recordId),
   // Optional so older clients keep the original behavior: images copied, other data not added.
-  options: z.object({ stock: z.boolean(), weighable: z.boolean(), images: z.boolean(), taxes: z.boolean(), prices: z.boolean() }).strict()
-    .default({ stock: false, weighable: false, images: true, taxes: false, prices: false }),
+  options: z.object({ stock: z.boolean(), weighable: z.boolean(), images: z.boolean(), taxes: z.boolean(), prices: z.boolean(), barcode: z.boolean().default(false) }).strict()
+    .default({ stock: false, weighable: false, images: true, taxes: false, prices: false, barcode: false }),
 }).strict();
 export type TransferOptions = z.infer<typeof requestSchema>['options'];
 const finiteNumber = (value: unknown, max = 1e9) => typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= max;
@@ -32,6 +32,7 @@ const premiseName = (value: string) => value.trim().replace(/\s+/g, ' ').toLower
 function optionalProductData(product: Record<string, unknown>, options: TransferOptions, destinationPremises: Set<string>) {
   const fields: string[] = [], extra: Record<string, unknown> = {}, candidate: Record<string, unknown> = {}, notes: string[] = [];
   if (options.weighable && typeof product.weighable === 'boolean') fields.push('weighable');
+  if (options.barcode && typeof product.barcode === 'string' && product.barcode.length <= 200) fields.push('barcode');
   if (options.stock) {
     if (typeof product.stockable === 'boolean') fields.push('stockable');
     if (finiteNumber(product.currentStock)) extra.currentStock = product.currentStock;

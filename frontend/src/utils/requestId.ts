@@ -1,3 +1,17 @@
+// Match Firestore's auto-ID format without a database connection.
+export function createFirestoreDocumentId(crypto: Pick<Crypto, 'getRandomValues'> = globalThis.crypto): string {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let id = '';
+  while (id.length < 20) {
+    for (const byte of crypto.getRandomValues(new Uint8Array(40))) {
+      // Rejection sampling keeps all 62 characters equally likely.
+      if (byte < 248) id += alphabet[byte % alphabet.length];
+      if (id.length === 20) return id;
+    }
+  }
+  return id;
+}
+
 // randomUUID requires a secure context; getRandomValues also works over LAN HTTP.
 export function createRequestId(crypto: Pick<Crypto, 'getRandomValues'> & Partial<Pick<Crypto, 'randomUUID'>> = globalThis.crypto): string {
   if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();

@@ -1,11 +1,12 @@
-import { type Firestore } from 'firebase-admin/firestore';
+import { type Firestore, type DocumentSnapshot } from 'firebase-admin/firestore';
 type StorageBucket = {
     file(path: string): any;
 };
 export type MasterImageStorageBucket = StorageBucket;
 export type MasterImageCollection = 'PRODUCT' | 'CATEGORY';
 export type MasterImageKind = 'products' | 'categories';
-export declare const PRODUCT_IMAGE_MAX_BYTES: number;
+import { PRODUCT_IMAGE_MAX_BYTES } from '../../shared/productImageLimits.js';
+export { PRODUCT_IMAGE_MAX_BYTES };
 declare const mimeExtension: Record<string, string>;
 export declare class ImageStorageError extends Error {
     readonly status: number;
@@ -35,7 +36,7 @@ export declare function uploadMasterImage(db: Firestore, bucket: StorageBucket, 
     image?: never;
     imagePath: string;
 }>;
-export declare function readMasterImage(db: Firestore, bucket: StorageBucket, kind: MasterImageKind, outletId: string, documentId: string): Promise<{
+export declare function readMasterImage(db: Firestore, bucket: StorageBucket, kind: MasterImageKind, outletId: string, documentId: string, authorizedSnapshot?: Pick<DocumentSnapshot, 'exists' | 'get'>): Promise<{
     bytes: Buffer<ArrayBufferLike>;
     contentType: string;
     imagePath: string;
@@ -44,5 +45,4 @@ export declare function copyMasterImage(db: Firestore, bucket: StorageBucket, ki
 export declare function removeMasterImage(db: Firestore, kind: MasterImageKind, outletId: string, documentId: string, reviewed?: unknown): Promise<{
     removed: boolean;
 }>;
-export {};
 //# sourceMappingURL=imageStorage.d.ts.map

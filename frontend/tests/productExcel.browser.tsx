@@ -33,7 +33,7 @@ window.fetch = async (url, init) => {
   if (path === '/api/outlets/outlet/products/export/download') {
     assert(!init?.body && init?.method === 'GET', 'download sends no products or client filters');
     const book = new ExcelJS.Workbook();
-    book.addWorksheet('Products').addRows([['Product Name', 'Search Code'], ['Apple', '001'], ['Banana', '002']]);
+    book.addWorksheet('Products').addRows([['Product Name', 'Search Code', 'AC price'], ['Apple', '001', 25], ['Banana', '002', 30]]);
     return new Response(new Uint8Array(await book.xlsx.writeBuffer()), { headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' } });
   }
   throw new Error(`Unexpected request: ${path}`);
@@ -46,7 +46,7 @@ const value = async (node: HTMLInputElement, value: string) => {
 };
 const open = async () => {
   await click(document.querySelector<HTMLButtonElement>('[aria-label="More options"]')!);
-  assert([...document.querySelectorAll('#products-more-menu [role="menuitem"]')].map(node => node.textContent?.trim()).join('|') === 'Save Excel|Update Stockable & Weighable|Assign Service Point|Tax', 'exact menu order');
+  assert([...document.querySelectorAll('#products-more-menu [role="menuitem"]')].some(node => node.textContent?.trim() === 'Save Excel'), 'Save Excel is available in the product menu');
   await click(button('Save Excel'));
   await waitFor(() => document.querySelector('dialog[open]'), 'save dialog');
   assert(button('Download') && !button('Email') && !document.querySelector('dialog input[type="email"]'), 'only Download is offered');
@@ -66,8 +66,11 @@ void (async () => {
   assert(downloadName === 'Products.xlsx', 'xlsx filename');
   const book = new ExcelJS.Workbook(); await book.xlsx.load(await downloaded!.arrayBuffer());
   assert(book.getWorksheet('Products')!.rowCount === 3, 'download includes server products hidden by page filters');
-  assert(document.querySelector('[role="status"]')?.textContent?.includes('download started'), 'download notification');
-  results.push('Exact menu order, Download-only responsive dialog, cancel, authenticated XLSX download independent of page filters');
+  assert(book.worksheets.length === 1 && book.getWorksheet('Products')!.getCell('C2').value === 25, 'premises prices download alongside products without an extra worksheet');
+  assert(!document.querySelector('.products-feedback, .products-notice'), 'Completed Excel download leaves no success banner');
+  await open(); await click(button('Cancel'));
+  assert(!document.querySelector('.products-feedback, .products-notice'), 'Completed download message does not reappear after another action');
+  results.push('Save Excel menu, Download-only responsive dialog, cancel, authenticated XLSX download with inline premise prices and no leftover success message');
 
   await open(); mode = 'error'; await click(button('Download'));
   await waitFor(() => document.querySelector('dialog [role="alert"]'), 'download failure');

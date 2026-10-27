@@ -5,6 +5,7 @@ import '../src/index.css';
 const results: string[] = [];
 const transfers: { mode: string; options: Record<string, boolean>; products: { sourceProductId: string }[]; categoryMappings: Record<string, string> }[] = [];
 let failTransfer = false;
+let holdTransfer = false, releaseTransfer: (() => void) | undefined;
 const data: Record<string, unknown> = {
   '/api/auth/outlets': { outlets: [{ id: 'source', name: 'Outlet A' }, { id: 'destination', name: 'Outlet B' }] },
   '/api/outlets/source/categories': [{ id: 'c1', name: 'ROLLS', categoryNo: 1 }, { id: 'c2', name: 'WRAPS', categoryNo: 2 }, { id: 'c3', name: 'SNACKS', categoryNo: 3 }],
@@ -21,6 +22,7 @@ window.fetch = async (url, init) => {
   if (path === '/api/outlets/source/master-transfer') {
     const body = JSON.parse(String(init!.body)); transfers.push(body);
     await new Promise(resolve => setTimeout(resolve, 60));
+    if (holdTransfer) await new Promise<void>(resolve => { releaseTransfer = resolve; });
     if (failTransfer) return Response.json({ success: false, message: 'Simulated transfer failure' }, { status: 503 });
     return Response.json({ success: true, data: { created: 1, skipped: 1, unchanged: 1, items: [{ type: 'product', sourceId: 'p1', name: 'Roll', status: 'created', reason: 'Product copied with stock 5.' },
       { type: 'product', sourceId: 'p3', name: 'VEG BURGER', status: 'already-transferred', reason: 'Product already present in the destination.' },
@@ -35,7 +37,7 @@ async function waitFor(check: () => unknown, message: string) { for (let i = 0; 
 const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find(node => node.textContent?.trim() === text)!;
 const dialog = () => document.querySelector<HTMLDialogElement>('dialog.transfer-confirmation[open]');
 const option = (label: string) => [...dialog()!.querySelectorAll<HTMLLabelElement>('.transfer-option')].find(node => node.querySelector('strong')?.textContent === label)!.querySelector('input')!;
-const states = () => ['Stock', 'Weighable', 'Images', 'Assigned Taxes', 'Prices'].map(label => option(label).checked);
+const states = () => ['Stock', 'Weighable', 'Images', 'Assigned Taxes', 'Prices', 'Barcode'].map(label => option(label).checked);
 const click = async (element: HTMLElement) => { element.click(); await pause(); };
 async function openReview() { await click(button('Review & transfer')); await waitFor(dialog, 'transfer dialog'); }
 const root = createRoot(document.getElementById('root')!);
@@ -58,25 +60,36 @@ void (async () => {
   assert(dialog()!.textContent!.includes('Select data to transfer'), 'dialog heading');
   assert(dialog()!.textContent!.includes('Source outlet: Outlet A') && dialog()!.textContent!.includes('Destination outlet: Outlet B'), 'source and destination shown');
   assert(!dialog()!.querySelector('ul, small') && !dialog()!.textContent!.includes('linked product'), 'dialog shows only options and checkboxes');
-  assert(JSON.stringify(states()) === '[false,false,true,false,false]', `defaults ${states()}`);
+  assert(JSON.stringify(states()) === '[false,false,true,false,false,false]', `defaults ${states()}`);
   assert(button('Cancel') && button('Continue Transfer'), 'Cancel and Continue Transfer buttons');
-  results.push('Dialog shows only outlets and the five options; only Images (existing behavior) starts checked');
+  results.push('Dialog shows only outlets and the six options; only Images (existing behavior) starts checked');
 
-  await click(option('Stock')); await click(option('Prices'));
-  assert(JSON.stringify(states()) === '[true,false,true,false,true]', 'options toggle independently');
+  await click(option('Stock')); await click(option('Prices')); await click(option('Barcode'));
+  assert(JSON.stringify(states()) === '[true,false,true,false,true,true]', 'options toggle independently');
   await click(button('Cancel'));
   assert(!dialog() && transfers.length === 0, 'cancel does not transfer');
   results.push('Checkboxes are independent; Cancel performs no transfer');
 
   await openReview();
-  assert(JSON.stringify(states()) === '[true,false,true,false,true]', 'choices kept while on the page');
+  assert(JSON.stringify(states()) === '[true,false,true,false,true,true]', 'choices kept while on the page');
+  holdTransfer = true;
   const continueButton = button('Continue Transfer'); continueButton.click(); continueButton.click(); await pause();
+  await waitFor(() => document.querySelector('.transfer-progress[open]') && releaseTransfer, 'category transfer loader');
+  const progress = document.querySelector<HTMLDialogElement>('.transfer-progress[open]')!;
+  assert(progress.querySelector('[role="status"]')?.textContent?.includes('Transferring categories and products'), 'Category transfer shows an accessible progress message');
+  assert(progress.querySelector('.transfer-progress-spinner'), 'Progress dialog contains an animated loader');
+  const bounds = progress.getBoundingClientRect();
+  assert(Math.abs(bounds.left + bounds.width / 2 - document.documentElement.clientWidth / 2) < 2 && Math.abs(bounds.top + bounds.height / 2 - innerHeight / 2) < 2, 'Transfer loader is centered in the viewport');
+  const cancelProgress = new Event('cancel', { cancelable: true }); progress.dispatchEvent(cancelProgress);
+  assert(cancelProgress.defaultPrevented && progress.open, 'Escape cannot dismiss the pending transfer loader');
+  releaseTransfer!(); releaseTransfer = undefined; holdTransfer = false;
   await waitFor(() => document.querySelector('#transfer-outcome-title')?.textContent === 'Transfer partially completed', 'result after backend confirmation');
   assert(document.querySelector('dialog[open] .transfer-outcome-skipped')?.textContent?.includes('Wrap: Possible destination name or barcode conflict'), 'popup lists skipped product with reason');
   assert(document.querySelector('dialog[open] .transfer-outcome-present')?.textContent?.includes('VEG BURGER: Product is already present in the destination.'), 'popup lists already present products');
   assert(!document.querySelector('dialog[open] .transfer-outcome-skipped')?.textContent?.includes('VEG BURGER'), 'already present is not listed as not copied');
+  assert(!document.querySelector('.transfer-progress'), 'Loader is removed after confirmed category transfer');
   assert(transfers.length === 1, 'duplicate click sends one request');
-  assert(transfers[0]!.mode === 'categories' && JSON.stringify(transfers[0]!.options) === '{"stock":true,"weighable":false,"images":true,"taxes":false,"prices":true}', 'category options sent');
+  assert(transfers[0]!.mode === 'categories' && JSON.stringify(transfers[0]!.options) === '{"stock":true,"weighable":false,"images":true,"taxes":false,"prices":true,"barcode":true}', 'category options sent');
   await click(button('OK'));
   results.push('Continue sends the chosen options once and shows success only after the backend confirms');
 
@@ -85,13 +98,17 @@ void (async () => {
   await click(document.querySelector<HTMLInputElement>('input[aria-label="Select Roll"]')!);
   await openReview();
   assert(!document.querySelector('[aria-label="Transfer summary"]'), 'no transfer summary for products');
-  for (const label of ['Stock', 'Weighable', 'Assigned Taxes', 'Prices']) if (!option(label).checked) await click(option(label));
-  assert(JSON.stringify(states()) === '[true,true,true,true,true]', 'all five selected');
-  failTransfer = true; await click(button('Continue Transfer'));
+  for (const label of ['Stock', 'Weighable', 'Assigned Taxes', 'Prices', 'Barcode']) if (!option(label).checked) await click(option(label));
+  assert(JSON.stringify(states()) === '[true,true,true,true,true,true]', 'all six selected');
+  failTransfer = true; holdTransfer = true; await click(button('Continue Transfer'));
+  await waitFor(() => document.querySelector('.transfer-progress[open]') && releaseTransfer, 'product transfer loader');
+  assert(document.querySelector('#transfer-progress-title')?.textContent === 'Transferring products…', 'Product transfer shows its progress message');
+  releaseTransfer!(); releaseTransfer = undefined; holdTransfer = false;
   await waitFor(() => document.body.textContent!.includes('Simulated transfer failure'), 'failure message');
   assert(!document.querySelector('#transfer-outcome-title[open], dialog[open] #transfer-outcome-title'), 'no success on failure');
-  assert(JSON.stringify(transfers[1]!.options) === '{"stock":true,"weighable":true,"images":true,"taxes":true,"prices":true}' && transfers[1]!.products[0]!.sourceProductId === 'p1', 'product options sent');
-  results.push('Product Transfer sends all five options; failures show an error without success');
+  assert(!document.querySelector('.transfer-progress'), 'Loader is removed when the transfer fails');
+  assert(JSON.stringify(transfers[1]!.options) === '{"stock":true,"weighable":true,"images":true,"taxes":true,"prices":true,"barcode":true}' && transfers[1]!.products[0]!.sourceProductId === 'p1', 'product options sent');
+  results.push('Product Transfer sends all six options; failures show an error without success');
   failTransfer = false;
   const productRow = (name: string) => document.querySelector<HTMLInputElement>(`input[aria-label="Select ${name}"]`)!;
   assert(productRow('Samosa').disabled && productRow('Samosa').closest('tr')!.textContent!.includes('Already present'), 'present product cannot be selected');

@@ -84,10 +84,11 @@ export const StockReportPage = ({ outlet, token, onSessionExpired, reportName = 
     setLoading(true);
     setError('');
     fetch(`/api/outlets/${encodeURIComponent(outlet.id)}/reports/stock`, {
-      headers: { Authorization: `Bearer ${token}` }, signal: controller.signal,
+      headers: { Authorization: `Bearer ${token}` }, cache: 'no-store', signal: controller.signal,
     })
       .then(async response => {
         const result = await response.json() as { success: boolean; message?: string; data?: StockReportResponse };
+        if (controller.signal.aborted) return;
         if (response.status === 401) {
           onSessionExpired();
           throw new Error('Your session has expired.');

@@ -1,3 +1,4 @@
+import { productImageSizeLabel } from './productImageProcessing.ts';
 import { useEffect, useRef, useState } from 'react';
 import { Image as ImageIcon, Upload, X } from 'lucide-react';
 import './LocalImagePicker.css';
@@ -110,7 +111,7 @@ export function LocalImagePicker({ id, label, existingImagePath, imageEndpoint, 
   const hasImage = !!currentUrl && !imageFailed;
   const hasSavedImage = !!existingImagePath;
 
-  return <div className="local-image-picker" aria-labelledby={`${id}-label`}>
+  return <div className={`local-image-picker${cropProductImage ? ' product-image-picker' : ''}`} aria-labelledby={`${id}-label`}>
     {cropFile && <ProductImageCropper file={cropFile} onCancel={() => setCropFile(null)} onApply={file => { setCropFile(null); chooseFile(file, true); }} />}
     <span className="local-image-picker-label" id={`${id}-label`}>{label}</span>
     <div className="local-image-picker-content">
@@ -129,7 +130,7 @@ export function LocalImagePicker({ id, label, existingImagePath, imageEndpoint, 
           onClick={requestRemoval}><X size={15} />Remove Image</button>}
         {!selected && removeExisting && <button type="button" className="btn-secondary local-image-button" disabled={disabled}
           onClick={() => { setRemoveExisting(false); onRemoveExisting?.(false); }}><X size={15} />Undo Remove</button>}
-        <span className="local-image-help">{selected && cropProductImage && `${selected.size.toLocaleString()} bytes · `}{selected && `${(selected.size / 1024).toFixed(2)} KB · `}The image is uploaded when you save the form.</span>
+        <span className="local-image-help">{selected && `${cropProductImage ? productImageSizeLabel(selected) : `${(selected.size / 1024).toFixed(2)} KB`} · `}The image is uploaded when you save the form.</span>
       </div>
     </div>
     {error && <p className="local-image-error" role="alert">{error}</p>}

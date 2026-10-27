@@ -27,6 +27,7 @@ import { GstDaywiseReportPage } from './pages/GstDaywiseReportPage.tsx';
 import { StockReportPage } from './pages/StockReportPage.tsx';
 import { StockInOutReportPage } from './pages/StockInOutReportPage.tsx';
 import { StockAdjustmentPage } from './pages/StockAdjustmentPage.tsx';
+import { GoodsReceivedPage } from './pages/GoodsReceivedPage.tsx';
 import { StockTransferReportPage } from './pages/StockTransferReportPage.tsx';
 import {
   Accessibility, BadgeIndianRupee, Banknote, Bot, Calculator, Download,
@@ -360,6 +361,7 @@ export default function App() {
       { label: 'Service Point', icon: <Store /> },
       { label: 'Premises', icon: <Store /> },
       { label: 'Stock In and Out', icon: <ClipboardCheck /> },
+      { label: 'Goods Received', icon: <ReceiptText /> },
       { label: 'User Account', icon: <ContactRound /> },
       { label: 'Employees/Captain/Salesman', icon: <UserRoundCog /> },
       { label: 'Category & Product Transfer', icon: <Database /> },
@@ -469,7 +471,9 @@ export default function App() {
               <button type="button" onClick={handleLogout}>Sign out</button>
             </section>
           )}
-          {!DAILY_WEB_USAGE_SCREEN_ENABLED && !usage.authorized ? null : activeNavigation.id === 'Masters:Stock In and Out' ? (
+          {!DAILY_WEB_USAGE_SCREEN_ENABLED && !usage.authorized ? null : activeNavigation.id === 'Masters:Goods Received' ? (
+            <GoodsReceivedPage key={`${session.id}:${selectedOutlet.id}`} outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} onCancel={() => setActiveNavigation({ id: 'Home:Dashboard', label: 'Dashboard' })} />
+          ) : activeNavigation.id === 'Masters:Stock In and Out' ? (
             <StockAdjustmentPage key={`${session.id}:${selectedOutlet.id}`} outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
           ) : activeNavigation.id === 'Operations:Multicounter' ? (
             <MulticounterPage key={`${session.id}:${selectedOutlet.id}`} outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />

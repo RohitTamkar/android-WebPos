@@ -109,10 +109,13 @@ void (async () => {
   await wait(() => preview.complete && preview.naturalWidth, 'decoded preview');
   assert(preview.naturalWidth === 64 && preview.naturalHeight === 48, 'Uncropped source preserves aspect ratio without upscaling');
   assert(!document.querySelector('.batch-image-table select, .batch-image-table input'), 'Matching and approval controls are outside the clean image rows');
-  assert(!document.querySelector('.batch-image-table')?.textContent?.includes('Masala.png') && !document.body.textContent?.includes('bytes ·'), 'Main rows omit filenames and processed byte sizes');
+  assert(!document.querySelector('.batch-image-table')?.textContent?.includes('Masala.png') && !document.body.textContent?.includes('bytes ·'), 'Main rows omit filenames');
+  assert(document.querySelector('.batch-image-table')?.textContent?.includes('30 KB target achieved'), 'Processed size target is shown beside the exact preview');
   assert(!document.body.textContent?.includes('product image(s) saved;'), 'Redundant bottom progress counters are removed');
   button('Crop / Adjust').click();
   await wait(() => button('Save') && !button('Save').disabled, 'crop available from the row');
+  button('Square crop').click();
+  await pause();
   button('Save').click();
   await wait(() => !document.querySelector('.product-crop-dialog') && document.querySelector<HTMLImageElement>('.batch-image-preview')?.naturalWidth === document.querySelector<HTMLImageElement>('.batch-image-preview')?.naturalHeight, 'processed crop applied');
   assert(requests.length === 0, 'Cropping never starts the upload');

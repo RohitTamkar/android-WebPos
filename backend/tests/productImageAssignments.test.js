@@ -1,3 +1,4 @@
+import { PRODUCT_IMAGE_MAX_BYTES } from '../../shared/productImageLimits.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { assignProductImage } from '../src/productImageAssignments.js';
@@ -115,9 +116,9 @@ test('upload or verification failure never changes product references or deletes
 });
 test('exact byte limit and detected content type are independently enforced', async () => {
     const f = fixture();
-    const boundary = Buffer.concat([png, Buffer.alloc(30720 - png.length)]);
+    const boundary = Buffer.concat([png, Buffer.alloc(PRODUCT_IMAGE_MAX_BYTES - png.length)]);
     await f.run(request([target('a')], boundary));
-    assert.equal([...f.objects.values()][0].bytes.length, 30720);
+    assert.equal([...f.objects.values()][0].bytes.length, PRODUCT_IMAGE_MAX_BYTES);
     await assert.rejects(f.run(request([target('b')], Buffer.concat([boundary, Buffer.alloc(1)]))));
     await assert.rejects(f.run({ ...request(), contentType: 'image/jpeg' }), /declared file type/);
     await assert.rejects(f.run({ ...request(), base64: '%%%=' }), /encoding/);

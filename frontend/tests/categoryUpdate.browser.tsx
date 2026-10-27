@@ -39,7 +39,7 @@ void (async () => {
   await waitFor(() => edit(), 'category load');
   const search = document.querySelector<HTMLInputElement>('.search-input')!;
   await value(search, 'Food');
-  await value(document.querySelector<HTMLSelectElement>('.filter-select')!, 'Active');
+  assert(!document.querySelector('.filter-select'), 'category status dropdown removed');
   edit().click(); await waitFor(() => input('edit-category-number'), 'edit opens');
   assert(input('edit-category-number').readOnly && input('edit-category-number').value === '13', 'existing number read-only');
   assert(input('edit-category-name').value === 'Food', 'name prefilled');
@@ -77,7 +77,7 @@ void (async () => {
   assert(document.querySelector('tbody')?.textContent?.includes('Regional Updated'), 'updated regional shown');
   assert(document.querySelector('tbody')?.textContent?.includes('13'), 'number unchanged');
   assert(document.querySelector<HTMLInputElement>('.search-input')!.value === 'Food', 'search preserved');
-  assert(document.querySelector<HTMLSelectElement>('.filter-select')!.value === 'Active', 'filter preserved');
+  assert(!document.querySelector('.filter-select'), 'status dropdown remains absent after saving');
   results.push('Successful update refreshes names, preserves number/filters and shows dismissible success popup');
 
   edit().click(); await waitFor(() => input('edit-category-name'), 'edit updated category');

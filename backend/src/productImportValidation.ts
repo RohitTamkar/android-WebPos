@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { productFields } from './productDefaults.js';
 import { parseProductCsv } from '../../frontend/src/pages/productCsvPreview.js';
+import { categoryNameKey, planImportCategories } from './productImportCategories.js';
 
 // Approved for user-triggered, create-only imports into the existing PRODUCT collection.
 export const PRODUCT_IMPORT_WRITES_ENABLED = true;
@@ -29,10 +30,10 @@ export function validateProductImport(source: string, categories: ImportCategory
       if (!c[column]?.trim() || !Number.isFinite(Number(c[column]))) errors.push({ column: preview.headers[column]!, message: 'A finite numeric value is required to construct the product.' });
     }
     if (Number(c[2]) !== Number(c[3])) errors.push({ column: 'Price 1', message: 'Price 1 must equal Default Price for the supplied single-entry priceTable. A separate Price 1 mapping has not been supplied.' });
-    if (c[10] !== 'number') errors.push({ column: 'Unit Type', message: 'Only number (unitId 2) is supported by the supplied product template.' });
+    if (c[10]?.toLowerCase() !== 'number') errors.push({ column: 'Unit Type', message: 'Only number (unitId 2) is supported by the supplied product template.' });
     if (Number(c[11]) !== 0) errors.push({ column: 'Stock', message: 'Only zero opening stock is supported until the stock-initialization workflow is specified.' });
     if (!['yes', 'no'].includes(c[12]?.toLowerCase() ?? '')) errors.push({ column: 'Weightable', message: 'Weightable must be yes or no.' });
-    const matches = categories.filter(category => category.name === c[6] && category.categoryNo === Number(c[7]));
+    const matches = categories.filter(category => categoryNameKey(category.name) === categoryNameKey(c[6] ?? ''));
     if (matches.length !== 1) {
       const numbered = categories.filter(category => category.categoryNo === Number(c[7]));
       const message = numbered.length === 1
@@ -82,7 +83,12 @@ export async function checkAuthorizedProductImport(profileId: string | null, out
   catch (error) { return { status: 400, body: { success: false, message: error instanceof Error ? error.message : 'Invalid spreadsheet.' } }; }
   if (!local.categoryChecked) return { status: 422, body: { success: false, data: local } };
   const [categories, taxes] = await Promise.all([deps.readCategories(outletId), deps.readTaxes()]);
-  const data = validateProductImport(source, categories, taxes);
+  const plan = planImportCategories(source, categories);
+  const data = { ...validateProductImport(source, plan.previewCategories, taxes), categorySummary: { reused: plan.reused, toCreate: plan.missing.length } };
+  if (plan.issues.length) {
+    for (const row of data.rows) row.errors.push(...plan.issues.filter(issue => issue.rowNumber === row.rowNumber).map(({ column, message }) => ({ column, message })));
+    data.canUpload = false; data.documents = [];
+  }
   if (data.canUpload) {
     const existing = await deps.readProducts(outletId);
     try { data.documents = allocateProductCodes(outletId, data.documents, existing); }

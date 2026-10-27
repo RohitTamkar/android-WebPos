@@ -32,18 +32,17 @@ test('real XLSX preserves exact columns, numeric values, text codes, all premise
   const output = await createProductExport(f.deps, 'outlet', 'user');
   assert.equal(output.buffer.subarray(0, 2).toString(), 'PK');
   const book = await workbook(output.buffer), sheet = book.getWorksheet('Products')!;
-  assert.deepEqual((sheet.getRow(1).values as unknown[]).slice(1), PRODUCT_EXCEL_COLUMNS);
+  assert.deepEqual((sheet.getRow(1).values as unknown[]).slice(1), [...PRODUCT_EXCEL_COLUMNS, 'TABLE price', 'TABLE', 'Legacy price']);
   assert.deepEqual((sheet.getRow(2).values as unknown[]).slice(1), [
-    '=Apple', 'Local', 10, 12.5, 20, 6, 'Fruit', 3, 5, '000123', 'number', 5, 'NO', '0007', '0012',
+    '=Apple', 'Local', 10, 12.5, 20, 6, 'Fruit', 3, 5, '000123', 'number', 5, 'NO', '0007', '0012', 14, 13, 16,
   ]);
   assert.equal(sheet.getCell('A2').type, ExcelJS.ValueType.String, 'product text is never a formula');
   assert.equal(sheet.getCell('J2').numFmt, '@');
-  const premises = book.getWorksheet('Premises')!;
-  assert.equal(premises.rowCount, 4, 'only assigned price keys, including aliases and legacy names');
-  assert.deepEqual((premises.getRow(2).values as unknown[]).slice(1), [2, '=Apple', '0007', 'TABLE', 'TABLE price', 14]);
-  assert.deepEqual((premises.getRow(3).values as unknown[]).slice(1), [2, '=Apple', '0007', 'TABLE', 'TABLE', 13]);
-  assert.equal(premises.getCell('D4').value, 'Legacy');
-  assert.equal(premises.getCell('E4').value, 'Legacy price');
+  assert.equal(book.getWorksheet('Premises'), undefined, 'Premise prices no longer create a separate worksheet');
+  assert.equal(book.worksheets.length, 1);
+  assert.equal(sheet.getCell('P2').value, 14);
+  assert.equal(sheet.getCell('Q2').value, 13, 'Separate legacy aliases retain their separate values');
+  assert.equal(sheet.getCell('R2').value, 16);
   assert.deepEqual(f.products, before);
 });
 test('complete lists exceed a UI page, deduplicate by document ID, retain same-name products and missing fields', async () => {
@@ -57,15 +56,36 @@ test('complete lists exceed a UI page, deduplicate by document ID, retain same-n
   for (const column of ['C', 'D', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'O']) assert.equal(sheet.getCell(`${column}2`).value, '');
   assert.equal(book.getWorksheet('Premises'), undefined);
 });
-test('unknown mappings are recorded, invalid premises data fails visibly, and empty outlet exports a header', async () => {
+test('unknown mappings stay blank on the Products sheet, invalid premises data fails visibly, and empty outlet exports a header', async () => {
   const f = fixture();
   f.deps.readProducts = async () => [{ id: 'p', fields: { name: 'Unknown', code: '001', category: 'missing', taxIndex: 99, unitId: 99 } }];
   const result = await createProductExport(f.deps, 'outlet', 'user');
-  assert.equal(result.warnings, 3); assert.equal((await workbook(result.buffer)).getWorksheet('Export Notes')!.rowCount, 4);
+  const book = await workbook(result.buffer);
+  assert.equal(result.warnings, 2);
+  assert.deepEqual(book.worksheets.map(sheet => sheet.name), ['Products']);
+  for (const column of ['G', 'H', 'I', 'K']) assert.equal(book.getWorksheet('Products')!.getCell(`${column}2`).value, '');
   f.deps.readProducts = async () => [{ id: 'p', fields: { priceTable: '{broken' } }];
   await assert.rejects(createProductExport(f.deps, 'outlet', 'user'), /invalid price table/);
   f.deps.readProducts = async () => [];
   assert.equal((await workbook((await createProductExport(f.deps, 'outlet', 'user')).buffer)).getWorksheet('Products')!.rowCount, 1);
+});
+test('missing, empty and unresolved categories export blank names and numbers without extra sheets', async () => {
+  const f = fixture();
+  const products = [undefined, null, '', 'deleted-category', 'c1'].map((category, index) => ({
+    id: `p${index}`, fields: { name: `Product ${index}`, code: index + 1, ...(category === undefined ? {} : { category }) },
+  }));
+  const before = structuredClone(products);
+  f.deps.readProducts = async () => products;
+  const result = await createProductExport(f.deps, 'outlet', 'user');
+  const book = await workbook(result.buffer), sheet = book.getWorksheet('Products')!;
+  assert.deepEqual(book.worksheets.map(sheet => sheet.name), ['Products']);
+  assert.equal(result.count, 5); assert.equal(result.warnings, 0);
+  for (let row = 2; row <= 5; row++) {
+    assert.equal(sheet.getCell(`G${row}`).value, '');
+    assert.equal(sheet.getCell(`H${row}`).value, '');
+  }
+  assert.equal(sheet.getCell('G6').value, 'Fruit'); assert.equal(sheet.getCell('H6').value, 3);
+  assert.deepEqual(products, before);
 });
 test('missing sessions, inactive profiles, foreign outlets and invalid paths never read product data', async () => {
   const f = fixture();
@@ -167,4 +187,44 @@ test('server wiring retains the usage guard and rejects missing, forged and expi
   }
   assert.equal(f.reads(), 0);
   assert.equal((await f.request('/download', undefined, 'outlet', `Bearer ${jwt.sign({ profileDocId: 'user' }, key)}`)).statusCode, 200);
+});
+
+
+test('premise columns are aligned across products, preserving missing prices, zero and decimals', async () => {
+  const f = fixture();
+  f.deps.readProducts = async () => [
+    { id: 'p2', fields: { name: 'Second', code: '002', priceTable: JSON.stringify({ 'default price': 5, 'AC price': '25.75', 'Room price': 0 }) } },
+    { id: 'p1', fields: { name: 'First', code: '001', priceTable: { 'default price': 4, 'TABLE price': 10 } } },
+    { id: 'p3', fields: { name: 'Third', code: '003' } },
+  ];
+  const book = await workbook((await createProductExport(f.deps, 'outlet', 'user')).buffer);
+  const sheet = book.getWorksheet('Products')!;
+  assert.deepEqual((sheet.getRow(1).values as unknown[]).slice(1), [...PRODUCT_EXCEL_COLUMNS, 'TABLE price', 'AC price', 'Room price']);
+  assert.equal(sheet.getCell('P2').value, 10); assert.equal(sheet.getCell('Q2').value, ''); assert.equal(sheet.getCell('R2').value, '');
+  assert.equal(sheet.getCell('P3').value, ''); assert.equal(sheet.getCell('Q3').value, 25.75); assert.equal(sheet.getCell('R3').value, 0);
+  for (const column of ['P', 'Q', 'R']) assert.equal(sheet.getCell(`${column}4`).value, '');
+  assert.equal(sheet.getCell('Q3').type, ExcelJS.ValueType.Number);
+  assert.deepEqual(sheet.autoFilter, 'A1:R4');
+  assert.equal(book.worksheets.length, 1);
+});
+
+test('premise headers cannot collide with base columns or other premise aliases', async () => {
+  const f = fixture();
+  f.deps.readProducts = async () => [{ id: 'p', fields: { priceTable: { Price: 12, ' TABLE price ': 15, 'TABLE price': 16 } } }];
+  const sheet = (await workbook((await createProductExport(f.deps, 'outlet', 'user')).buffer)).getWorksheet('Products')!;
+  const headers = (sheet.getRow(1).values as string[]).slice(1);
+  assert.equal(new Set(headers.map(h => h.toLowerCase())).size, 18);
+  assert.deepEqual(headers.slice(0, 15), PRODUCT_EXCEL_COLUMNS);
+  assert.deepEqual(headers.slice(15), ['Price (Premise 1)', 'TABLE price', 'TABLE price (Premise 1)']);
+  assert.deepEqual((sheet.getRow(2).values as unknown[]).slice(16), [12, 15, 16]);
+});
+
+test('invalid premise prices and excessive premise column counts fail before producing a misleading export', async () => {
+  const f = fixture();
+  for (const priceTable of [{ 'TABLE price': { amount: 5 } }, { 'TABLE price': [5] }]) {
+    f.deps.readProducts = async () => [{ id: 'p', fields: { priceTable } }];
+    await assert.rejects(createProductExport(f.deps, 'outlet', 'user'), /invalid premises price/);
+  }
+  f.deps.readProducts = async () => [{ id: 'p', fields: { priceTable: Object.fromEntries(Array.from({ length: 16370 }, (_, i) => [`Premise ${i} price`, 1])) } }];
+  await assert.rejects(createProductExport(f.deps, 'outlet', 'user'), /column limit/);
 });

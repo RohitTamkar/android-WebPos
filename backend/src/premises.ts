@@ -15,8 +15,10 @@ const schema = z.object({
 }).strict();
 
 export interface PremisesRecord { documentId: string; fields: Record<string, unknown> }
-export type TypedFields = Record<string, { integerValue: string } | { doubleValue: number } |
-  { stringValue: string } | { booleanValue: boolean } | { nullValue: null } | { timestampValue: string }>;
+export type FirestoreValue = { integerValue: string } | { doubleValue: number } |
+  { stringValue: string } | { booleanValue: boolean } | { nullValue: null } | { timestampValue: string } |
+  { mapValue: { fields: Record<string, FirestoreValue> } } | { arrayValue: { values: FirestoreValue[] } };
+export type TypedFields = Record<string, FirestoreValue>;
 export interface PremisesTransaction {
   read(path: string): Promise<Record<string, unknown> | undefined>;
   list(path: string): Promise<PremisesRecord[]>;

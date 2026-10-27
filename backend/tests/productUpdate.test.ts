@@ -119,7 +119,7 @@ test('price changes preserve additional price levels; malformed existing tables 
 
 test('immutable and unknown fields cannot be modified, and invalid numeric/reference data cannot save', async () => {
   const f = fixture(); const before = structuredClone(f.records);
-  for (const changes of [{ code: 999 }, { id: 'new' }, { barcode: 'new' }, { currentStock: 999 }, { active: false },
+  for (const changes of [{ code: 999 }, { id: 'new' }, { barcode: 123 }, { currentStock: 999 }, { active: false },
     { dateTme: 'new' }, { onlineSynced: false }, { priceTable: '{}' }, { unexpected: true }, { price: -1 },
     { mrpPrice: NaN }, { costPrice: Infinity }, { discount: 101 }, { name: '' }, { category: 'foreign' },
     { taxIndex: 999 }, { unitId: 999 }, { weighable: 'yes' }]) {
@@ -152,6 +152,42 @@ test('deleted products cannot be recreated by update, failures preserve data, an
   const saved = structuredClone(good.records);
   await updateOutletProduct(good.db, 'outlet', 'p1', 'user', assigned, patch);
   assert.deepEqual(good.records, saved);
+});
+
+test('barcode, online and premises prices and an existing service point update together without replacing other prices', async () => {
+  const f = fixture();
+  f.records.set('OUTLET/outlet/SERVICE_POINT/bar', { name: 'Bar' });
+  f.records.set('OUTLET/outlet/PREMISES/ac', { name: 'AC Table' });
+  const result = await updateOutletProduct(f.db, 'outlet', 'p1', 'user', assigned, {
+    barcode: '0000098765', kitchenId: 'bar', onlinePrice: 90, price: 75,
+    premisesPrices: { 'AC Table price': 80, Wholesale: 45 },
+  });
+  assert.equal(result.fields.barcode, '0000098765');
+  assert.equal(result.fields.kitchenId, 'bar');
+  assert.equal(result.fields.onlinePrice, 90);
+  assert.equal(result.fields.currentStock, 35);
+  assert.deepEqual(JSON.parse(String(result.fields.priceTable)), { 'default price': 75, Wholesale: 45, 'AC Table price': 80 });
+  assert.equal(Object.hasOwn(result.fields, 'premisesPrices'), false);
+  assert.ok(f.updates.every(update => update.path === path));
+});
+
+test('premises-only edits preserve the current default price and other prices', async () => {
+  const f = fixture();
+  const result = await updateOutletProduct(f.db, 'outlet', 'p1', 'user', assigned, { premisesPrices: { Wholesale: 0 } });
+  assert.deepEqual(JSON.parse(String(result.fields.priceTable)), { 'default price': 50, Wholesale: 0 });
+  assert.deepEqual(Object.keys(f.updates[0]!.fields), ['priceTable']);
+});
+
+test('invalid prices and missing service points fail without writing; assignments can be cleared', async () => {
+  const f = fixture();
+  for (const patch of [{ kitchenId: 'missing' }, { kitchenId: 'other/outlet' },
+    { premisesPrices: { missing: 5 } }, { premisesPrices: { 'default price': 100 } },
+    { premisesPrices: { Wholesale: -1 } }, { premisesPrices: { Wholesale: '10' } }]) {
+    await assert.rejects(updateOutletProduct(f.db, 'outlet', 'p1', 'user', assigned, patch));
+  }
+  assert.deepEqual(f.updates, []);
+  const result = await updateOutletProduct(f.db, 'outlet', 'p1', 'user', assigned, { kitchenId: '' });
+  assert.equal(result.fields.kitchenId, '');
 });
 
 test('partial updates preserve stock or names changed since the form was opened', async () => {

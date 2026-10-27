@@ -50,7 +50,7 @@ const IMAGE_JWT_SECRET = process.env.PRODUCT_IMAGE_SECRET || process.env.JWT_SEC
 const TRANSFER_JWT_SECRET = process.env.MASTER_TRANSFER_SECRET || process.env.JWT_SECRET || '';
 app.use((0, cors_1.default)());
 app.use("/api/outlets/:outletId/products/import", express_1.default.json({ limit: "12mb" }));
-app.use('/api/outlets/:outletId/product-image-assignments', express_1.default.json({ limit: '160kb' }));
+app.use('/api/outlets/:outletId/product-image-assignments', express_1.default.json({ limit: '800kb' }));
 app.use(express_1.default.json());
 // All outlet-scoped routes in this Express backend belong to Web POS.
 // Checks never renew leases; dashboard polling therefore cannot keep a session active.
@@ -1713,8 +1713,10 @@ app.post("/api/outlets/:outletId/categories", async (req, res) => {
         res.status(503).json({ success: false, message: "Unable to add the category right now." });
     }
 });
-// Stock report: current stock count for the stockable products of an assigned outlet (read-only).
+// Current balances are authoritative; movement history must not be applied again.
+// Only explicitly stockable products participate in the inventory report.
 app.get("/api/outlets/:outletId/reports/stock", async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
     const token = readAccessToken(req);
     if (!token) {
         res.status(401).json({ success: false, message: "Your session has expired. Please sign in again." });

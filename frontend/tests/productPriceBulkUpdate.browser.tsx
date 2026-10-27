@@ -79,7 +79,8 @@ void (async () => {
 
   failIds.clear(); patches.length = 0;
   await click(button('Update'));
-  await waitFor(() => document.querySelector('.products-notice')?.textContent?.includes('Prices updated successfully for 1 product'), 'success notice');
+  await waitFor(() => document.querySelector('[aria-label="More options"]'), 'return to Products');
+  assert(!document.querySelector('.products-notice'), 'Completed update leaves no success banner');
   assert(patches.length === 1 && patches[0]!.id === 'p2', 'retry resends only the failed product');
   await waitFor(() => listLoads === 2, 'list reloaded');
   assert(store.get('p1')!.priceTable === '{"default price":80,"AC Table price":35,"TABLE price":90}' && store.get('p2')!.price === 35, 'saved values');

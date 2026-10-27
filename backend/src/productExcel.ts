@@ -47,44 +47,48 @@ export async function createProductExport(deps: ProductExportDependencies, outle
   ]);
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet('Products');
-  sheet.addRow(PRODUCT_EXCEL_COLUMNS);
   const categoryById = new Map(categories.map(category => [category.id, category]));
   const unique = [...new Map(products.map(product => [product.id, product])).values()]
     .sort((a, b) => text(a.fields.code).localeCompare(text(b.fields.code), 'en', { numeric: true }) || a.id.localeCompare(b.id));
-  let premisesSheet: ExcelJS.Worksheet | undefined;
-  const notes: string[][] = [];
-  for (const { fields: f } of unique) {
+  // Build one stable set of columns before writing any product rows, so a price
+  // found on a later product still lines up with every earlier product.
+  const prepared = unique.map(product => ({ ...product, table: priceTable(product.fields.priceTable) }));
+  const premisesKeys = [...new Set(prepared.flatMap(({ table }) => Object.keys(table).filter(key => normalize(key) !== 'default price')))];
+  if (PRODUCT_EXCEL_COLUMNS.length + premisesKeys.length > 16384) {
+    throw new ProductCreationError(422, 'The premises prices exceed the Excel worksheet column limit.');
+  }
+  const usedHeaders = new Set(PRODUCT_EXCEL_COLUMNS.map(normalize));
+  const premisesHeaders = premisesKeys.map(key => {
+    const base = key.trim().replace(/\s+price$/i, '');
+    const match = premises.find(premise => normalize(premise.name) === normalize(key))
+      ?? premises.find(premise => normalize(premise.name) === normalize(base));
+    const name = match ? `${match.name}${/\s+price$/i.test(key.trim()) ? ' price' : ''}` : key.trim() || 'Premise';
+    let header = name, suffix = 1;
+    while (usedHeaders.has(normalize(header))) header = `${name} (Premise ${suffix++})`;
+    usedHeaders.add(normalize(header));
+    return header;
+  });
+  addRow(sheet, [...PRODUCT_EXCEL_COLUMNS, ...premisesHeaders]);
+  let warnings = 0;
+  for (const { fields: f, table } of prepared) {
     const category = categoryById.get(text(f.category));
-    const table = priceTable(f.priceTable);
     const tax = ANDROID_TAX_OPTIONS.find(tax => tax.index === Number(f.taxIndex));
     const unit = PRODUCT_UNITS.find(unit => f.unitId !== undefined && f.unitId !== null && f.unitId !== '' && unit.id === Number(f.unitId));
-    if (f.category && !category) notes.push([text(f.name), text(f.code), `Category reference could not be resolved: ${text(f.category)}`]);
-    if (f.taxIndex !== undefined && f.taxIndex !== null && f.taxIndex !== '' && !tax) notes.push([text(f.name), text(f.code), `Unknown taxIndex: ${text(f.taxIndex)}`]);
-    if (f.unitId !== undefined && f.unitId !== null && f.unitId !== '' && !unit) notes.push([text(f.name), text(f.code), `Unknown unitId: ${text(f.unitId)}`]);
-    addRow(sheet, [text(f.name), text(f.regionalName), number(table['default price']), number(f.price), number(f.mrpPrice), number(f.costPrice),
-      category?.name ?? '', number(category?.categoryNo), tax?.percent ?? '', text(f.barcode), unit?.name.toLowerCase() ?? '', number(f.currentStock),
-      typeof f.weighable === 'boolean' ? f.weighable ? 'YES' : 'NO' : '', text(f.code), text(f.hsnCode)]);
-    for (const [key, value] of Object.entries(table)) {
-      if (normalize(key) === 'default price') continue;
+    if (f.taxIndex !== undefined && f.taxIndex !== null && f.taxIndex !== '' && !tax) warnings++;
+    if (f.unitId !== undefined && f.unitId !== null && f.unitId !== '' && !unit) warnings++;
+    const prices = premisesKeys.map(key => {
+      const value = Object.hasOwn(table, key) ? table[key] : undefined;
       if (value !== null && value !== undefined && typeof value !== 'string' && typeof value !== 'number') {
         throw new ProductCreationError(422, 'A product has an invalid premises price. Correct it before exporting so its value is not lost.');
       }
-      if (!premisesSheet) {
-        premisesSheet = workbook.addWorksheet('Premises');
-        premisesSheet.addRow(['Product Row', 'Product Name', 'Search Code', 'Premises', 'Price Key', 'Price']);
-      }
-      const base = key.trim().replace(/\s+price$/i, '');
-      const match = premises.find(premise => normalize(premise.name) === normalize(key))
-        ?? premises.find(premise => normalize(premise.name) === normalize(base));
-      // Keep every original key, including legacy/unconfigured names and duplicate aliases.
+      // Preserve explicit zero, numeric prices and legacy text. Missing prices
+      // remain blank; never invent a price or overwrite another key's value.
       const price = number(value);
-      addRow(premisesSheet, [sheet.rowCount, text(f.name), text(f.code), match?.name ?? base, key, price === '' ? text(value) : price]);
-    }
-  }
-  if (notes.length) {
-    const warnings = workbook.addWorksheet('Export Notes');
-    warnings.addRow(['Product Name', 'Search Code', 'Unresolved Mapping']);
-    notes.forEach(row => addRow(warnings, row));
+      return price === '' ? text(value) : price;
+    });
+    addRow(sheet, [text(f.name), text(f.regionalName), number(table['default price']), number(f.price), number(f.mrpPrice), number(f.costPrice),
+      category?.name ?? '', number(category?.categoryNo), tax?.percent ?? '', text(f.barcode), unit?.name.toLowerCase() ?? '', number(f.currentStock),
+      typeof f.weighable === 'boolean' ? f.weighable ? 'YES' : 'NO' : '', text(f.code), text(f.hsnCode), ...prices]);
   }
   for (const tab of workbook.worksheets) {
     tab.views = [{ state: 'frozen', ySplit: 1 }];
@@ -94,7 +98,6 @@ export async function createProductExport(deps: ProductExportDependencies, outle
     tab.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F8FC' } };
   }
   for (const index of [10, 14, 15]) sheet.getColumn(index).numFmt = '@';
-  if (premisesSheet) premisesSheet.getColumn(3).numFmt = '@';
   const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
-  return { buffer, filename: 'Products.xlsx', count: unique.length, warnings: notes.length };
+  return { buffer, filename: 'Products.xlsx', count: unique.length, warnings };
 }

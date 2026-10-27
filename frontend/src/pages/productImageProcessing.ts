@@ -1,4 +1,9 @@
-export const PRODUCT_IMAGE_MAX_BYTES = 30 * 1024;
+import { PRODUCT_IMAGE_MAX_BYTES, PRODUCT_IMAGE_TARGET_BYTES } from '../../../shared/productImageLimits.ts';
+export { PRODUCT_IMAGE_MAX_BYTES, PRODUCT_IMAGE_TARGET_BYTES };
+
+export function productImageSizeLabel(file: Blob): string {
+  return `${(file.size / 1024).toFixed(2)} KB · ${file.size <= PRODUCT_IMAGE_TARGET_BYTES ? '30 KB target achieved' : 'Above 30 KB target — retained for clarity'}`;
+}
 export const IMAGE_INPUT_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 export interface CropRegion { x: number; y: number; size: number; width?: number; height?: number }
 
@@ -23,7 +28,9 @@ function encode(canvas: HTMLCanvasElement, type = 'image/png', quality?: number)
     ? resolve(blob) : reject(new Error('Unable to process this image. Please try another image.')), type, quality));
 }
 
-export async function processProductImage(image: ImageBitmap, crop: CropRegion): Promise<File> {
+export async function processProductImage(image: ImageBitmap, crop: CropRegion, source?: File): Promise<File> {
+  if (source && source.size <= PRODUCT_IMAGE_TARGET_BYTES && crop.x === 0 && crop.y === 0
+    && crop.width === image.width && crop.height === image.height && Math.max(image.width, image.height) <= 1600) return source;
   const canvas = document.createElement('canvas');
   const context = canvas.getContext('2d');
   if (!context) throw new Error('Image editing is unavailable in this browser.');
@@ -39,47 +46,51 @@ export async function processProductImage(image: ImageBitmap, crop: CropRegion):
   };
   const asFile = (blob: Blob) => new File([blob], `product.${blob.type === 'image/webp' ? 'webp' : blob.type === 'image/jpeg' ? 'jpg' : 'png'}`, { type: blob.type });
   const nativeSize = Math.max(1, Math.floor(longestSide));
-  draw(nativeSize);
-  const originalPng = await encode(canvas);
-  if (originalPng.size <= PRODUCT_IMAGE_MAX_BYTES) return asFile(originalPng);
-
-  // Retain dimensions first, then progressively reduce by 15%. A quality floor and
-  // 256px resolution floor prevent the old silent reduction to tiny thumbnails.
-  // Small sources keep their native dimensions, even when they cannot fit.
-  const minimumSize = Math.min(nativeSize, Math.ceil(256 * longestSide / Math.min(cropWidth, cropHeight)));
-  let size = nativeSize;
+  // Bound large camera sources without upscaling small ones. Keep at least 768px
+  // on the long side (or native size) and 256px on the short side where possible.
+  const initialSize = Math.min(nativeSize, 1600);
+  const minimumSize = Math.min(initialSize, Math.max(768, Math.ceil(256 * longestSide / Math.min(cropWidth, cropHeight))));
+  let size = initialSize;
+  let clarityFallback: Blob | undefined;
   while (true) {
-    if (size !== nativeSize) {
-      draw(size);
-      const png = await encode(canvas);
-      if (png.size <= PRODUCT_IMAGE_MAX_BYTES) return asFile(png);
-    }
-    // WebP supports alpha. Browsers without its encoder return PNG; only opaque
-    // crops may use JPEG as a fallback, so transparency never becomes black.
+    draw(size);
+    const png = await encode(canvas);
+    if (png.size <= PRODUCT_IMAGE_TARGET_BYTES) return asFile(png);
+    // WebP is already supported by the POS and storage layer and preserves alpha.
+    // A missing WebP encoder may use JPEG only for opaque content.
     let type = 'image/webp';
-    let best = await encode(canvas, type, 0.8);
-    if (best.type !== type) {
+    let preferred = await encode(canvas, type, 0.9);
+    if (preferred.type !== type) {
       const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
       let opaque = true;
       for (let i = 3; i < pixels.length; i += 4) {
         if (pixels[i] !== 255) { opaque = false; break; }
       }
-      if (opaque) { type = 'image/jpeg'; best = await encode(canvas, type, 0.8); }
+      type = opaque ? 'image/jpeg' : 'image/png';
+      preferred = type === 'image/png' ? png : await encode(canvas, type, 0.9);
     }
-    if (best.type === type && best.size <= PRODUCT_IMAGE_MAX_BYTES) {
-      const high = await encode(canvas, type, 0.98);
-      if (high.size <= PRODUCT_IMAGE_MAX_BYTES) return asFile(high);
-      let lower = 0.8, upper = 0.98;
-      for (let attempt = 0; attempt < 8; attempt++) {
-        const quality = (lower + upper) / 2;
-        const candidate = await encode(canvas, type, quality);
-        if (candidate.type === type && candidate.size <= PRODUCT_IMAGE_MAX_BYTES) { lower = quality; best = candidate; }
-        else upper = quality;
+    if (preferred.size <= PRODUCT_IMAGE_TARGET_BYTES) return asFile(preferred);
+    if (!clarityFallback && preferred.size <= PRODUCT_IMAGE_MAX_BYTES) clarityFallback = preferred;
+    if (type !== 'image/png') {
+      let best = await encode(canvas, type, 0.82);
+      if (!clarityFallback && best.size <= PRODUCT_IMAGE_MAX_BYTES) clarityFallback = best;
+      if (best.size <= PRODUCT_IMAGE_TARGET_BYTES) {
+        let lower = 0.82, upper = 0.9;
+        for (let attempt = 0; attempt < 7; attempt++) {
+          const quality = (lower + upper) / 2;
+          const candidate = await encode(canvas, type, quality);
+          if (candidate.size <= PRODUCT_IMAGE_TARGET_BYTES) { lower = quality; best = candidate; }
+          else upper = quality;
+        }
+        return asFile(best);
       }
-      return asFile(best);
     }
-    if (size === minimumSize) break;
+    if (size === minimumSize) {
+      // Stop shrinking for a byte target. Keep the preferred quality and show
+      // the measured size to the user before they explicitly upload it.
+      if (clarityFallback) return asFile(clarityFallback);
+      throw new Error('This image needs more than 512 KB to retain detail. Choose a smaller source or adjust the crop.');
+    }
     size = Math.max(minimumSize, Math.floor(size * 0.85));
   }
-  throw new Error('Unable to prepare a clear image within 30 KB. Adjust the crop or choose a simpler, clearer image.');
 }

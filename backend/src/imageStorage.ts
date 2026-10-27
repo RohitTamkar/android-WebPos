@@ -7,7 +7,8 @@ export type MasterImageStorageBucket = StorageBucket;
 export type MasterImageCollection = 'PRODUCT' | 'CATEGORY';
 export type MasterImageKind = 'products' | 'categories';
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-export const PRODUCT_IMAGE_MAX_BYTES = 30 * 1024;
+import { PRODUCT_IMAGE_MAX_BYTES } from '../../shared/productImageLimits.js';
+export { PRODUCT_IMAGE_MAX_BYTES };
 const mimeExtension: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
 
 export class ImageStorageError extends Error {
@@ -214,7 +215,7 @@ export async function uploadMasterImage(db: Firestore, bucket: StorageBucket, ki
   outletId: string, documentId: string, bytes: Buffer, declaredType: string, operation?: ProductImageUploadOperation) {
   validateRecordIds(outletId, documentId);
   if (!Buffer.isBuffer(bytes) || !bytes.length) throw new ImageStorageError(400, 'Choose an image before uploading.');
-  if (kind === 'products' && bytes.length > PRODUCT_IMAGE_MAX_BYTES) throw new ImageStorageError(413, 'Product images must be 30 KB or smaller.');
+  if (kind === 'products' && bytes.length > PRODUCT_IMAGE_MAX_BYTES) throw new ImageStorageError(413, 'Product images must be 512 KB or smaller.');
   const detectedType = detectImage(bytes);
   if (declaredType !== detectedType) throw new ImageStorageError(415, 'The image content does not match its declared file type.');
   const collection: MasterImageCollection = kind === 'products' ? 'PRODUCT' : 'CATEGORY';

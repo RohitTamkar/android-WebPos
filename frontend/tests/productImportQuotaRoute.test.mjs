@@ -40,7 +40,7 @@ function fixture({ status = 200, writesEnabled = true, persist } = {}) {
     PRODUCT_IMPORT_WRITES_ENABLED: writesEnabled,
     productImportQuota: createInMemoryProductImportQuota(() => acceptedAt),
     ProductImportQuotaError, ProductCreationError,
-    persistProductImport: async (...args) => {
+    persistProductImportWithCategories: async (...args) => {
       writes.push(args);
       return persist ? persist(...args) : { success: true, created: 1, existing: 0, confirmedRows: [2], unconfirmedRows: [] };
     },

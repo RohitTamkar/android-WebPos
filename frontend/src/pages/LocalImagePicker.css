@@ -31,3 +31,5 @@
   .local-image-picker-content { align-items: flex-start; flex-direction: column; }
   .local-image-picker-actions { width: 100%; }
 }
+
+.local-image-picker.product-image-picker .local-image-preview img { object-fit: contain; }

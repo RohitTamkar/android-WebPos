@@ -328,7 +328,7 @@ test('transaction retries recalculate sequential category numbers from concurren
   assert.deepEqual(result.items.map(item => item.destinationNumber), [101, 102]);
 });
 
-const none = { stock: false, weighable: false, images: true, taxes: false, prices: false };
+const none = { stock: false, weighable: false, images: true, taxes: false, prices: false, barcode: false };
 const withOptions = (f: ReturnType<typeof fixture>, options: Partial<typeof none>, request: Record<string, unknown> = f.productRequest) =>
   f.transfer({ ...request, options: { ...none, ...options } });
 
@@ -445,4 +445,44 @@ test('a repeated Category Transfer reports everything as already present and add
   assert.equal(again.created, 0); assert.equal(again.unchanged, 2);
   assert.match(again.items.find(item => item.sourceId === 'p9')!.reason, /category is already present/);
   assert.equal(newProducts(f).length, 1);
+});
+
+
+test('barcode option copies source barcodes for products and linked category products only when enabled', async () => {
+  for (const mode of ['products', 'categories']) for (const barcode of [false, true]) {
+    const f = fixture();
+    await withOptions(f, { barcode }, mode === 'products' ? f.productRequest : { ...f.categories, categoryIds: ['c1'], products: [{ sourceProductId: 'p1', fields: [...requiredFields] }] });
+    const copied = newProducts(f)[0]!;
+    assert.equal(copied.barcode, barcode ? 'BAR-1' : '');
+    assert.equal(copied.currentStock, 0);
+    assert.equal(f.records.get('OUTLET/source/PRODUCT/p1')!.barcode, 'BAR-1');
+  }
+});
+
+test('barcode option retains existing barcode-conflict protection and never overwrites destination stock', async () => {
+  const f = fixture();
+  f.records.get('OUTLET/destination/PRODUCT/old')!.barcode = 'BAR-1';
+  const before = structuredClone(f.records.get('OUTLET/destination/PRODUCT/old'));
+  const result = await withOptions(f, { barcode: true });
+  assert.equal(result.created, 0); assert.equal(newProducts(f).length, 0);
+  assert.deepEqual(f.records.get('OUTLET/destination/PRODUCT/old'), before);
+});
+
+test('older five-option clients remain supported; invalid barcode options are rejected', async () => {
+  const f = fixture();
+  const { barcode: _barcode, ...legacyOptions } = none;
+  await f.transfer({ ...f.productRequest, options: legacyOptions });
+  assert.equal(newProducts(f)[0]!.barcode, '');
+  const invalid = fixture();
+  await assert.rejects(invalid.transfer({ ...invalid.productRequest, options: { ...none, barcode: 'true' } }),
+    (error: { status?: number }) => error.status === 422);
+  assert.equal(invalid.writes.length, 0);
+});
+
+test('missing or invalid optional source barcode leaves the new barcode blank', async () => {
+  for (const barcode of [undefined, null, 12345, 'x'.repeat(201)]) {
+    const f = fixture(); f.records.get('OUTLET/source/PRODUCT/p1')!.barcode = barcode;
+    await withOptions(f, { barcode: true });
+    assert.equal(newProducts(f)[0]!.barcode, '');
+  }
 });

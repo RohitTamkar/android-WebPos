@@ -1,3 +1,5 @@
+import { useSuccessDismiss } from '../utils/useTimedNotice.ts';
+import { productImageSizeLabel } from './productImageProcessing.ts';
 import { useEffect, useRef, useState } from 'react';
 import { createRequestId } from '../utils/requestId.ts';
 import { ProductImageCropper } from './ProductImageCropper.tsx';
@@ -75,7 +77,7 @@ export function ProductImageBatch({ mode, products, outletId, token, imageGrant,
         let bitmap: ImageBitmap | undefined;
         try {
           bitmap = await decodeProductImage(row.original);
-          const processed = await processProductImage(bitmap, { x: 0, y: 0, size: Math.max(bitmap.width, bitmap.height), width: bitmap.width, height: bitmap.height });
+          const processed = await processProductImage(bitmap, { x: 0, y: 0, size: Math.max(bitmap.width, bitmap.height), width: bitmap.width, height: bitmap.height }, row.original);
           update(row.id, { processed, status: 'ready' });
         } catch (reason) { update(row.id, { status: 'failed', error: (reason as Error).message }); }
         finally { bitmap?.close(); }
@@ -148,7 +150,7 @@ export function ProductImageBatch({ mode, products, outletId, token, imageGrant,
         <tbody>{entries.map(({ row, documentId, product }) => {
           const result = row.results.find(result => result.documentId === documentId);
           return <tr key={`${row.id}:${documentId}`}>
-            <td>{row.processed ? <ProcessedPreview file={row.processed} /> : <span className="batch-preview-pending">—</span>}</td>
+            <td>{row.processed ? <><ProcessedPreview file={row.processed} /><small>{productImageSizeLabel(row.processed)}</small></> : <span className="batch-preview-pending">—</span>}</td>
             <td className="products-name">{product ? productName(product) : 'Select a product'}</td>
             <td><span className={`batch-status ${result?.status ?? row.status}`} role="status">{statusLabel(result?.status ?? row.status)}</span></td>
             <td><div className="batch-row-actions">
@@ -206,6 +208,7 @@ export function ProductImageBatch({ mode, products, outletId, token, imageGrant,
 }
 
 function UploadSuccessDialog({ count, onClose }: { count: number; onClose: () => void }) {
+  useSuccessDismiss(`Images uploaded successfully: ${count}`, onClose);
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => { dialog.current?.showModal(); }, []);
   return <dialog ref={dialog} className="category-modal product-image-upload-success" aria-labelledby="image-upload-success-title"

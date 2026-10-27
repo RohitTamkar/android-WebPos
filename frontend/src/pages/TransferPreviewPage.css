@@ -66,3 +66,10 @@
 .transfer-outcome-skipped li + li, .transfer-outcome-present li + li { margin-top: 4px; }
 .transfer-row-present td { color: var(--muted); }
 .transfer-present-badge { display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--blue, #3567f0) 12%, transparent); color: var(--blue, #3567f0); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.transfer-progress { width: min(380px, calc(100% - 32px)); padding: 32px; text-align: center; }
+.transfer-progress [role="status"] { display: grid; justify-items: center; gap: 16px; }
+.transfer-progress h2 { font-size: 19px; line-height: 1.4; }
+.transfer-progress p { color: var(--muted); font-size: 13px; }
+.transfer-progress-spinner { color: var(--blue); animation: transfer-progress-spin 1s linear infinite; }
+@keyframes transfer-progress-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .transfer-progress-spinner { animation-duration: 3s; } }

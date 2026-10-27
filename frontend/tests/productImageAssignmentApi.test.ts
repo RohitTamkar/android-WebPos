@@ -1,3 +1,4 @@
+import { PRODUCT_IMAGE_MAX_BYTES } from '../../shared/productImageLimits.ts';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { assignProductImage } from '../src/pages/productImageAssignmentApi.ts';
@@ -21,7 +22,7 @@ test('oversized output is rejected before any request; partial failures are retu
   let calls = 0;
   t.mock.method(globalThis, 'fetch', async () => { calls++; return Response.json({ success: true, data: { image,
     results: [{ documentId: 'a', status: 'failed', message: 'Conflict' }] } }); });
-  await assert.rejects(assignProductImage('o', 'token', 'id', new File([new Uint8Array(30721)], 'large.png'), targets), /30 KB/);
+  await assert.rejects(assignProductImage('o', 'token', 'id', new File([new Uint8Array(PRODUCT_IMAGE_MAX_BYTES + 1)], 'large.png'), targets), /512 KB/);
   assert.equal(calls, 0);
   assert.equal((await assignProductImage('o', 'token', 'id', file, targets)).results[0]!.status, 'failed');
 });

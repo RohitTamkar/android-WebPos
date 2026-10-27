@@ -1,3 +1,4 @@
+import { productImageSizeLabel } from './productImageProcessing.ts';
 import { useEffect, useRef, useState } from 'react';
 import { LoaderCircle } from 'lucide-react';
 import { AuthenticatedImagePreview } from './AuthenticatedImagePreview.tsx';
@@ -23,7 +24,7 @@ export function ProductImageUpload({ outletId, documentId, image, token, name, o
   }, [preview, uploaded, image, savedReference]);
   const upload = async (file: File) => {
     if (busy.current) return;
-    busy.current = true; onUploadStart(); setSaving(true); setError(''); setPending(file); setPreview(URL.createObjectURL(file));
+    busy.current = true; onUploadStart(); setSaving(true); setUploaded(false); setError(''); setPending(file); setPreview(URL.createObjectURL(file));
     try {
       const reference = await uploadMasterImage(outletId, 'products', documentId, token, file, image ?? null);
       onSaved(reference);
@@ -43,19 +44,13 @@ export function ProductImageUpload({ outletId, documentId, image, token, name, o
       {showPreview ? <img className="transfer-preview-image" src={preview} alt={`${name} image`} />
         : <AuthenticatedImagePreview endpoint={masterImageUrl(outletId, 'products', documentId)} imagePath={image} token={token} paused={paused} alt={`${name} image`} onSessionExpired={onSessionExpired} />}
     </button>
-    {pending && showPreview && <small>{pending.size.toLocaleString()} bytes · {(pending.size / 1024).toFixed(2)} KB</small>}
-    {uploaded && image === savedReference && !saving && <p className="products-notice" role="status">Product image uploaded successfully.</p>}
-    {pending && !saving && !uploaded && !error && <div>
-      {image && <small>This will replace the saved product image.</small>}
-      <button type="button" className="btn-secondary" onClick={() => void upload(pending)}>Upload processed image</button>
-      <button type="button" className="btn-secondary" onClick={() => { setPending(null); setPreview(''); }}>Cancel image selection</button>
-    </div>}
+    {pending && showPreview && <small>{productImageSizeLabel(pending)}</small>}
     {saving && <small className="product-image-upload-status" role="status"><LoaderCircle className="product-image-spinner" size={18} aria-hidden="true" />Uploading image…</small>}
     {error && <div><small className="local-image-error" role="alert">{error}</small>
       {pending && <button type="button" className="btn-secondary" disabled={saving} onClick={() => void upload(pending)}>Retry upload</button>}
 </div>}
     {cropFile && <ProductImageCropper file={cropFile} onCancel={() => setCropFile(null)} onApply={file => {
-      setCropFile(null); setPending(file); setPreview(URL.createObjectURL(file)); setUploaded(false); setError('');
+      setCropFile(null); void upload(file);
     }} />}
   </div>;
 }

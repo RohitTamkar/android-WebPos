@@ -86,13 +86,13 @@
 
 /* Only the instruction document uses the desktop content area. */
 .upload-excel-instruction-dialog {
-  inset: 68px 0 0 222px;
-  width: calc(100% - 270px);
+  inset: 68px 0 0 var(--sidebar-width, 270px);
+  width: calc(100% - var(--sidebar-width, 270px) - 48px);
   max-width: none;
   max-height: calc(100dvh - 100px);
 }
 
-.upload-excel-instruction-dialog::backdrop { inset: 68px 0 0 222px; }
+.upload-excel-instruction-dialog::backdrop { inset: 68px 0 0 var(--sidebar-width, 270px); }
 .upload-excel-instruction-dialog .upload-excel-dialog-actions { position: sticky; bottom: 0; z-index: 4; margin-top: 16px; padding-top: 12px; background: #fff; }
 
 @media (max-width: 820px) {
@@ -111,8 +111,8 @@
 }
 
 /* Local-only spreadsheet preview. Other option dialogs keep their existing styles. */
-.upload-excel-preview-dialog { inset: 68px 0 0 222px; width: calc(100% - 270px); max-width: none; max-height: calc(100dvh - 100px); color-scheme: light; }
-.upload-excel-preview-dialog::backdrop { inset: 68px 0 0 222px; }
+.upload-excel-preview-dialog { inset: 68px 0 0 var(--sidebar-width, 270px); width: calc(100% - var(--sidebar-width, 270px) - 48px); max-width: none; max-height: calc(100dvh - 100px); color-scheme: light; }
+.upload-excel-preview-dialog::backdrop { inset: 68px 0 0 var(--sidebar-width, 270px); }
 .csv-upload-preview { display: grid; gap: 14px; margin-bottom: 20px; }
 .csv-upload-preview button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 9px 14px; border: 1px solid var(--blue); border-radius: 8px; background: var(--blue); color: #fff; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
 .csv-upload-preview button:hover:not(:disabled) { background: #2554d4; }

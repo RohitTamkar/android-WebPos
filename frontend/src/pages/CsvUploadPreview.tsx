@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useSuccessDismiss } from '../utils/useTimedNotice.ts';
 import { CheckCircle2, FileSpreadsheet, X } from 'lucide-react';
 import { fileSelectionError, PRODUCT_COLUMNS, PREMISES_TEMPLATE_COLUMNS, type ProductUploadMode, type CsvPreview } from './productCsvPreview.ts';
 
@@ -23,6 +24,11 @@ export function CsvUploadPreview({ outletId, token, onSessionExpired, onSuccessA
   const busyRef = useRef(false);
   const requestRef = useRef<AbortController | null>(null);
   const successDialogRef = useRef<HTMLDialogElement>(null);
+  const acknowledgeSuccess = () => {
+    successDialogRef.current?.close();
+    onSuccessAcknowledged();
+  };
+  useSuccessDismiss(uploaded ? 'Products uploaded successfully' : '', acknowledgeSuccess);
   const quotaControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => () => { workerRef.current?.terminate(); requestRef.current?.abort(); }, []);
@@ -126,7 +132,7 @@ export function CsvUploadPreview({ outletId, token, onSessionExpired, onSuccessA
         const validation = await fetch(`/api/outlets/${encodeURIComponent(outletId)}/products/import/validate`, options);
         if (controller.signal.aborted) return;
         if (validation.status === 401) { onSessionExpired(); return; }
-        const checked = await validation.json() as { writesEnabled?: boolean; message?: string; data?: { canUpload: boolean; headerErrors: string[]; documents: { rowNumber: number; fields: { code: string | number } }[]; rows: { rowNumber: number; errors: { column: string; message: string }[] }[] } };
+        const checked = await validation.json() as { writesEnabled?: boolean; message?: string; data?: { canUpload: boolean; headerErrors: string[]; documents: { rowNumber: number; fields: { code: string | number } }[]; categorySummary?: { reused: number; toCreate: number }; rows: { rowNumber: number; errors: { column: string; message: string }[] }[] } };
         if (controller.signal.aborted) return;
         if (validation.status === 429) {
           setUploadLimitMessage(checked.message || 'Upload limit reached. This outlet allows only 2 upload attempts within 24 hours. Please try again when a 24-hour slot becomes available.');
@@ -143,7 +149,7 @@ export function CsvUploadPreview({ outletId, token, onSessionExpired, onSuccessA
         }
         const codes = checked.data.documents.map(document => document.fields.code);
         setAssignedCodes(codes);
-        setUploadStatus('Review the assigned Search Codes below, then click Upload to confirm. Excel Search Codes are ignored.');
+        setUploadStatus(`${checked.data.categorySummary ? `${checked.data.categorySummary.reused} categories will be reused; ${checked.data.categorySummary.toCreate} missing categories will be created on confirmation. ` : ''}Review the assigned Search Codes below, then click Upload to confirm. Excel Search Codes and Category Nos are ignored. Categories are matched by name; new categories receive sequential numbers.`);
         return;
       }
       setUploadStatus('Uploading products…');
@@ -168,7 +174,7 @@ export function CsvUploadPreview({ outletId, token, onSessionExpired, onSuccessA
       if (!response.ok || !result.success || !result.data?.success) {
         throw new Error(result.data ? `${result.data.message} Confirmed rows: ${result.data.confirmedRows.join(', ') || 'none'}. Unconfirmed rows: ${result.data.unconfirmedRows.join(', ') || 'none'}.` : result.message || 'Upload outcome is unknown. Retry the same file to reconcile its document IDs.');
       }
-      setUploaded(true); setUploadStatus(`${result.data.message} Open Products to view the confirmed records.`);
+      setUploaded(true); setUploadStatus('');
       successDialogRef.current?.showModal();
     } catch (requestError) {
       if (!controller.signal.aborted) {
@@ -204,15 +210,12 @@ export function CsvUploadPreview({ outletId, token, onSessionExpired, onSuccessA
     <div className="csv-upload-preview">
       {remainingAttempts !== null && <p className="csv-upload-help" role="status">Upload attempts remaining for this outlet: {remainingAttempts} within the rolling 24-hour period.</p>}
       <dialog ref={successDialogRef} className="upload-excel-dialog csv-upload-success-dialog" aria-labelledby="csv-upload-success-title" aria-describedby="csv-upload-success-description"
-        onClose={event => event.stopPropagation()} onCancel={event => event.stopPropagation()}>
+        onClose={event => event.stopPropagation()} onCancel={event => { event.preventDefault(); event.stopPropagation(); acknowledgeSuccess(); }}>
         <span className="csv-upload-success-icon"><CheckCircle2 size={32} aria-hidden="true" /></span>
         <h2 id="csv-upload-success-title">Products uploaded successfully</h2>
         <p id="csv-upload-success-description">You can view the uploaded products on the Products page.</p>
         <div className="upload-excel-dialog-actions">
-          <button type="button" autoFocus onClick={() => {
-            successDialogRef.current?.close();
-            onSuccessAcknowledged();
-          }}>OK</button>
+          <button type="button" autoFocus onClick={acknowledgeSuccess}>OK</button>
         </div>
       </dialog>
       <div className="csv-upload-file-controls">
@@ -259,7 +262,7 @@ export function CsvUploadPreview({ outletId, token, onSessionExpired, onSuccessA
           <button type="button" disabled={page === totalPages} onClick={() => setPage(value => value + 1)}>Next</button>
         </div>}
       </>}
-      <div className="csv-upload-import-note"><button type="button" disabled={mode === 'premises' || uploading || uploaded || parsing || !source || !rows.length || validRows !== rows.length || !!preview?.headerErrors.length} onClick={() => void upload()}>{mode === 'premises' ? 'Confirm Upload' : uploading ? 'Checking…' : assignedCodes ? 'Upload' : 'Preview Search Codes'}</button><span role="status">{uploadStatus || (mode === 'premises' ? 'Preview only. Saving premises requires a supported premises mapping.' : 'Upload checks the existing category and product mappings before adding new products. Existing products and categories remain unchanged.')}</span>{mode === 'premises' && <button type="button" className="csv-upload-secondary" onClick={onSuccessAcknowledged}>Cancel</button>}</div>
+      <div className="csv-upload-import-note"><button type="button" disabled={mode === 'premises' || uploading || uploaded || parsing || !source || !rows.length || validRows !== rows.length || !!preview?.headerErrors.length} onClick={() => void upload()}>{mode === 'premises' ? 'Confirm Upload' : uploading ? 'Checking…' : assignedCodes ? 'Upload' : 'Preview Search Codes'}</button><span role="status">{uploadStatus || (mode === 'premises' ? 'Preview only. Saving premises requires a supported premises mapping.' : '')}</span>{mode === 'premises' && <button type="button" className="csv-upload-secondary" onClick={onSuccessAcknowledged}>Cancel</button>}</div>
     </div>
   );
 }

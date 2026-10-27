@@ -1,0 +1,16 @@
+.product-discount-settings .tax-settings-actions { align-items: center; }
+.product-discount-settings .tax-settings-actions button { display: inline-flex; align-items: center; justify-content: center; }
+.discount-value-field { display: grid; gap: 8px; }
+.discount-value-field label { color: var(--ink); font-size: 13px; font-weight: 600; }
+.discount-value-field input { width: 100%; min-height: 48px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink); font: inherit; }
+.discount-value-field input:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.discount-value-field small { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.product-discount-settings .tax-settings-table th { white-space: normal; }
+.product-discount-settings .tax-settings-table :is(th, td):first-child { width: 80px; }
+.product-discount-settings .tax-settings-table :is(th, td):nth-child(2) { width: 50%; white-space: normal; overflow-wrap: anywhere; }
+.product-discount-settings .tax-settings-table :is(th, td):nth-child(3) { font-variant-numeric: tabular-nums; }
+@media (max-width: 640px) {
+  .product-discount-settings .tax-settings-table :is(th, td):first-child { width: 52px; }
+  .product-discount-settings .tax-settings-table :is(th, td):nth-child(2) { width: 36%; }
+  .product-discount-settings .tax-settings-actions { margin-left: 0; }
+}

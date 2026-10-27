@@ -1,3 +1,4 @@
+import { useTimedNotice } from '../utils/useTimedNotice.ts';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Plus, RefreshCw, Save, UserRoundCog, X } from 'lucide-react';
 import type { OutletSummary } from './OutletSelectionPage.tsx';
@@ -24,7 +25,7 @@ export function EmployeesPage({ outlet, token, onSessionExpired }: {
   const [selectedId, setSelectedId] = useState('');
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saveError, setSaveError] = useState('');
-  const [notice, setNotice] = useState('');
+  const [notice, setNotice] = useTimedNotice();
   const [saving, setSaving] = useState(false);
   const busy = useRef(false);
   const requests = useRef<AbortController | null>(null);

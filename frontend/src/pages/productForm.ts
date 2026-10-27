@@ -3,6 +3,7 @@ export interface ProductDraft {
   regionalName: string; discount: string; shortName: string; taxIndex: string;
   hsnCode: string; unitId: string; weighable: boolean; stockable: boolean;
   wholeSaleAmount?: string; onlinePrice?: string;
+  barcode?: string; kitchenId?: string; premisesPrices?: Record<string, string>;
 }
 export function productFormErrors(draft: ProductDraft): Record<string, string> {
   const errors: Record<string, string> = {};
@@ -21,6 +22,9 @@ export function productFormErrors(draft: ProductDraft): Record<string, string> {
   for (const key of ['taxIndex', 'unitId'] as const) {
     if (!draft[key] || !Number.isSafeInteger(Number(draft[key]))) errors[key] = 'Select a configured option.';
   }
+  for (const [key, value] of Object.entries(draft.premisesPrices ?? {})) {
+    if (!value.trim() || !Number.isFinite(Number(value)) || Number(value) < 0) errors[`premises:${key}`] = 'Enter a finite number of zero or more.';
+  }
   return errors;
 }
 export function productFormPayload(draft: ProductDraft, code: number, requestId: string) {
@@ -29,7 +33,8 @@ export function productFormPayload(draft: ProductDraft, code: number, requestId:
     price: Number(draft.price), mrpPrice: Number(draft.mrpPrice), costPrice: Number(draft.costPrice),
     discount: Number(draft.discount), taxIndex: Number(draft.taxIndex), unitId: Number(draft.unitId),
     ...(draft.wholeSaleAmount === undefined ? {} : { wholeSaleAmount: Number(draft.wholeSaleAmount) }),
-    ...(draft.onlinePrice === undefined ? {} : { onlinePrice: Number(draft.onlinePrice) }) };
+    ...(draft.onlinePrice === undefined ? {} : { onlinePrice: Number(draft.onlinePrice) }),
+    ...(draft.premisesPrices === undefined ? {} : { premisesPrices: Object.fromEntries(Object.entries(draft.premisesPrices).map(([key, value]) => [key, Number(value)])) }) };
 }
 
 export function productDraftFromFields(fields: Record<string, unknown>): ProductDraft {
@@ -38,6 +43,7 @@ export function productDraftFromFields(fields: Record<string, unknown>): Product
     category: text('category'), regionalName: text('regionalName'), discount: text('discount'), shortName: text('shortName'),
     taxIndex: text('taxIndex'), hsnCode: text('hsnCode'), unitId: text('unitId'),
     weighable: fields.weighable === true, stockable: fields.stockable === true,
+    barcode: text('barcode'), kitchenId: text('kitchenId'),
     ...(typeof fields.wholeSaleAmount === 'number' ? { wholeSaleAmount: text('wholeSaleAmount') } : {}),
     ...(typeof fields.onlinePrice === 'number' ? { onlinePrice: text('onlinePrice') } : {}) };
 }

@@ -34,7 +34,7 @@ export async function assignProductImage(db: Firestore, bucket: MasterImageStora
   outletId: string, profileId: string, assigned: (profile: Record<string, unknown>) => string[], raw: unknown) {
   if (!id.safeParse(outletId).success) throw new ImageStorageError(400, 'A valid outlet ID is required.');
   const parsed = requestSchema.safeParse(raw);
-  if (!parsed.success) throw new ImageStorageError(422, 'Select up to 50 products and a processed image no larger than 30 KB.');
+  if (!parsed.success) throw new ImageStorageError(422, 'Select up to 50 products and a processed image no larger than 512 KB.');
   const request = parsed.data;
   if (new Set(request.targets.map(target => target.documentId)).size !== request.targets.length) {
     throw new ImageStorageError(422, 'Each product may appear only once in an image assignment.');
@@ -45,7 +45,7 @@ export async function assignProductImage(db: Firestore, bucket: MasterImageStora
     throw new ImageStorageError(415, 'The image encoding is invalid.');
   }
   const bytes = Buffer.from(request.base64, 'base64');
-  if (!bytes.length || bytes.length > PRODUCT_IMAGE_MAX_BYTES) throw new ImageStorageError(413, 'Product images must be 30 KB or smaller.');
+  if (!bytes.length || bytes.length > PRODUCT_IMAGE_MAX_BYTES) throw new ImageStorageError(413, 'Product images must be 512 KB or smaller.');
   const contentType = detectImage(bytes);
   if (contentType !== request.contentType) throw new ImageStorageError(415, 'The image content does not match its declared file type.');
   const digest = createHash('sha256').update(bytes).digest('hex');
