@@ -1,11 +1,11 @@
 import { checkAuthorizedProductImport, persistProductImport, type ImportValidationDependencies, type ImportWriter } from './productImportValidation.js';
 import { planImportCategories, type CategoryResolution } from './productImportCategories.js';
-import { parseProductCsv } from '../../frontend/src/pages/productCsvPreview.js';
+import { parseProductCsv, type ProductUploadMode } from '../../frontend/src/pages/productCsvPreview.js';
 
 export async function persistProductImportWithCategories(outletId: string, profileId: string, source: string, codes: unknown[],
-  deps: ImportValidationDependencies, resolve: () => Promise<CategoryResolution>, writer: ImportWriter) {
+  deps: ImportValidationDependencies, resolve: () => Promise<CategoryResolution>, writer: ImportWriter, mode: ProductUploadMode = 'standard') {
   let rowNumbers: number[];
-  try { rowNumbers = parseProductCsv(source).rows.map(row => row.rowNumber); }
+  try { rowNumbers = parseProductCsv(source, mode).rows.map(row => row.rowNumber); }
   catch (error) {
     return { success: false, created: 0, existing: 0, confirmedRows: [] as number[], unconfirmedRows: [] as number[],
       categoriesCreated: 0, categoriesReused: 0, failedRows: null,
@@ -13,7 +13,7 @@ export async function persistProductImportWithCategories(outletId: string, profi
   }
   const empty = { success: false, created: 0, existing: 0, confirmedRows: [] as number[], unconfirmedRows: rowNumbers };
   // This service also checks validation when called outside the Express route.
-  const initial = await checkAuthorizedProductImport(profileId, outletId, source, deps);
+  const initial = await checkAuthorizedProductImport(profileId, outletId, source, deps, undefined, mode);
   if (initial.status !== 200 || !initial.body.data?.canUpload || !writer.enabled) {
     return { ...empty, categoriesCreated: 0, categoriesReused: 0, failedRows: rowNumbers.length,
       message: initial.body.message ?? 'File validation or import authorization failed. No categories or products were written.' };
@@ -30,8 +30,8 @@ export async function persistProductImportWithCategories(outletId: string, profi
   try {
     // Rebuild products using persisted category IDs, then recheck product codes and
     // identities. Preview-only category IDs never reach the product writer.
-    const checked = await checkAuthorizedProductImport(profileId, outletId, source, { ...deps, readCategories: async () => resolved.categories });
-    if (checked.status !== 200 || !checked.body.data?.canUpload || planImportCategories(source, resolved.categories).missing.length > 0) {
+    const checked = await checkAuthorizedProductImport(profileId, outletId, source, { ...deps, readCategories: async () => resolved.categories }, undefined, mode);
+    if (checked.status !== 200 || !checked.body.data?.canUpload || planImportCategories(source, resolved.categories, mode).missing.length > 0) {
       const issues = checked.body.data?.rows.flatMap(row => row.errors.map(issue => `Row ${row.rowNumber}: ${issue.message}`)) ?? [];
       return { ...empty, ...summary, failedRows: rowNumbers.length, message: `${categoryText} No products were attempted. ${checked.body.message ?? issues.slice(0, 8).join(' ')}` };
     }

@@ -9,8 +9,8 @@ const schema = z.object({
   expected: z.record(priceKey, z.unknown()),
 }).strict();
 
-// Updates values of keys that already exist in the Android priceTable; keys are never added,
-// renamed or removed. "default price" stays in sync with the product's price field.
+// Merge saved prices and prices for configured outlet premises into the existing
+// Android priceTable. "default price" stays in sync with the product price field.
 export async function updateProductPrices(db: Firestore, outletId: string, id: string, profileId: string | null,
   assigned: (profile: Record<string, unknown>) => string[], raw: unknown) {
   if (!profileId) throw new ProductCreationError(401, 'Your session has expired. Please sign in again.');
@@ -32,10 +32,22 @@ export async function updateProductPrices(db: Firestore, outletId: string, id: s
     if (typeof table === 'string') { try { table = JSON.parse(table); } catch { table = null; } }
     if (!table || typeof table !== 'object' || Array.isArray(table)) throw new ProductCreationError(422, 'This product has an invalid price table and cannot be updated safely.');
     const current = table as Record<string, unknown>;
+    const added = keys.filter(key => !Object.hasOwn(current, key));
+    if (added.length) {
+      const premises = await transaction.get(db.collection('OUTLET').doc(outletId).collection('PREMISES'));
+      const normalize = (value: string) => value.trim().replace(/\s+/g, ' ').toLowerCase();
+      const allowed = new Set(premises.docs.flatMap(doc => {
+        const name = doc.data().name;
+        return typeof name === 'string' ? [normalize(name), normalize(/\bprice$/i.test(name) ? name : `${name} price`)] : [];
+      }));
+      if (added.some(key => key !== 'default price' && !allowed.has(normalize(key)))) {
+        throw new ProductCreationError(422, 'Select an existing premises price. Reload and try again.');
+      }
+    }
     for (const key of keys) {
-      if (!Object.hasOwn(current, key)) throw new ProductCreationError(422, `"${key}" is not a saved price for this product. Reload and try again.`);
+      if (!Object.hasOwn(current, key) && expected[key] !== null) throw new ProductCreationError(409, 'Prices changed since you loaded the products. Reload and review the prices again.');
       // A value already equal to the request means an earlier attempt succeeded, so retries stay safe.
-      if (current[key] !== expected[key] && current[key] !== prices[key]) {
+      if (Object.hasOwn(current, key) && current[key] !== expected[key] && current[key] !== prices[key]) {
         throw new ProductCreationError(409, 'Prices changed since you loaded the products. Reload and review the prices again.');
       }
     }

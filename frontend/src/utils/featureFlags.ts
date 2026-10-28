@@ -1,5 +1,5 @@
-// Temporary: keep the legacy Daily Web Usage screen available for later repair.
-// The shared master switch also disables all usage checks and accounting.
-// Re-enable that first, then set this to true to restore the full-screen UI.
+// Legacy compatibility export; never use it to bypass outlet usage policy.
 export { DAILY_WEB_USAGE_ENABLED } from '../../../shared/webUsageFeature.ts';
-export const DAILY_WEB_USAGE_SCREEN_ENABLED = false;
+// Compatibility indicator for the full-screen lockout presentation.
+// Session admission and backend enforcement are independent of this export.
+export const DAILY_WEB_USAGE_SCREEN_ENABLED = true;

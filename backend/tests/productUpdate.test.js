@@ -215,4 +215,12 @@ test('products whose category was deleted can still update other fields but cann
     assert.equal(f.records.get(path).category, 'c2');
     await assert.rejects(updateOutletProduct(f.db, 'outlet', 'p1', 'user', assigned, { category: 'c1' }), error => error instanceof ProductCreationError && error.status === 422 && !!error.errors.category);
 });
+test('flag-only edits preserve legacy product data and avoid category collection reads', async () => {
+    const f = fixture();
+    const legacy = { name: 'Legacy', custom: 'keep' };
+    f.records.set(path, legacy);
+    const result = await updateOutletProduct(f.db, 'outlet', 'p1', 'user', assigned, { stockable: true, weighable: false });
+    assert.deepEqual(result.fields, { ...legacy, stockable: true, weighable: false });
+    assert.deepEqual(f.reads, ['USER_PROFILE/user', path]);
+});
 //# sourceMappingURL=productUpdate.test.js.map

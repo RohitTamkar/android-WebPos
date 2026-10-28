@@ -28,11 +28,11 @@ export async function deleteOutletRecord(db: Firestore, outletId: string, collec
 export const DELETE_ALL_CONFIRMATIONS = { PRODUCT: 'DELETE_ALL_PRODUCTS', CATEGORY: 'DELETE_ALL_CATEGORIES' } as const;
 const BATCH_SIZE = 400;
 
-// Deletes every document of one outlet master collection after an explicit confirmation.
-// Only the listed documents are removed: no other collections, outlets or product fields change.
+// Deletes outlet masters after explicit confirmation. Product delete-all also
+// removes that outlet's categories; category delete-all keeps products untouched.
 // Batches commit independently, so a retry after a partial failure deletes whatever remains.
 export async function deleteAllOutletRecords(db: Firestore, outletId: string, collection: 'CATEGORY' | 'PRODUCT',
-  profileId: string | null, assignedOutlets: (profile: Record<string, unknown>) => string[], body: unknown) {
+  profileId: string | null, assignedOutlets: (profile: Record<string, unknown>) => string[], body: unknown): Promise<{ deleted: number; deletedCategories?: number }> {
   if (!profileId) throw new OutletDeletionError(401, 'Your session has expired. Please sign in again.');
   if (!outletId || outletId.includes('/') || outletId === '.' || outletId === '..') throw new OutletDeletionError(400, 'A valid outlet is required.');
   if (collection !== 'CATEGORY' && collection !== 'PRODUCT') throw new OutletDeletionError(400, 'Invalid collection.');
@@ -51,6 +51,13 @@ export async function deleteAllOutletRecords(db: Firestore, outletId: string, co
     try { await batch.commit(); }
     catch { throw new OutletDeletionError(503, `${deleted} of ${snapshot.docs.length} deleted before an error. Retry Delete All to remove the rest.`); }
     deleted += chunk.length;
+  }
+  // The product delete-all action also clears the outlet's category masters.
+  // Categories are reached only after every product batch has succeeded.
+  if (collection === 'PRODUCT') {
+    const categories = await deleteAllOutletRecords(db, outletId, 'CATEGORY', profileId, assignedOutlets,
+      { confirm: DELETE_ALL_CONFIRMATIONS.CATEGORY });
+    return { deleted, deletedCategories: categories.deleted };
   }
   return { deleted };
 }

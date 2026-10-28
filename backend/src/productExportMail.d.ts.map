@@ -1,0 +1,1 @@
+{"version":3,"file":"productExportMail.d.ts","sourceRoot":"","sources":["productExportMail.ts"],"names":[],"mappings":"AAEA,MAAM,WAAW,qBAAqB;IAAG,MAAM,EAAE,MAAM,CAAC;IAAC,QAAQ,EAAE,MAAM,CAAA;CAAE;AAG3E,wBAAsB,sBAAsB,CAAC,KAAK,EAAE,MAAM,EAAE,UAAU,EAAE,qBAAqB,EAC3F,MAAM;IAAK,MAAM;IAA8B,IAAI;CAAyC,EAAE,OAAO,GAAE,OAAO,KAAa,mBAqB5H"}

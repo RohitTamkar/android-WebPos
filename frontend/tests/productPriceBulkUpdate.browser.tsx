@@ -8,7 +8,7 @@ let expired = 0, listLoads = 0, confirmAnswer = false, confirms = 0;
 const failIds = new Set<string>();
 const store = new Map<string, Record<string, unknown>>([
   ['p1', { name: 'MASALA PAPAD', code: '1', price: 80, currentStock: 5, barcode: 'b1', priceTable: '{"default price":80,"AC Table price":30,"TABLE price":80}' }],
-  ['p2', { name: 'FRY PAPAD', code: '2', price: 30, currentStock: 6, barcode: 'b2', priceTable: '{"default price":30,"AC Table price":30,"TABLE price":30}' }],
+  ['p2', { name: 'FRY PAPAD', code: '2', price: 30, currentStock: 6, barcode: 'b2', priceTable: '{"default price":30,"AC Table price":30,"TABLE price":30,"Online price":30}' }],
   ['p3', { name: 'ONION SALAD', code: '3', price: 50, currentStock: 7, barcode: 'b3', priceTable: '{"default price":50}' }],
   ['p4', { name: 'BROKEN', code: '4', price: 1, priceTable: 'not json' }],
 ]);
@@ -17,6 +17,7 @@ window.confirm = () => { confirms++; return confirmAnswer; };
 window.fetch = async (url, init) => {
   const path = String(url);
   if (path === '/api/outlets/outlet/products' && !init?.method) { listLoads++; return Response.json({ success: true, data: [...store].map(([documentId, fields]) => ({ documentId, fields: { ...fields } })) }); }
+  if (path === '/api/outlets/outlet/premises') return Response.json({ success: true, data: { premises: ['AC Table', 'TABLE', 'Online'].map(name => ({ fields: { name } })) } });
   if (path === '/api/outlets/outlet/categories') return Response.json({ success: true, data: [] });
   const match = path.match(/^\/api\/outlets\/outlet\/products\/(p\d)\/prices$/);
   if (match && init?.method === 'PATCH') {
@@ -45,17 +46,27 @@ async function openScreen() {
   await waitFor(() => document.querySelector('section[aria-busy="false"] [aria-label="More options"]'), 'products ready');
   await click(field('More options')!);
   await click(button('Update Bulk Price'));
-  await waitFor(() => field('Default Price for MASALA PAPAD'), 'bulk price screen');
+  await waitFor(() => field('Online for ONION SALAD'), 'bulk price screen with configured premises');
 }
 const root = createRoot(document.getElementById('root')!);
 root.render(<ProductsPage outlet={{ id: 'outlet' } as OutletSummary} token="mock-token" onSessionExpired={() => { expired++; }} />);
 void (async () => {
   await openScreen();
+  assert([...document.querySelectorAll<HTMLInputElement>('.price-table input[type="text"]')].every(input => !input.hasAttribute('placeholder')), 'Price boxes have no Default placeholder text');
   const headings = [...document.querySelectorAll('.price-table th')].map(th => th.textContent);
-  assert(JSON.stringify(headings) === JSON.stringify(['Product Name', 'Same for all', 'Default Price', 'AC Table', 'TABLE']), `columns ${headings}`);
+  assert(JSON.stringify(headings) === JSON.stringify(['Product Name', 'Same for all', 'Default Price', 'AC Table', 'TABLE', 'Online']), `columns ${headings}`);
   assert(field('AC Table for MASALA PAPAD')!.value === '30' && field('TABLE for MASALA PAPAD')!.value === '80', 'stored premise prices shown');
-  assert(!field('AC Table for ONION SALAD') && field('Default Price for ONION SALAD')!.value === '50', 'missing premise keys are not editable');
-  assert(field('Same price for all premises for FRY PAPAD')!.checked && field('TABLE for FRY PAPAD')!.disabled, 'equal prices start linked');
+  assert(field('AC Table for ONION SALAD') && field('Online for ONION SALAD') && field('Default Price for ONION SALAD')!.value === '50', 'Every configured premises has an editable input even without a saved value');
+  await click(field('Same price for all premises for ONION SALAD')!);
+  assert(field('Online for ONION SALAD')!.value === '50', 'Same for all fills previously missing premises');
+  await type(field('Online for ONION SALAD')!, '65');
+  assert(!field('Same price for all premises for ONION SALAD')!.checked, 'Independent premises edit unlinks the checkbox');
+  await click(field('Same price for all premises for ONION SALAD')!);
+  await click(button('Update'));
+  await waitFor(() => field('More options'), 'save new premises prices');
+  assert(patches.some(patch => patch.id === 'p3' && patch.body.expected['Online price'] === null), 'New premise prices use a missing-value expectation');
+  patches.length = 0; await openScreen();
+  assert(field('Same price for all premises for FRY PAPAD')!.checked && !field('TABLE for FRY PAPAD')!.disabled, 'equal prices start linked');
   assert(!field('Same price for all premises for MASALA PAPAD')!.checked, 'different prices start unlinked');
   assert(!field('Default Price for BROKEN') && document.body.textContent!.includes('Price table is invalid'), 'invalid table is read-only');
   results.push('Screen lists all products with default and premise prices from priceTable');
@@ -73,7 +84,7 @@ void (async () => {
   await waitFor(() => alertText().includes('1 of 2 products updated; 1 failed'), 'partial failure');
   const sent = Object.fromEntries(patches.map(patch => [patch.id, patch.body]));
   assert(JSON.stringify(sent.p1) === JSON.stringify({ prices: { 'AC Table price': 35, 'TABLE price': 90 }, expected: { 'AC Table price': 30, 'TABLE price': 80 } }), `p1 payload ${JSON.stringify(sent.p1)}`);
-  assert(JSON.stringify(sent.p2) === JSON.stringify({ prices: { 'default price': 35, 'AC Table price': 35, 'TABLE price': 35 }, expected: { 'default price': 30, 'AC Table price': 30, 'TABLE price': 30 } }), `p2 payload ${JSON.stringify(sent.p2)}`);
+  assert(JSON.stringify(sent.p2) === JSON.stringify({ prices: { 'default price': 35, 'AC Table price': 35, 'TABLE price': 35, 'Online price': 35 }, expected: { 'default price': 30, 'AC Table price': 30, 'TABLE price': 30, 'Online price': 30 } }), `p2 payload ${JSON.stringify(sent.p2)}`);
   assert(field('Default Price for FRY PAPAD')!.value === '35', 'failed edits kept');
   results.push('Update sends only changed keys with expected values and reports partial failure');
 
@@ -82,7 +93,7 @@ void (async () => {
   await waitFor(() => document.querySelector('[aria-label="More options"]'), 'return to Products');
   assert(!document.querySelector('.products-notice'), 'Completed update leaves no success banner');
   assert(patches.length === 1 && patches[0]!.id === 'p2', 'retry resends only the failed product');
-  await waitFor(() => listLoads === 2, 'list reloaded');
+  await waitFor(() => listLoads === 3, 'list reloaded');
   assert(store.get('p1')!.priceTable === '{"default price":80,"AC Table price":35,"TABLE price":90}' && store.get('p2')!.price === 35, 'saved values');
   for (const [id, fields] of untouched) for (const key of ['name', 'code', 'currentStock', 'barcode']) assert(store.get(id)![key] === fields[key], `${id}.${key} preserved`);
   results.push('Retry saves remaining product, reloads list, and preserves unrelated fields');

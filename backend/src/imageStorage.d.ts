@@ -1,6 +1,11 @@
 import { type Firestore, type DocumentSnapshot } from 'firebase-admin/firestore';
 type StorageBucket = {
-    file(path: string): any;
+    file(path: string, options?: {
+        generation?: string;
+        preconditionOpts?: {
+            ifGenerationMatch: string | number;
+        };
+    }): any;
 };
 export type MasterImageStorageBucket = StorageBucket;
 export type MasterImageCollection = 'PRODUCT' | 'CATEGORY';
@@ -16,6 +21,19 @@ export declare function detectImage(bytes: Buffer): keyof typeof mimeExtension;
 export declare function isMasterImagePath(path: unknown, kind: MasterImageKind, outletId: string, documentId: string): path is string;
 export declare function productImageStoragePath(image: unknown): string | undefined;
 export declare function resolveProductImagePath(fields: Record<string, unknown>, outletId: string, documentId: string): string | undefined;
+export type OutletLogoVariant = 'header' | 'footer';
+export declare function outletLogoPath(outletName: string, outletId: string, variant?: OutletLogoVariant): string;
+export declare function readOutletLogo(bucket: StorageBucket, outletName: string, outletId: string, variant?: OutletLogoVariant, onGeneration?: (generation: string) => void): Promise<{
+    bytes: Buffer<ArrayBuffer>;
+    contentType: string;
+    generation: string;
+}>;
+export declare function saveOutletLogo(bucket: StorageBucket, outletName: string, outletId: string, variant: OutletLogoVariant, bytes: Buffer, expectedGeneration: string, declaredType: string): Promise<{
+    saved: boolean;
+}>;
+export declare function removeOutletLogo(bucket: StorageBucket, outletName: string, outletId: string, variant: OutletLogoVariant, expectedGeneration: string): Promise<{
+    removed: boolean;
+}>;
 export declare function verifyStorageCopy(bucket: StorageBucket, imagePath: string, expectedBytes: Buffer, expectedType: keyof typeof mimeExtension): Promise<boolean>;
 export declare function verifyExistingProductImage(bucket: StorageBucket, image: unknown): Promise<boolean>;
 export declare function copyMasterImageFromPath(bucket: StorageBucket, kind: MasterImageKind, sourceOutletId: string, sourceDocumentId: string, sourceImagePath: string, destinationOutletId: string, destinationDocumentId: string): Promise<{

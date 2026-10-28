@@ -14,7 +14,7 @@ export const receiptSupplierSchema = z.object({
   alternateNumber: z.null(), email: z.string().max(320), gstin: z.string().max(200),
 }).strict();
 const inputSchema = z.object({
-  documentId: autoId, goodsReceivedNo: z.string().trim().min(1).max(100), supplier: receiptSupplierSchema,
+  documentId: autoId, goodsReceivedNo: z.string().trim().min(1).max(100), supplier: receiptSupplierSchema.nullish().transform(value => value ?? null),
   items: z.array(z.object({ productId: recordId, quantity: z.number().finite().positive().max(1e9).multipleOf(0.001), cost: price, price }).strict()).min(1).max(100),
 }).strict();
 type Assigned = (profile: Record<string, unknown>) => string[];
@@ -41,7 +41,7 @@ export async function saveGoodsReceived(run: PremisesTransactionRunner, outletId
   assigned: Assigned, raw: unknown, clock = () => new Date()) {
   if (!profileId) throw new ProductCreationError(401, 'Your session has expired. Please sign in again.');
   const parsed = inputSchema.safeParse(raw);
-  if (!recordId.safeParse(outletId).success || !parsed.success) throw new ProductCreationError(422, 'Enter a receipt number, supplier and positive quantities with up to three decimal places; prices must be zero or more.');
+  if (!recordId.safeParse(outletId).success || !parsed.success) throw new ProductCreationError(422, 'Enter a receipt number and positive quantities with up to three decimal places; prices must be zero or more.');
   const input = parsed.data;
   if (new Set(input.items.map(item => item.productId)).size !== input.items.length) throw new ProductCreationError(422, 'Each product can appear only once.');
   const collection = `OUTLET/${outletId}/GOODS_RECEIVED`;
@@ -53,7 +53,7 @@ export async function saveGoodsReceived(run: PremisesTransactionRunner, outletId
     if (previous) {
       const items = Array.isArray(previous.goodsReceivedItemBeanList) ? previous.goodsReceivedItemBeanList as Record<string, unknown>[] : [];
       const same = previous.type === 'STOCK-IN' && previous.addType === 'POS' && previous.goodsReceivedNo === input.goodsReceivedNo
-        && isDeepStrictEqual(previous.supplier, input.supplier) && items.length === input.items.length
+        && isDeepStrictEqual(previous.supplier ?? null, input.supplier) && items.length === input.items.length
         && input.items.every((item, index) => items[index]?.productid === item.productId && items[index]?.quantity === item.quantity
           && items[index]?.cost === item.cost && items[index]?.price === item.price);
       if (!same) throw new ProductCreationError(409, 'This confirmation already saved different receipt details.');
@@ -61,10 +61,12 @@ export async function saveGoodsReceived(run: PremisesTransactionRunner, outletId
     }
     const records = await transaction.list(collection);
     if (records.some(record => record.fields.goodsReceivedNo === input.goodsReceivedNo)) throw new ProductCreationError(409, 'This receipt number already exists in this outlet. Enter a different number.');
-    const supplierMaster = await transaction.read(`OUTLET/${outletId}/SUPPLIER/${input.supplier.id}`);
-    const supplier = receiptSupplierFromMaster(input.supplier.id, supplierMaster);
-    if (!supplier) throw new ProductCreationError(422, 'Select an existing supplier from this outlet.');
-    if (!isDeepStrictEqual(supplier, input.supplier)) throw new ProductCreationError(409, 'Supplier details changed. Reload and select the supplier again.');
+    if (input.supplier) {
+      const supplierMaster = await transaction.read(`OUTLET/${outletId}/SUPPLIER/${input.supplier.id}`);
+      const supplier = receiptSupplierFromMaster(input.supplier.id, supplierMaster);
+      if (!supplier) throw new ProductCreationError(422, 'Select an existing supplier from this outlet.');
+      if (!isDeepStrictEqual(supplier, input.supplier)) throw new ProductCreationError(409, 'Supplier details changed. Reload and select the supplier again.');
+    }
     const products = await Promise.all(input.items.map(item => transaction.read(`OUTLET/${outletId}/PRODUCT/${item.productId}`)));
     const lines = input.items.map((item, index) => {
       const product = products[index];
@@ -86,7 +88,7 @@ export async function saveGoodsReceived(run: PremisesTransactionRunner, outletId
       addType: { stringValue: 'POS' }, createDate: { integerValue: String(now.getTime()) }, dayID: { stringValue: `${part('year')}-${part('month')}-${part('day')}` },
       finalTotal: { doubleValue: 0 }, formattedDate: { nullValue: null }, goodsReceivedItemBeanList: { arrayValue: { values: lines } },
       goodsReceivedNo: { stringValue: input.goodsReceivedNo }, id: { nullValue: null }, quantity: { doubleValue: 0 }, remark: { nullValue: null },
-      roundOff: { doubleValue: 0 }, state: { integerValue: '0' }, supplier: { mapValue: { fields: Object.fromEntries(Object.entries(input.supplier).map(([key, value]) => [key, value === null ? { nullValue: null } : { stringValue: value }])) } },
+      roundOff: { doubleValue: 0 }, state: { integerValue: '0' }, supplier: input.supplier ? { mapValue: { fields: Object.fromEntries(Object.entries(input.supplier).map(([key, value]) => [key, value === null ? { nullValue: null } : { stringValue: value }])) } } : { nullValue: null },
       total: { doubleValue: 0 }, type: { stringValue: 'STOCK-IN' },
     };
     // Receipt-only save: exactly one create. Never update a PRODUCT or a supplier master.

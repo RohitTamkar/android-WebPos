@@ -1,3 +1,4 @@
+import { readMasterSnapshot } from '../src/utils/masterSnapshots.ts';
 import { createRoot } from 'react-dom/client';
 import App from '../src/App.tsx';
 import '../src/index.css';
@@ -45,15 +46,17 @@ function select(id: string, value: string) {
 const add = () => document.querySelector<HTMLButtonElement>('.category-header-row .btn-primary-add')!;
 const save = () => document.querySelector<HTMLButtonElement>('.employee-form-page button[type=submit]')!;
 async function openPage() {
-  releaseGet = undefined; nav('Employees/Captain/Salesman').click(); await until(() => releaseGet, 'list request');
-  assert(document.querySelector('.employees-page [role=status]')?.textContent?.includes('Loading'), 'Loading indicator is shown while fetching');
+  const cached = readMasterSnapshot('/api/outlets/shop/employees', 'mock-token');
+  releaseGet = undefined; nav('Employees/Salesman').click(); await until(() => releaseGet, 'list request');
+  if (cached) assert(!document.querySelector('.employees-page [role=status]')?.textContent?.includes('Loading'), 'Recent employees remain visible while a fresh list is fetched');
+  else assert(document.querySelector('.employees-page [role=status]')?.textContent?.includes('Loading'), 'First load shows progress while fetching');
   releaseGet!(); await pause();
 }
 void (async () => {
-  await until(() => nav('Employees/Captain/Salesman'), 'navigation');
+  await until(() => nav('Employees/Salesman'), 'navigation');
   await openPage(); await until(() => document.querySelector('.employees-state h2'), 'empty state');
   assert(add().textContent?.includes('Add Employee'), 'Empty employee list provides Add Employee');
-  for (const kind of ['Captain', 'Salesman', 'Employee']) {
+  for (const kind of ['Salesman', 'Employee']) {
     select('employee-selection-kind', kind); await pause();
     assert(add().textContent?.includes(`Add ${kind}`), `Add action follows ${kind} selection context`);
     add().click(); await until(form, 'add form');
@@ -93,7 +96,7 @@ void (async () => {
   releasePost!(); await until(() => document.querySelector('.employees-notice'), 'success');
   assert(!form() && records.length === 1 && document.querySelector('.employees-table-scroll')?.textContent?.includes('New Person'), 'Confirmed save closes form and immediately inserts the new record');
   assert(document.querySelector<HTMLInputElement>('[name="selected-employee"]')?.checked, 'New record is immediately available and selected');
-  for (const kind of ['Captain', 'Salesman']) {
+  for (const kind of ['Salesman']) {
     select('employee-selection-kind', kind); await pause();
     assert(document.querySelector('.employees-selection [role=status]')?.textContent?.includes(`Selected ${kind.toLowerCase()}: New Person`), `Existing person is selectable as ${kind}`);
   }

@@ -13,7 +13,7 @@ const route = tree.statements.find(node => ts.isExpressionStatement(node) && ts.
   && node.expression.arguments[0]?.text === '/api/outlets/:outletId/usage/initialize');
 assert.ok(route);
 const secret = 'isolated-usage-route-test-key';
-class DailyUsageError extends ProductCreationError { constructor(status, code, message) { super(status, message); this.code = code; } }
+class DailyUsageError extends ProductCreationError { constructor(status, code, message, dailyLimitApplies) { super(status, message); this.code = code; this.dailyLimitApplies = dailyLimitApplies; } }
 function fixture(failure, lifecycle = false) {
   const calls = [];
   const dependencies = { jwt, JWT_SECRET: secret, ProductCreationError, DailyUsageError, assignedOutletIds: () => [],
@@ -70,8 +70,8 @@ test('lifecycle actions use signed identity, keep counters server-controlled, an
   assert.equal((await fixture(undefined, true).request(undefined)).statusCode, 401);
   const forged = fixture(undefined, true); assert.equal((await forged.request(token, { action: 'status' })).statusCode, 422); assert.deepEqual(forged.calls, []);
   assert.equal((await fixture(undefined, true).request(token, {}, 'unknown')).statusCode, 404);
-  const exhausted = await fixture(new DailyUsageError(403, 'USAGE_LIMIT_REACHED', 'Exhausted'), true).request(token);
-  assert.equal(exhausted.statusCode, 403); assert.equal(exhausted.body.code, 'USAGE_LIMIT_REACHED');
+  const exhausted = await fixture(new DailyUsageError(403, 'USAGE_LIMIT_REACHED', 'Exhausted', true), true).request(token);
+  assert.equal(exhausted.statusCode, 403); assert.equal(exhausted.body.code, 'USAGE_LIMIT_REACHED'); assert.equal(exhausted.body.dailyLimitApplies, true);
 });
 test('the usage guard is registered before outlet routes and cannot be bypassed by missing headers', () => {
   const guardIndex = source.indexOf("app.use('/api/outlets/:outletId', createWebUsageGuard(");

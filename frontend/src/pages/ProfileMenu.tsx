@@ -5,10 +5,11 @@ import './ProfileMenu.css';
 
 interface ProfileDetails { name: string; mobile: string; role: string; outletName: string }
 
-export function ProfileMenu({ session, outletId, onSessionExpired }: {
+export function ProfileMenu({ session, outletId, onSessionExpired, onChangeOutlet }: {
   session: Pick<UserSession, 'name' | 'role' | 'token'>;
   outletId: string;
   onSessionExpired: () => void;
+  onChangeOutlet?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [details, setDetails] = useState<ProfileDetails | null>(null);
@@ -69,6 +70,7 @@ export function ProfileMenu({ session, outletId, onSessionExpired }: {
         <div className="profile-detail-row"><span aria-hidden="true"><Phone size={16} /></span><dt>Mobile number</dt><dd>{details.mobile || 'Not provided'}</dd></div>
         <div className="profile-detail-row"><span aria-hidden="true"><ShieldCheck size={16} /></span><dt>Role</dt><dd className="profile-role-badge">{details.role || 'Not provided'}</dd></div>
       </dl>}
+      {onChangeOutlet && <div className="profile-menu-actions"><button type="button" onClick={() => { setOpen(false); onChangeOutlet(); }}><Store size={17} aria-hidden="true" />Change Outlet</button></div>}
     </section>}
   </div>;
 }

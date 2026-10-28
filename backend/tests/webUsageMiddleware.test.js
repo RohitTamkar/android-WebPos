@@ -5,10 +5,11 @@ import { DailyUsageError } from '../src/dailyUsage.js';
 async function run(path = '/dashboard', options = {}) {
     const calls = [];
     let next = false;
-    const guard = createWebUsageGuard({ readToken: () => options.anonymous ? null : { profileDocId: 'signed' },
+    const guard = createWebUsageGuard({ enabled: true, readToken: () => options.anonymous ? null : { profileDocId: 'signed' },
         db: () => { calls.push('db'); return {}; }, assigned: () => [],
         operate: async (...args) => { calls.push(args); if (options.error)
-            throw options.error; return {}; } });
+            throw options.error; return {}; },
+        checkAllowance: async (...args) => { calls.push(['destination', args[1], args[2]]); return {}; } });
     const req = { path, params: { outletId: 'outlet' }, method: options.method ?? 'GET', header: (name) => name === 'x-web-usage-outlet' ? options.context : options.missing ? undefined : name === 'x-web-usage-session' ? 'session' : 'generation' };
     const res = { statusCode: 200, setHeader() { }, status(code) { this.statusCode = code; return this; }, json(value) { this.body = value; } };
     await guard(req, res, () => { next = true; });
@@ -51,5 +52,6 @@ test('recovery/status/release remain available, cross-outlet writes cannot use a
     const preview = await run('/categories', { context: 'source' });
     assert.equal(preview.next, true);
     assert.equal(preview.calls[1][1], 'source');
+    assert.deepEqual(preview.calls.at(-1), ['destination', 'outlet', 'signed']);
 });
 //# sourceMappingURL=webUsageMiddleware.test.js.map

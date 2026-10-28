@@ -39,12 +39,12 @@ function fixture(products = 3) {
 const assigned = (profile: Record<string, unknown>) => profile.outlets as string[];
 const keys = (records: Map<string, unknown>) => [...records.keys()].sort();
 
-test('delete all products removes only this outlet PRODUCT documents and keeps categories', async () => {
+test('delete all products also deletes every category in the same outlet', async () => {
   const f = fixture();
   const result = await deleteAllOutletRecords(f.db, 'outlet', 'PRODUCT', 'user', assigned, { confirm: 'DELETE_ALL_PRODUCTS' });
-  assert.deepEqual(result, { deleted: 3 });
+  assert.deepEqual(result, { deleted: 3, deletedCategories: 2 });
   assert.deepEqual(keys(f.records), ['OUTLET/foreign/CATEGORY/c1', 'OUTLET/foreign/PRODUCT/p1', 'OUTLET/outlet', 'OUTLET/outlet/BILL/b1',
-    'OUTLET/outlet/CATEGORY/c1', 'OUTLET/outlet/CATEGORY/c2', 'USER_PROFILE/user']);
+    'USER_PROFILE/user']);
 });
 
 test('delete all categories keeps every product and its fields unchanged', async () => {
@@ -59,9 +59,10 @@ test('large collections commit in batches; a failed batch reports progress and a
   const f = fixture(950); f.failNextCommit(1);
   await assert.rejects(deleteAllOutletRecords(f.db, 'outlet', 'PRODUCT', 'user', assigned, { confirm: 'DELETE_ALL_PRODUCTS' }),
     error => error instanceof OutletDeletionError && error.status === 503 && error.message.startsWith('400 of 950 deleted'));
-  assert.deepEqual(await deleteAllOutletRecords(f.db, 'outlet', 'PRODUCT', 'user', assigned, { confirm: 'DELETE_ALL_PRODUCTS' }), { deleted: 550 });
-  assert.deepEqual(f.commits, [400, 400, 150]);
-  assert.deepEqual(await deleteAllOutletRecords(f.db, 'outlet', 'PRODUCT', 'user', assigned, { confirm: 'DELETE_ALL_PRODUCTS' }), { deleted: 0 });
+  assert.ok(f.records.has('OUTLET/outlet/CATEGORY/c1'), 'Failed product deletion must leave categories intact');
+  assert.deepEqual(await deleteAllOutletRecords(f.db, 'outlet', 'PRODUCT', 'user', assigned, { confirm: 'DELETE_ALL_PRODUCTS' }), { deleted: 550, deletedCategories: 2 });
+  assert.deepEqual(f.commits, [400, 400, 150, 2]);
+  assert.deepEqual(await deleteAllOutletRecords(f.db, 'outlet', 'PRODUCT', 'user', assigned, { confirm: 'DELETE_ALL_PRODUCTS' }), { deleted: 0, deletedCategories: 0 });
 });
 
 test('missing or mismatched confirmation, bad sessions, outlets and inactive users delete nothing', async () => {
@@ -78,4 +79,13 @@ test('missing or mismatched confirmation, bad sessions, outlets and inactive use
   f.records.set('USER_PROFILE/user', { active: false, outlets: ['outlet'] });
   await assert.rejects(deleteAllOutletRecords(f.db, 'outlet', 'PRODUCT', 'user', assigned, { confirm: 'DELETE_ALL_PRODUCTS' }), error => error instanceof OutletDeletionError && error.status === 403);
   assert.deepEqual(keys(f.records), before); assert.deepEqual(f.commits, []);
+});
+
+test('a failed category cleanup after deleting products can be retried safely', async () => {
+  const f = fixture(); f.failNextCommit(1);
+  await assert.rejects(deleteAllOutletRecords(f.db, 'outlet', 'PRODUCT', 'user', assigned, { confirm: 'DELETE_ALL_PRODUCTS' }), { status: 503 });
+  assert.ok(!keys(f.records).some(path => path.startsWith('OUTLET/outlet/PRODUCT/')));
+  assert.ok(f.records.has('OUTLET/outlet/CATEGORY/c1'));
+  assert.deepEqual(await deleteAllOutletRecords(f.db, 'outlet', 'PRODUCT', 'user', assigned, { confirm: 'DELETE_ALL_PRODUCTS' }), { deleted: 0, deletedCategories: 2 });
+  assert.ok(f.records.has('OUTLET/outlet/BILL/b1') && f.records.has('OUTLET/foreign/CATEGORY/c1'));
 });

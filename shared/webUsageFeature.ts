@@ -1,4 +1,4 @@
-// Temporary master switch for both frontend and backend. Rebuild/restart both
-// applications after changing this. No daily counters, leases or limits run
-// while false; ordinary login and outlet authorization remain required.
-export const DAILY_WEB_USAGE_ENABLED: boolean = false;
+// Compatibility indicator enabled for isolated test builds. Accounting, session
+// admission and enforcement remain authoritative on the backend: eraseOutlet
+// controls the daily limit. Setting this false is not an enforcement bypass.
+export const DAILY_WEB_USAGE_ENABLED: boolean = true;

@@ -26,11 +26,20 @@ export function customerDetails(documentId: string, fields: Record<string, unkno
     birthdayDate: text(fields.birthdayDate), anniversaryDate: text(fields.anniversaryDate), allowedCredit: fields.allowedCredit === true };
 }
 
-export async function listOutletCustomers(db: Firestore, outletId: string, profileId: string | null, assigned: Assignments) {
-  requireProductOutlet(profileId, outletId, profileId ? (await db.collection('USER_PROFILE').doc(profileId).get()).data() : undefined, assigned);
+// Returns the CUSTOMER collection once the user may read it. The profile and
+// outlet reads run together; nothing is returned before both checks pass.
+export async function authorizedCustomers(db: Firestore, outletId: string, profileId: string | null, assigned: Assignments) {
+  if (!profileId) throw new ProductCreationError(401, 'Your session has expired. Please sign in again.');
+  if (!outletId || outletId.includes('/')) throw new ProductCreationError(400, 'A valid outlet is required.');
   const outlet = db.collection('OUTLET').doc(outletId);
-  if (!(await outlet.get()).exists) throw new ProductCreationError(404, 'Outlet not found.');
-  const snapshot = await outlet.collection('CUSTOMER').get();
+  const [profile, outletSnapshot] = await Promise.all([db.collection('USER_PROFILE').doc(profileId).get(), outlet.get()]);
+  requireProductOutlet(profileId, outletId, profile.data(), assigned);
+  if (!outletSnapshot.exists) throw new ProductCreationError(404, 'Outlet not found.');
+  return outlet.collection('CUSTOMER');
+}
+
+export async function listOutletCustomers(db: Firestore, outletId: string, profileId: string | null, assigned: Assignments) {
+  const snapshot = await (await authorizedCustomers(db, outletId, profileId, assigned)).get();
   return { customers: snapshot.docs.map(doc => customerDetails(doc.id, doc.data())).sort((a, b) => a.name.localeCompare(b.name)) };
 }
 
@@ -68,5 +77,31 @@ export async function createOutletCustomer(db: Firestore, outletId: string, prof
     const fields = { ...data, id: documentId, code, selected: false, outletId: null };
     transaction.create(collection.doc(documentId), fields);
     return customerDetails(documentId, fields);
+  });
+}
+
+export async function updateOutletCustomer(db: Firestore, outletId: string, documentId: string, profileId: string | null,
+  assigned: Assignments, raw: unknown) {
+  if (!profileId) throw new ProductCreationError(401, 'Your session has expired. Please sign in again.');
+  if (![outletId, documentId].every(id => id && id.length <= 200 && !id.includes('/') && id !== '.' && id !== '..')) {
+    throw new ProductCreationError(400, 'A valid outlet and customer are required.');
+  }
+  const parsed = customerSchema.omit({ requestId: true }).partial().strict().safeParse(raw);
+  if (!parsed.success) throw new ProductCreationError(422, parsed.error.issues[0]?.message || 'Check the customer details.');
+  const outlet = db.collection('OUTLET').doc(outletId), reference = outlet.collection('CUSTOMER').doc(documentId);
+  return db.runTransaction(async transaction => {
+    requireProductOutlet(profileId, outletId, (await transaction.get(db.collection('USER_PROFILE').doc(profileId))).data(), assigned);
+    if ((await transaction.get(outlet)).data()?.active !== true) throw new ProductCreationError(403, 'This outlet is inactive or unavailable.');
+    const record = await transaction.get(reference);
+    if (!record.exists) throw new ProductCreationError(404, 'This customer no longer exists.');
+    const stored = record.data()!;
+    if (parsed.data.contact && contactKey(parsed.data.contact) !== contactKey(stored.contact)) {
+      const customers = await transaction.get(outlet.collection('CUSTOMER'));
+      if (customers.docs.some(doc => doc.id !== documentId && contactKey(doc.data().contact) === contactKey(parsed.data.contact))) {
+        throw new ProductCreationError(409, 'A customer with this mobile number already exists.');
+      }
+    }
+    if (Object.keys(parsed.data).length) transaction.update(reference, parsed.data);
+    return customerDetails(documentId, { ...stored, ...parsed.data });
   });
 }

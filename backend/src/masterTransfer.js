@@ -2,8 +2,7 @@ import { createHash } from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { Timestamp } from 'firebase-admin/firestore';
 import { z } from 'zod';
-import { ProductCreationError, newProductSchema, requireProductOutlet, validateProductReferences } from './productCreation.js';
-import { ANDROID_TAX_OPTIONS } from '../../shared/androidTaxes.js';
+import { ProductCreationError, newProductSchema, requireProductOutlet } from './productCreation.js';
 import { productFields } from './productDefaults.js';
 import { nextProductCode } from './productImportValidation.js';
 import { getFirebaseStorageBucket } from './firebase.js';
@@ -100,6 +99,11 @@ export function requireTransferAuthorization(secret, grant, profileId, source, d
     catch {
         throw new ProductCreationError(403, 'QuickPin authorization expired or is invalid for these outlets. Verify your QuickPin again.');
     }
+}
+// Storage checks and copies are independent per record, so run several at a time.
+async function inGroups(values, run, size = 10) {
+    for (let index = 0; index < values.length; index += size)
+        await Promise.all(values.slice(index, index + size).map(run));
 }
 // Create-only master transfers. No source writes, destination updates, stock/history writes, or new schema fields.
 async function transferOutletMastersUsingBucket(db, sourceId, profileId, assigned, secret, grant, raw, storageBucketProvider) {
@@ -211,9 +215,11 @@ async function transferOutletMastersUsingBucket(db, sourceId, profileId, assigne
             mappings.set(id, targetId);
             items.push({ type: 'category', sourceId: id, name, status: 'created', destinationId: targetId, destinationNumber: valid.data.categoryNo, reason: 'Category copied.' });
         }
-        for (const selection of input.products) {
+        // Read all selected source products together rather than one round trip per product.
+        const sourceProducts = await Promise.all(input.products.map(selection => transaction.get(source.collection('PRODUCT').doc(selection.sourceProductId))));
+        for (const [index, selection] of input.products.entries()) {
             const id = selection.sourceProductId;
-            const document = await transaction.get(source.collection('PRODUCT').doc(id));
+            const document = sourceProducts[index];
             const product = document.data();
             const name = typeof product?.name === 'string' ? product.name : id;
             if (!document.exists || !product) {
@@ -242,16 +248,20 @@ async function transferOutletMastersUsingBucket(db, sourceId, profileId, assigne
             }
             const optional = optionalProductData(product, input.options, destinationPremises);
             const selectedFields = [...new Set([...selection.fields, ...optional.fields])];
-            if (!['name', 'category', 'taxIndex', 'unitId'].every(field => selectedFields.includes(field))) {
+            // A product without a category (or whose source category no longer exists) is copied
+            // with no category, so the destination lists it under All.
+            const uncategorized = typeof product.category !== 'string' || !sourceCategoryMap.has(product.category);
+            const requiredFields = uncategorized ? ['name', 'taxIndex', 'unitId'] : ['name', 'category', 'taxIndex', 'unitId'];
+            if (!requiredFields.every(field => selectedFields.includes(field))) {
                 skip('product', id, name, 'New products require Product Name, Category, Tax Index and Unit ID selections.');
                 continue;
             }
-            if (typeof product.category === 'string' && presentCategories.has(product.category)) {
+            if (!uncategorized && presentCategories.has(product.category)) {
                 skip('product', id, name, 'Its category is already present in the destination, so it was not added.');
                 continue;
             }
-            const mappedCategory = typeof product.category === 'string' ? mappings.get(product.category) : undefined;
-            if (!mappedCategory || !categoryMap.has(mappedCategory)) {
+            const mappedCategory = uncategorized ? '' : mappings.get(product.category);
+            if (!uncategorized && (!mappedCategory || !categoryMap.has(mappedCategory))) {
                 skip('product', id, name, 'Select a valid destination category or transfer the required category.');
                 continue;
             }
@@ -267,29 +277,25 @@ async function transferOutletMastersUsingBucket(db, sourceId, profileId, assigne
                 catch {
                     defaultPrice = undefined;
                 }
-                if (defaultPrice !== product.price) {
+                // Products without a price table (combos, raw materials) use their Selling Price.
+                if (defaultPrice !== undefined && defaultPrice !== product.price) {
                     skip('product', id, name, 'Selling Price and the existing default price table must agree; separate price mappings are unsupported.');
                     continue;
                 }
             }
-            const candidate = { name: '', regionalName: '', shortName: '', category: mappedCategory, price: 0, mrpPrice: 0,
+            const candidate = { name: '', regionalName: '', shortName: '', category: mappedCategory ?? '', price: 0, mrpPrice: 0,
                 costPrice: 0, taxIndex: -1, unitId: -1, hsnCode: '', discount: 0, stockable: false, weighable: false, ...optional.candidate };
             for (const field of selectedFields)
                 if (field !== 'category' && field !== 'barcode')
                     candidate[field] = product[field];
-            const valid = newProductSchema.omit({ requestId: true, code: true }).safeParse(candidate);
+            const productSchema = newProductSchema.omit({ requestId: true, code: true });
+            const valid = (uncategorized ? productSchema.extend({ category: z.literal('') }) : productSchema).safeParse(candidate);
             if (!valid.success) {
                 skip('product', id, name, 'A selected source field is missing or invalid.');
                 continue;
             }
-            // Tax IDs are the shared Android TaxTable IDs, validated exactly as Add/Edit Product does.
-            try {
-                validateProductReferences(valid.data, [...categoryMap.keys()], ANDROID_TAX_OPTIONS);
-            }
-            catch {
-                skip('product', id, name, 'Destination category, tax or unit reference is invalid.');
-                continue;
-            }
+            // Tax and unit are copied exactly as the source POS stores them, e.g. tax 0 on combos and
+            // Android units newer than the web unit list. The category was resolved above.
             let barcode = '';
             if (selectedFields.includes('barcode')) {
                 if (typeof product.barcode !== 'string' || product.barcode.length > 200) {
@@ -309,12 +315,13 @@ async function transferOutletMastersUsingBucket(db, sourceId, profileId, assigne
             const code = nextProductCode([...productMap].map(([productId, fields]) => ({ id: productId, fields })));
             const base = productFields(valid.data, code, barcode);
             const { premisePrices, ...extra } = optional.extra;
-            const fields = { ...base, ...extra, id: targetId, dateTme: Timestamp.now() };
+            // Keep the source product type so combos and raw materials stay what they are.
+            const fields = { ...base, ...extra, ...(Number.isSafeInteger(product.type) ? { type: product.type } : {}), id: targetId, dateTme: Timestamp.now() };
             if (premisePrices)
                 fields.priceTable = JSON.stringify({ ...JSON.parse(base.priceTable), ...premisePrices });
             plans.push({ collection: 'PRODUCT', id: targetId, fields, sourceId: id, name,
                 ...(imagePath ? { sourceImagePath: imagePath } : {}),
-                ...(filenamePath ? { sourceProductImage: product.image } : {}), destinationCategoryId: mappedCategory });
+                ...(filenamePath ? { sourceProductImage: product.image } : {}), ...(mappedCategory ? { destinationCategoryId: mappedCategory } : {}) });
             productMap.set(targetId, fields);
             const stockNote = 'currentStock' in fields && fields.currentStock !== 0 ? `Product copied with stock ${String(fields.currentStock)}.` : 'Product copied with zero stock.';
             items.push({ type: 'product', sourceId: id, name, status: 'created', destinationId: targetId, destinationNumber: code,
@@ -336,7 +343,7 @@ async function transferOutletMastersUsingBucket(db, sourceId, profileId, assigne
     const blockedPlans = new Set();
     const outcomeOverrides = new Map();
     const itemKey = (type, id) => `${type}/${id}`;
-    for (const check of preflight.existingImageChecks) {
+    await inGroups(preflight.existingImageChecks, async (check) => {
         const sharedFilenameOnly = check.sourceProductImage !== undefined
             && check.sourceImagePath === productImageStoragePath(check.sourceProductImage)
             && check.destinationImagePath === productImageStoragePath(check.sourceProductImage);
@@ -356,19 +363,20 @@ async function transferOutletMastersUsingBucket(db, sourceId, profileId, assigne
             if (check.type === 'category')
                 failedCategories.add(item.destinationId ?? '');
         }
-    }
+    });
     const imagePaths = new Map();
     const verifiedSharedImages = new Set();
-    for (const plan of preflight.plans) {
+    // Categories go first so a failed category image still blocks its products.
+    const copyImage = async (plan) => {
         if (!plan.sourceImagePath)
-            continue;
+            return;
         if (plan.collection === 'PRODUCT' && failedCategories.has(plan.destinationCategoryId ?? '')) {
             const item = preflight.items.find(value => value.sourceId === plan.sourceId && value.type === 'product');
             item.status = 'skipped';
             item.reason = 'The destination category image could not be verified; dependent product was not created.';
             blockedPlans.add(`${plan.collection}/${plan.id}`);
             outcomeOverrides.set(itemKey('product', plan.sourceId), item.reason);
-            continue;
+            return;
         }
         try {
             if (plan.sourceProductImage && plan.sourceImagePath === productImageStoragePath(plan.sourceProductImage)) {
@@ -378,7 +386,7 @@ async function transferOutletMastersUsingBucket(db, sourceId, profileId, assigne
                 // The global object already exists and is shared without modification. The
                 // authenticated reader can resolve it for the destination without a duplicate upload.
                 verifiedSharedImages.add(`${plan.collection}/${plan.id}`);
-                continue;
+                return;
             }
             const copied = await copyMasterImageFromPath(bucket, plan.collection === 'PRODUCT' ? 'products' : 'categories', sourceId, plan.sourceId, plan.sourceImagePath, input.destinationOutletId, plan.id);
             if (plan.sourceProductImage && !await verifyMasterImageCopy(bucket, 'products', sourceId, plan.sourceId, productImageStoragePath(plan.sourceProductImage), input.destinationOutletId, plan.id, copied.imagePath)) {
@@ -395,7 +403,9 @@ async function transferOutletMastersUsingBucket(db, sourceId, profileId, assigne
             if (plan.collection === 'CATEGORY')
                 failedCategories.add(plan.id);
         }
-    }
+    };
+    await inGroups(preflight.plans.filter(plan => plan.collection === 'CATEGORY'), copyImage);
+    await inGroups(preflight.plans.filter(plan => plan.collection === 'PRODUCT'), copyImage);
     for (const plan of preflight.plans.filter(value => value.collection === 'PRODUCT' && failedCategories.has(value.destinationCategoryId ?? ''))) {
         const item = preflight.items.find(value => value.type === 'product' && value.sourceId === plan.sourceId);
         item.status = 'skipped';

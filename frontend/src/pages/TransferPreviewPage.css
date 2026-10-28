@@ -2,6 +2,19 @@
 .transfer-preview h2 { margin: 0; font-size: 17px; color: var(--ink); }
 .transfer-preview p { margin: 0; line-height: 1.6; }
 .transfer-preview-controls { display: grid; gap: 16px; min-width: 0; padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+.transfer-route-controls { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 20px; padding: 24px; }
+.transfer-route-controls .transfer-source-outlet { flex-basis: 100%; padding-bottom: 14px; border-bottom: 1px solid var(--line); color: var(--muted); }
+.transfer-route-controls .transfer-source-outlet strong { color: var(--ink); }
+.transfer-route-controls .transfer-destination-field { flex: 0 1 400px; }
+.transfer-route-controls .transfer-back-outlets { min-height: 42px; }
+.transfer-route-controls > :is(h2, .transfer-preview-outlets) { flex-basis: 100%; }
+.transfer-preview .transfer-search-field { max-width: 460px; }
+.transfer-preview .transfer-category-help { color: var(--muted); font-size: 12px; }
+.transfer-preview .devices-table-scroll input[type=checkbox] { accent-color: var(--blue); width: 16px; height: 16px; cursor: pointer; }
+.transfer-preview .devices-table-scroll input:disabled { cursor: default; }
+.transfer-preview .devices-table-scroll td { vertical-align: middle; }
+.transfer-preview :is(button, input, select):focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+@media (max-width: 680px) { .transfer-route-controls .transfer-destination-field { flex-basis: 100%; } }
 .transfer-preview-controls [role=group] { display: flex; flex-wrap: wrap; gap: 10px; }
 .transfer-preview-outlets { display: grid; gap: 12px; }
 .transfer-preview-outlets button { justify-content: space-between; text-align: left; gap: 16px; }

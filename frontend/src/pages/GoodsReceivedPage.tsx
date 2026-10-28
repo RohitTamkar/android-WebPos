@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { Package, Plus, ReceiptText, Search, X } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Package, Plus, ReceiptText, RefreshCw, Search, X } from 'lucide-react';
 import type { OutletSummary } from './OutletSelectionPage.tsx';
 import { loadProductList, ProductListRequestError } from './productListApi.ts';
 import { goodsReceiptRequest, GoodsReceiptError, type ReceiptSupplier, type GoodsReceiptOptions, type GoodsReceiptPayload, type SupplierCreatePayload, type SupplierCreateResult } from './goodsReceivedApi.ts';
@@ -8,7 +8,7 @@ import './StockAdjustmentPage.css';
 import './GoodsReceivedPage.css';
 
 type SupplierDetails = { name: string; contact: string; shortName: string; searchCode: string; alternateNumbers: string; email: string; gstIn: string; address: string };
-type Product = { id: string; code: string; barcode: string; name: string; category: string; stock: number; unit: string; cost: number; price: number };
+type Product = { id: string; code: string; barcode: string; name: string; category: string; stock: number | null; unit: string; cost: number; price: number };
 const unitNames: Record<number, string> = { 0: 'Kilogram', 1: 'Liter', 2: 'Number', 3: 'Millilitre', 4: 'Box', 5: 'Tin', 6: 'Jar', 7: 'Bottle', 8: 'Gram', 9: 'Meter', 10: 'Dozen', 11: 'Bag', 12: 'Piece' };
 const text = (value: unknown) => typeof value === 'string' || typeof value === 'number' ? String(value) : '';
 type Row = { productId: string; quantity: string; cost: string; price: string };
@@ -16,6 +16,7 @@ const validQuantity = (value: string) => value.trim() !== '' && Number.isFinite(
 const validPrice = (value: string) => value.trim() !== '' && Number.isFinite(Number(value)) && Number(value) >= 0 && Number(value) <= 1e9;
 const money = (value: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(value);
 const formatQuantity = (value: number) => new Intl.NumberFormat('en-IN', { maximumFractionDigits: 6 }).format(value);
+const savedStock = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : null;
 
 export function GoodsReceivedPage({ outlet, token, onSessionExpired, onCancel }: { outlet: OutletSummary; token: string; onSessionExpired: () => void; onCancel: () => void }) {
   const [suppliers, setSuppliers] = useState<ReceiptSupplier[]>([]);
@@ -33,6 +34,35 @@ export function GoodsReceivedPage({ outlet, token, onSessionExpired, onCancel }:
   const confirmation = useRef<HTMLDialogElement>(null);
   const base = `/api/outlets/${encodeURIComponent(outlet.id)}`;
   const locked = saving || uncertain;
+  const [stockRefreshing, setStockRefreshing] = useState(false);
+  const [stockError, setStockError] = useState('');
+  const stockRequest = useRef<AbortController | null>(null);
+  const refreshStock = useCallback(async () => {
+    if (stockRequest.current) return;
+    const controller = new AbortController(); stockRequest.current = controller;
+    setStockRefreshing(true); setStockError('');
+    try {
+      const records = await loadProductList<{ documentId: string; fields: Record<string, unknown> }>(`${base}/products`, token, controller.signal, 'products');
+      if (controller.signal.aborted) return;
+      const stocks = new Map(records.map(record => [record.documentId, savedStock(record.fields.currentStock)]));
+      // Existing stock comes from PRODUCT.currentStock, never from draft quantities
+      // or a sum of receipt history (which could count stock adjustments twice).
+      setProducts(current => current.map(product => ({ ...product, stock: stocks.get(product.id) ?? null })));
+    } catch (failure) {
+      if (controller.signal.aborted) return;
+      if (failure instanceof ProductListRequestError && failure.status === 401) onSessionExpired();
+      setStockError((failure as Error).message);
+    } finally {
+      if (stockRequest.current === controller) { stockRequest.current = null; setStockRefreshing(false); }
+    }
+  }, [base, token, onSessionExpired]);
+  useEffect(() => () => { stockRequest.current?.abort(); }, [base, token]);
+  useEffect(() => {
+    if (loading || locked) return;
+    const refresh = () => { if (document.visibilityState !== 'hidden') void refreshStock(); };
+    window.addEventListener('focus', refresh); document.addEventListener('visibilitychange', refresh);
+    return () => { window.removeEventListener('focus', refresh); document.removeEventListener('visibilitychange', refresh); };
+  }, [loading, locked, refreshStock]);
   useEffect(() => {
     const controller = new AbortController();
     // Clear loading errors when explicitly refreshing the authorized outlet's data.
@@ -44,9 +74,9 @@ export function GoodsReceivedPage({ outlet, token, onSessionExpired, onCancel }:
       goodsReceiptRequest<GoodsReceiptOptions>(`${base}/goods-received`, token, controller.signal),
     ]).then(([records, categories, options]) => {
       if (controller.signal.aborted) return;
-      setProducts(records.filter(record => record.fields.stockable === true && typeof record.fields.currentStock === 'number' && Number.isFinite(record.fields.currentStock)).map(record => ({
+      setProducts(records.filter(record => record.fields.stockable === true).map(record => ({
         id: record.documentId, code: text(record.fields.code), barcode: text(record.fields.barcode), name: text(record.fields.name),
-        category: categories.find(entry => entry.id === record.fields.category)?.name ?? 'Uncategorized', stock: record.fields.currentStock as number,
+        category: categories.find(entry => entry.id === record.fields.category)?.name ?? 'Uncategorized', stock: savedStock(record.fields.currentStock),
         unit: typeof record.fields.unitId === 'number' ? unitNames[record.fields.unitId] ?? '—' : '—',
         cost: typeof record.fields.costPrice === 'number' ? record.fields.costPrice : 0, price: typeof record.fields.price === 'number' ? record.fields.price : 0,
       })));
@@ -84,7 +114,7 @@ export function GoodsReceivedPage({ outlet, token, onSessionExpired, onCancel }:
   };
   const review = () => {
     setNotice('');
-    if (!suppliers.some(entry => entry.id === supplier)) { setError('Select a supplier.'); return; }
+    if (supplier && !suppliers.some(entry => entry.id === supplier)) { setError('Select a supplier.'); return; }
     if (!rows.length) { setError('Add at least one product.'); return; }
     if (rows.some(row => !validQuantity(row.quantity))) { setError('Enter a positive received quantity up to 1,000,000,000 with up to three decimal places for every product.'); return; }
     if (!validAmounts) { setError('Enter finite, nonnegative prices.'); return; }
@@ -95,8 +125,8 @@ export function GoodsReceivedPage({ outlet, token, onSessionExpired, onCancel }:
   const save = async () => {
     if (busy.current) return;
     if (!pending.current) {
-      const selectedSupplier = suppliers.find(entry => entry.id === supplier);
-      if (!selectedSupplier || !identity || !rows.length) return;
+      const selectedSupplier = suppliers.find(entry => entry.id === supplier) ?? null;
+      if ((supplier && !selectedSupplier) || !identity || !rows.length) return;
       pending.current = { documentId: identity, goodsReceivedNo: identity, supplier: selectedSupplier,
         items: rows.map(row => ({ productId: row.productId, quantity: Number(row.quantity), cost: Number(row.cost), price: Number(row.price) })) };
     }
@@ -121,12 +151,16 @@ export function GoodsReceivedPage({ outlet, token, onSessionExpired, onCancel }:
     <fieldset className="goods-form-fieldset" disabled={locked}>
     <section className="goods-unified-card" aria-label="Goods received entry">
       <div className="goods-supplier-select">
-        <label>Supplier<select value={supplier} onChange={event => { setSupplier(event.target.value); setNotice(''); }}>
-          <option value="">Select supplier</option>{suppliers.map(entry => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
+        <label>Supplier (optional)<select value={supplier} onChange={event => { setSupplier(event.target.value); setNotice(''); }}>
+          <option value="">No supplier</option>{suppliers.map(entry => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
         </select></label>
         <button type="button" className="devices-refresh goods-add-supplier" onClick={() => setAddingSupplier(true)}><Plus />Add Supplier</button>
       </div>
-      <div className="goods-products-heading"><h2>Products</h2><p>Select the products received, then enter quantities and prices.</p></div>
+      <div className="goods-search-row"><label className="goods-search-field">Search products<div><Search aria-hidden="true" /><input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search by code, barcode or name" /></div></label></div>
+      <div className="goods-products-heading"><div><h2>Products</h2><p>Select the products received, then enter quantities and prices.</p></div>
+        <button type="button" className="devices-refresh" disabled={stockRefreshing} onClick={() => void refreshStock()}><RefreshCw aria-hidden="true" />{stockRefreshing ? 'Refreshing…' : 'Refresh stock'}</button>
+      </div>
+      {stockError && <p role="alert" className="stock-error goods-entry-message">Stock refresh failed: {stockError} Previously loaded stock is still shown.</p>}
       <nav className="goods-category-tabs" aria-label="Product categories">{['', ...new Set(products.map(product => product.category))].map(value => <button type="button" key={value} aria-pressed={category === value} onClick={() => setCategory(value)}>{value || 'All'}</button>)}</nav>
       <div className="devices-table-scroll stock-entry-table goods-products-table"><table aria-label="Stockable products">
         <thead><tr><th>Select</th><th>Code</th><th>Product</th><th>Current stock</th><th>Received qty</th><th>Cost price</th><th>Price</th><th>Line total</th></tr></thead>
@@ -136,19 +170,19 @@ export function GoodsReceivedPage({ outlet, token, onSessionExpired, onCancel }:
             <td><input type="checkbox" className="goods-row-checkbox" aria-label={`Include ${product.name}`} checked={!!row} onChange={() => toggleProduct(product)} /></td>
             <td><span className="goods-code">{product.code || '—'}</span></td>
             <td><button type="button" className="goods-product-select" aria-label={`Select product ${product.name}`} aria-pressed={!!row} onClick={() => toggleProduct(product)}>{product.name}</button><small className="goods-help">{product.category} · {product.unit}</small></td>
-            <td><span className="goods-stock-value">{formatQuantity(product.stock)}</span></td>
+            <td><span className="goods-stock-value" aria-label={`Current stock for ${product.name}`}>{product.stock === null ? 'Unavailable' : formatQuantity(product.stock)}</span></td>
             <td><input type="number" min="0.001" step="0.001" disabled={!row} aria-label={`Received quantity for ${product.name}`} aria-invalid={!!row && !validQuantity(row.quantity)} value={row?.quantity ?? ''} placeholder="0" onChange={event => { setRows(current => current.map(entry => entry.productId === product.id ? { ...entry, quantity: event.target.value } : entry)); setNotice(''); }} />{row && !validQuantity(row.quantity) && <small className="stock-error">Enter a positive quantity with up to three decimal places.</small>}</td>
             {(['cost', 'price'] as const).map(field => <td key={field}><input type="number" min="0" step="any" disabled={!row} aria-label={`${field === 'cost' ? 'Cost price' : 'Price'} for ${product.name}`} aria-invalid={!!row && !validPrice(row[field])} value={row?.[field] ?? String(product[field])} onChange={event => { setRows(current => current.map(entry => entry.productId === product.id ? { ...entry, [field]: event.target.value } : entry)); setNotice(''); }} />{row && !validPrice(row[field]) && <small className="stock-error">Enter zero or a positive price.</small>}</td>)}
-            <td className="goods-line-total">{row && validQuantity(row.quantity) && validPrice(row.cost) && Number.isFinite(Number(row.quantity) * Number(row.cost)) ? money(Number(row.quantity) * Number(row.cost)) : '—'}</td>
+            <td className="goods-line-total">{row && validQuantity(row.quantity) && validPrice(row.price) && Number.isFinite(Number(row.quantity) * Number(row.price)) ? money(Number(row.quantity) * Number(row.price)) : '—'}</td>
           </tr>;
         })}
         {!visibleProducts.length && <tr><td colSpan={8}><div className="stock-empty"><Package aria-hidden="true" /><strong>{products.length ? 'No products match your search' : 'No stockable products yet'}</strong><span>{products.length ? 'Try another name, barcode, code or category.' : 'Mark products as Stockable in Products to get started.'}</span></div></td></tr>}
         </tbody>
       </table></div>
-      <div className="goods-search-row"><label className="goods-search-field">Search products<div><Search aria-hidden="true" /><input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search by code, barcode or name" /></div></label></div>
       {error && <p role="alert" className="stock-error goods-entry-message">{error}</p>}
       {notice && <p role="status" className="goods-preview-note">{notice}</p>}
       <footer className="goods-entry-footer goods-actions">
+        <strong className="goods-receipt-total" aria-live="polite">Total: {rows.every(row => validQuantity(row.quantity) && validPrice(row.price)) ? money(rows.reduce((total, row) => total + Number(row.quantity) * Number(row.price), 0)) : '—'}</strong>
         <button type="button" className="devices-refresh" onClick={onCancel}>Cancel</button>
         <button type="button" className="stock-primary" onClick={review}>Save</button>
       </footer>
@@ -161,7 +195,7 @@ export function GoodsReceivedPage({ outlet, token, onSessionExpired, onCancel }:
       setSupplier(saved.documentId); setSupplierDraftId(saved.nextDocumentId); setAddingSupplier(false); setNotice('Supplier saved successfully.'); setError('');
     }} />}
     <dialog ref={confirmation} className="stock-confirm-dialog" aria-labelledby="goods-confirm-title" onCancel={event => { if (locked) event.preventDefault(); else setConfirming(false); }}><h2 id="goods-confirm-title">Confirm Goods Received</h2>
-      <p>{suppliers.find(entry => entry.id === supplier)?.name} · Review the products and quantities before saving.</p>
+      <p>{suppliers.find(entry => entry.id === supplier)?.name || 'No supplier'} · Review the products and quantities before saving.</p>
       <ul>{rows.map(row => <li key={row.productId}>{products.find(product => product.id === row.productId)?.name}: {row.quantity} · cost {row.cost} · price {row.price}</li>)}</ul>
       {error && <p role="alert" className="stock-error">{error}</p>}{uncertain && <p>The save outcome is uncertain. Retry the same confirmation to avoid duplicate receipts.</p>}
       <div><button type="button" className="devices-refresh" disabled={locked} onClick={() => setConfirming(false)}>Keep editing</button><button type="button" className="stock-primary" disabled={saving} onClick={() => void save()}>{saving ? 'Saving…' : uncertain ? 'Retry confirmation' : 'Confirm receipt'}</button></div>

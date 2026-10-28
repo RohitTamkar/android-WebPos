@@ -12,8 +12,8 @@ function isolatedFirestore() {
         collection(name) {
             assert.equal(name, 'OUTLET');
             return { doc: (outlet) => ({ collection: (name) => {
-                        assert.equal(name, 'PRODUCT');
-                        return { outlet, doc: id => ({ outlet, id }) };
+                        assert.ok(['PRODUCT', 'CATEGORY'].includes(name));
+                        return { outlet, kind: name, doc: id => ({ outlet, id }) };
                     } }) };
         },
         async runTransaction(callback) {
@@ -23,6 +23,8 @@ function isolatedFirestore() {
                 const result = await callback({
                     get: async (query) => {
                         assert.equal(writes.length, 0, 'all reads must precede writes');
+                        if (query.kind === 'CATEGORY')
+                            return { docs: [{ id: 'cat', data: () => ({ name: 'Food', categoryNo: 1 }) }] };
                         readOutlet = query.outlet;
                         version = versions.get(readOutlet) ?? 0;
                         const docs = [...(outlets.get(readOutlet) ?? [])].map(([id, fields]) => ({ id, data: () => ({ ...fields }) }));
@@ -49,7 +51,17 @@ function isolatedFirestore() {
     };
     return { db: db, outlets, retries: () => retries };
 }
-const document = (name) => ({ rowNumber: 2, sourceIdentity: name, fields: { name, code: 1, barcode: '0001' } });
+const document = (name) => ({ rowNumber: 2, sourceIdentity: name, fields: { name, code: 1, category: 'cat', barcode: '0001' } });
+test('a missing category blocks product creation before product allocation or writes', async () => {
+    let writes = 0, reads = 0;
+    const reference = { doc: () => reference, collection: () => reference };
+    const db = { collection: () => reference, runTransaction: async (work) => work({
+            get: async () => { reads++; return { docs: [] }; }, create: () => { writes++; },
+        }) };
+    await assert.rejects(createProductImportChunk(db, 'outlet', [document('A')]), /category no longer exists/);
+    assert.equal(writes, 0);
+    assert.equal(reads, 1);
+});
 test('concurrent empty-outlet imports retry the query; stale preview cannot commit duplicate code', async () => {
     const mock = isolatedFirestore();
     const a = allocateProductCodes('outlet', [document('A')], []);

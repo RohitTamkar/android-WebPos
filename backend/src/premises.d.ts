@@ -21,7 +21,7 @@ export interface PremisesRecord {
     documentId: string;
     fields: Record<string, unknown>;
 }
-export type TypedFields = Record<string, {
+export type FirestoreValue = {
     integerValue: string;
 } | {
     doubleValue: number;
@@ -33,7 +33,16 @@ export type TypedFields = Record<string, {
     nullValue: null;
 } | {
     timestampValue: string;
-}>;
+} | {
+    mapValue: {
+        fields: Record<string, FirestoreValue>;
+    };
+} | {
+    arrayValue: {
+        values: FirestoreValue[];
+    };
+};
+export type TypedFields = Record<string, FirestoreValue>;
 export interface PremisesTransaction {
     read(path: string): Promise<Record<string, unknown> | undefined>;
     list(path: string): Promise<PremisesRecord[]>;

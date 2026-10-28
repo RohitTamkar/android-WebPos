@@ -40,10 +40,13 @@ test('standard 14-column contract remains separate from premises mode', () => {
 
 test('premises header must be present, last and unique; rows cannot silently lose extra cells', () => {
   for (const headers of [
-    [...PRODUCT_COLUMNS, ''], [...PRODUCT_COLUMNS, 'Location'],
+    [...PRODUCT_COLUMNS, ''],
     ['Premises', ...PRODUCT_COLUMNS], [...PREMISES_PRODUCT_COLUMNS, 'Extra'],
     [...PRODUCT_COLUMNS, 'Premises', 'Premises'],
   ]) assert.ok(parseProductCsv(csv([[...row, 'Main Branch']], headers), 'premises').headerErrors.length);
+  const named = parseProductCsv(csv([[...row, 'Main Branch']], [...PRODUCT_COLUMNS, 'Location']), 'premises');
+  assert.deepEqual(named.headerErrors, []);
+  assert.ok(named.rows[0].errors.some(issue => issue.column === 'Location'), 'named columns contain prices, not premises names');
   const extra = parseProductCsv(csv([[...row, 'Main Branch', 'extra']]), 'premises');
   assert.ok(extra.rows[0].errors.some(issue => issue.column === 'Row structure'));
   assert.equal(extra.rows[0].cells[15], 'extra');

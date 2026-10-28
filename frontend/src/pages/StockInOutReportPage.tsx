@@ -203,11 +203,11 @@ export const StockInOutReportPage = ({ outlet, token, onSessionExpired, reportNa
       </>}
     </div>
     {selectedMovement && <div className="bill-detail-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setSelectedMovement(null); }}><article className="bill-detail-modal" role="dialog" aria-modal="true" aria-label={`Stock transaction ${selectedMovement.transactionNo}`}>
-      <header><div><span>STOCK IN-OUT DETAILS</span><h2>{selectedMovement.transactionNo}</h2><p>{dateTime(selectedMovement.createdDate)}</p></div><button type="button" aria-label="Close transaction details" autoFocus onClick={() => setSelectedMovement(null)}><X /></button></header>
+      <header><div><span>STOCK IN-OUT DETAILS</span><h2>{selectedMovement.direction === 'in' ? 'Stock In' : 'Stock Out'}</h2><p>{dateTime(selectedMovement.createdDate)}</p></div><button type="button" aria-label="Close transaction details" autoFocus onClick={() => setSelectedMovement(null)}><X /></button></header>
       <div className="bill-detail-body">
         <div className="bill-detail-meta">{[
-          ['Day ID', selectedMovement.dayId], ['Transaction ID', selectedMovement.documentId], ['Type', selectedMovement.type], ['Direction', selectedMovement.direction === 'in' ? 'Stock In' : 'Stock Out'],
-          ['Supplier', selectedMovement.supplier], ['Source', selectedMovement.source], ['State', selectedMovement.state], ['Remark', selectedMovement.remark],
+          ['Day ID', selectedMovement.dayId], ['Type', selectedMovement.type], ['Supplier', selectedMovement.supplier],
+          ...(selectedMovement.remark ? [['Remark', selectedMovement.remark]] : []),
         ].map(([label, value]) => <div key={label}><span>{label}</span><strong>{value || '—'}</strong></div>)}</div>
         <h3>Products</h3><div className="bill-items-table"><table><thead><tr><th>Product</th><th>Qty</th><th>Rate</th><th>Cost</th><th>Total</th></tr></thead><tbody>{selectedMovement.items.length ? selectedMovement.items.map((item, index) => <tr key={index}><td><strong>{item.name}</strong><small>{item.productId}{item.remark ? ` · ${item.remark}` : ''}</small></td><td>{quantity(item.quantity)}</td><td>{money(item.price)}</td><td>{money(item.cost)}</td><td>{money(item.total)}</td></tr>) : <tr><td colSpan={5}>No product details available</td></tr>}</tbody></table></div>
         <div className="bill-total-detail"><div><span>Quantity</span><strong>{quantity(selectedMovement.quantity)}</strong></div><div><span>Sub Total</span><strong>{money(selectedMovement.total)}</strong></div><div><span>Round Off</span><strong>{money(selectedMovement.roundOff)}</strong></div><div className="grand-total"><span>Transaction Total</span><strong>{money(selectedMovement.finalTotal)}</strong></div></div>

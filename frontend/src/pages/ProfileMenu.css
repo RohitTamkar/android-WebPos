@@ -1,4 +1,8 @@
 .profile-menu { position: relative; }
+.profile-menu-actions { padding: 12px; border-top: 1px solid var(--line); }
+.profile-menu-actions button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px; border: 0; border-radius: 8px; background: transparent; color: var(--blue); font: inherit; font-size: 13px; font-weight: 600; text-align: left; cursor: pointer; }
+.profile-menu-actions button:hover { background: color-mix(in srgb, var(--blue) 7%, var(--card)); }
+.profile-menu-actions button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .profile-menu-trigger { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .profile-menu-trigger:focus-visible { outline: 2px solid var(--blue); outline-offset: 4px; border-radius: 6px; }
 .profile-menu-trigger > svg { transition: transform .18s ease; }

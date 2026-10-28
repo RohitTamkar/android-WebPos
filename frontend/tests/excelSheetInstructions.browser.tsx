@@ -4,7 +4,11 @@ import { PRODUCT_COLUMNS, parseProductCsv } from '../src/pages/productCsvPreview
 import '../src/index.css';
 import '../src/App.css';
 let requests = 0;
-window.fetch = async () => { requests++; throw new Error('Instruction preview must never access an API'); };
+window.fetch = async input => {
+  requests++;
+  if (String(input).endsWith('/products/import/quota')) return Response.json({ success: true, remainingAttempts: 2, maxAttempts: 2 });
+  throw new Error('Only the existing upload quota GET is permitted');
+};
 const results: string[] = [];
 const root = createRoot(document.getElementById('root')!);
 root.render(<div className="retail-dashboard-shell"><div className="dashboard-stage"><main className="dashboard-workspace"><UploadExcelPage outletId="illustration-only" token="mock-token" onSessionExpired={() => { throw new Error('Unexpected session access'); }} /></main></div></div>);
@@ -17,6 +21,7 @@ function dialog() { return document.querySelector<HTMLDialogElement>('.upload-ex
 async function open() { option().click(); await waitFor(() => dialog()?.open && document.querySelector('.sheet-grid'), 'instructions open'); }
 void (async () => {
   await waitFor(() => option(), 'option ready'); await open();
+  assert(document.querySelector('dialog[open] .excel-sheet-instructions')?.textContent?.includes('Download Standard Template') && document.querySelector('dialog[open] .excel-sheet-instructions')?.textContent?.includes('Download Premises-Wise Template'), 'Both demo template downloads are inside the instructions');
   assert(document.querySelectorAll('dialog').length === 1, 'uses only the existing modal');
   const headers = [...document.querySelectorAll('.sheet-column-headers th[scope="col"]')].map(cell => cell.textContent);
   assert(JSON.stringify(headers) === JSON.stringify(PRODUCT_COLUMNS), 'all 14 mandatory headers in parser order');
@@ -48,7 +53,7 @@ void (async () => {
   results.push('Horizontal scrolling reaches Search Code; header remains fixed during vertical scrolling');
 
   assert(document.querySelectorAll('.sheet-rules-list > li').length === 11, 'numbered instruction panel');
-  assert(document.querySelector('.sheet-rules-list')?.textContent?.includes('no optional premise columns'), 'premises are not falsely advertised as supported');
+  assert(document.querySelector('.sheet-rules-list')?.textContent?.includes('Premises cannot currently be verified or saved'), 'premises are not falsely advertised as supported');
   const pills = [...document.querySelectorAll('.sheet-required-columns li')];
   assert(pills.length === 14 && pills.every((pill, index) => pill.textContent?.includes(PRODUCT_COLUMNS[index]!)), '14 required-column pills in order');
   assert(dialog().scrollWidth <= dialog().clientWidth + 2, 'overall modal has no horizontal overflow');
@@ -80,7 +85,7 @@ void (async () => {
   uploadOption.click(); await waitFor(() => document.querySelector('.csv-upload-preview'), 'existing upload preview opens');
   assert(document.querySelector<HTMLInputElement>('input[type="file"]')?.accept === '.csv,.tsv', 'existing file selection preserved');
   assert(!document.querySelector('.excel-sheet-instructions'), 'instruction content stays isolated from upload content');
-  assert(requests === 0, 'opening previews never reads or writes outlet data');
+  assert(requests === 1, 'Opening upload reads quota once; instructions and templates make no API requests');
   results.push('Existing Upload Excel preview and CSV/TSV selection remain unchanged');
   document.getElementById('test-results')!.textContent = JSON.stringify({ passed: results });
 })().catch(error => { document.getElementById('test-results')!.textContent = JSON.stringify({ failed: String(error), passed: results }); });

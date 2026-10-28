@@ -1,7 +1,7 @@
 export type ReceiptSupplier = { id: string; name: string; mobile: string; address: string; alternateNumber: null; email: string; gstin: string };
-export type SavedGoodsReceipt = { documentId: string; fields: { supplier?: ReceiptSupplier; goodsReceivedNo?: string; createDate?: number; goodsReceivedItemBeanList?: { name: string; quantity: number; cost: number; price: number }[] } };
+export type SavedGoodsReceipt = { documentId: string; fields: { supplier?: ReceiptSupplier | null; goodsReceivedNo?: string; createDate?: number; goodsReceivedItemBeanList?: { name: string; quantity: number; cost: number; price: number }[] } };
 export type GoodsReceiptOptions = { documentId: string; supplierDraftId: string; suppliers: ReceiptSupplier[]; receipts: SavedGoodsReceipt[] };
-export type GoodsReceiptPayload = { documentId: string; goodsReceivedNo: string; supplier: ReceiptSupplier; items: { productId: string; quantity: number; cost: number; price: number }[] };
+export type GoodsReceiptPayload = { documentId: string; goodsReceivedNo: string; supplier: ReceiptSupplier | null; items: { productId: string; quantity: number; cost: number; price: number }[] };
 export type SupplierCreatePayload = { documentId: string; fields: { name: string; mobile: string; address: string; alternateNumber: string; email: string; gstin: string } };
 export type SupplierCreateResult = { documentId: string; fields: SupplierCreatePayload['fields'] & { id: null }; nextDocumentId: string };
 export class GoodsReceiptError extends Error {

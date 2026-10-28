@@ -40,7 +40,8 @@ window.fetch = async (url, init) => {
     return Response.json({ success: true, data: { deleted: 2 } });
   }
   assert(!init?.method || init.method === 'GET', 'Only confirmed actions write to the database');
-  if (path.endsWith('/categories')) return mode === 'category' ? categoryLoad : Response.json({ success: true, data: [category] });
+  // The page reads names and counts separately, so each request needs its own body.
+  if (path.endsWith('/categories')) return mode === 'category' ? categoryLoad.then(response => response.clone()) : Response.json({ success: true, data: [category] });
   if (path.endsWith('/products/create-options')) return Response.json({ success: true, data: {
     code: 1, categories: [category], taxes: [{ percent: 5, index: 1, type: 0 }], units: [{ id: 2, name: 'NUMBER' }],
     premises: [{ id: 'table', name: 'TABLE' }, { id: 'ac', name: 'AC Table' }],

@@ -14,5 +14,11 @@
 .customers-table-scroll table { width: 100%; border-collapse: collapse; color: var(--ink); font-size: 13px; }
 .customers-table-scroll th, .customers-table-scroll td { padding: 15px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
 .customers-table-scroll th { color: var(--muted); font-size: 11px; font-weight: 600; }
+.customers-table-scroll tbody tr { cursor: pointer; }
+.customers-table-scroll tbody tr:hover { background: color-mix(in srgb, var(--blue) 4%, var(--card)); }
+.customer-edit-button { padding: 0; border: 0; background: transparent; color: var(--blue); font: inherit; text-align: left; cursor: pointer; }
+.customer-edit-button:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
 @media (max-width: 820px) { .category-modal.customer-form-page { min-height: calc(100dvh - 98px); } }
 @media (max-width: 680px) { .customer-form-fields { padding: 18px; } }
+
+.customers-more-rows { padding: 14px 8px 4px; color: #7188ad; font-size: 13px; text-align: center; }

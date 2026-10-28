@@ -7,7 +7,7 @@ import { ProductCreationError, requireProductOutlet } from './productCreation.js
 export const WEB_USAGE_LEASE_SECONDS = 30;
 const limitSeconds = 1800;
 export class DailyUsageError extends ProductCreationError {
-  constructor(status: number, public code: string, message: string) { super(status, message); }
+  constructor(status: number, public code: string, message: string, public dailyLimitApplies?: boolean) { super(status, message); }
 }
 const leaseSchema = z.object({ profileDocId: z.string().min(1).max(200), expiresAt: z.instanceof(Timestamp), lastSequence: z.number().int().nonnegative() }).strict();
 const operationSchema = z.discriminatedUnion('action', [
@@ -57,7 +57,7 @@ function localDate(now: Timestamp, timeZone: string): string {
 
 // Shared transaction engine: every calculation is rerun after a transaction conflict.
 async function usageTransaction(db: Firestore, outletId: string, profileId: string | null,
-  assigned: (profile: Record<string, unknown>) => string[], raw: unknown = {}, clock = () => Timestamp.now(), operation?: z.infer<typeof operationSchema>) {
+  assigned: (profile: Record<string, unknown>) => string[], raw: unknown = {}, clock = () => Timestamp.now(), operation?: z.infer<typeof operationSchema>, requireAllowance = false, readOnly = false) {
   if (!profileId) throw new ProductCreationError(401, 'Your session has expired. Please sign in again.');
   if (!outletId || outletId.length > 200 || outletId.includes('/') || outletId === '.' || outletId === '..') {
     throw new ProductCreationError(400, 'A valid outlet document ID is required.');
@@ -75,7 +75,9 @@ async function usageTransaction(db: Firestore, outletId: string, profileId: stri
     const outlet = (await transaction.get(outletRef)).data();
     if (!outlet) throw new ProductCreationError(404, 'Outlet not found.');
     if (outlet.active !== true) throw new ProductCreationError(403, 'This outlet is inactive.');
+    const exemptFromDailyLimit = outlet.eraseOutlet === true;
     const stored = (await transaction.get(usageRef)).data();
+    if (readOnly && stored === undefined) throw new DailyUsageError(428, 'USAGE_SESSION_REQUIRED', 'Enter the outlet before loading its logo.');
     // Never silently grant a new allowance or migrate legacy data on entry.
     // An existing SESSION document is authoritative; legacy fields stay untouched.
     if (stored === undefined && outlet.dailyUsage !== undefined) {
@@ -110,9 +112,10 @@ async function usageTransaction(db: Firestore, outletId: string, profileId: stri
       : { date, timeZone, limitSeconds, usedSeconds: 0, settledAt: now,
         updatedAt: now, generation: randomUUID(), version: 1, sessions: {} };
     const initialized = stored === undefined || reset;
-    const summary = () => ({ outletId, initialized, reset, date, timeZone, limitSeconds, usedSeconds: dailyUsage.usedSeconds });
+    const summary = () => ({ outletId, initialized, reset, date, timeZone, limitSeconds, usedSeconds: dailyUsage.usedSeconds,
+      ...(readOnly ? { outletName: outlet.name } : {}) });
     if (!operation) {
-      transaction.set(usageRef, { ...dailyUsage, updatedAt: FieldValue.serverTimestamp() });
+      if (!readOnly) transaction.set(usageRef, { ...dailyUsage, updatedAt: FieldValue.serverTimestamp() });
       return summary();
     }
     const parsedSessions = z.record(z.string().regex(/^[a-f0-9]{64}$/), leaseSchema).safeParse(dailyUsage.sessions);
@@ -123,12 +126,12 @@ async function usageTransaction(db: Firestore, outletId: string, profileId: stri
     dailyUsage.usedSeconds = Math.min(limitSeconds,
       (Math.round(dailyUsage.usedSeconds * 1000) + Math.max(0, through - dailyUsage.settledAt.toMillis())) / 1000);
     dailyUsage.settledAt = now;
-    const persist = () => transaction.set(usageRef, { ...dailyUsage, sessions, updatedAt: FieldValue.serverTimestamp() });
+    const persist = () => { if (!readOnly) transaction.set(usageRef, { ...dailyUsage, sessions, updatedAt: FieldValue.serverTimestamp() }); };
     const failure = (status: number, code: string, message: string) => {
       for (const [id, session] of Object.entries(sessions)) if (session.expiresAt.toMillis() <= nowMs) delete sessions[id];
-      persist(); return { ...summary(), failure: { status, code, message } };
+      persist(); return { ...summary(), failure: { status, code, message, dailyLimitApplies: !exemptFromDailyLimit } };
     };
-    if (dailyUsage.usedSeconds >= limitSeconds && operation.action !== 'status' && operation.action !== 'stop') {
+    if (!exemptFromDailyLimit && dailyUsage.usedSeconds >= limitSeconds && (requireAllowance || operation.action !== 'status') && operation.action !== 'stop') {
       return failure(403, 'USAGE_LIMIT_REACHED', 'The daily 30-minute Web POS allowance for this outlet has been exhausted. Access resumes 24 Hrs later.');
     }
     if (operation.action !== 'status' && operation.action !== 'start') {
@@ -149,25 +152,28 @@ async function usageTransaction(db: Firestore, outletId: string, profileId: stri
       }
     }
     for (const [id, session] of Object.entries(sessions)) if (session.expiresAt.toMillis() <= nowMs) delete sessions[id];
+    // Keep accounting capped at 1,800 seconds; exempt outlets still need normal,
+    // expiring leases even when there is no daily allowance remaining.
+    const expiresAt = Timestamp.fromMillis(exemptFromDailyLimit ? nowMs + WEB_USAGE_LEASE_SECONDS * 1000
+      : Math.min(nowMs + WEB_USAGE_LEASE_SECONDS * 1000, nowMs + Math.round((limitSeconds - dailyUsage.usedSeconds) * 1000)));
     let sessionId: string | undefined;
     if (operation.action === 'start') {
       sessionId = createHash('sha256').update(JSON.stringify([profileId, outletId, dailyUsage.generation, operation.requestId])).digest('hex');
       if (!sessions[sessionId] && Object.keys(sessions).length >= 100) {
         return failure(429, 'USAGE_SESSION_CAPACITY', 'Too many active Web POS sessions. Wait for unused sessions to expire.');
       }
-      sessions[sessionId] = { profileDocId: profileId, expiresAt: Timestamp.fromMillis(Math.min(nowMs + WEB_USAGE_LEASE_SECONDS * 1000,
-        nowMs + Math.round((limitSeconds - dailyUsage.usedSeconds) * 1000))), lastSequence: sessions[sessionId] ? sessions[sessionId]!.lastSequence + 1 : 0 };
+      sessions[sessionId] = { profileDocId: profileId, expiresAt, lastSequence: sessions[sessionId] ? sessions[sessionId]!.lastSequence + 1 : 0 };
     } else if (operation.action === 'heartbeat') {
       sessionId = operation.sessionId;
-      sessions[sessionId] = { profileDocId: profileId, expiresAt: Timestamp.fromMillis(Math.min(nowMs + WEB_USAGE_LEASE_SECONDS * 1000,
-        nowMs + Math.round((limitSeconds - dailyUsage.usedSeconds) * 1000))), lastSequence: operation.sequence };
+      sessions[sessionId] = { profileDocId: profileId, expiresAt, lastSequence: operation.sequence };
     }
     persist();
-    return { ...summary(), remainingSeconds: Math.max(0, limitSeconds - dailyUsage.usedSeconds), generation: dailyUsage.generation,
+    // Response metadata only: never persist presentation policy in the usage document.
+    return { ...summary(), dailyLimitApplies: !exemptFromDailyLimit, remainingSeconds: Math.max(0, limitSeconds - dailyUsage.usedSeconds), generation: dailyUsage.generation,
       ...(sessionId ? { sessionId, expiresAt: sessions[sessionId]!.expiresAt.toMillis(), sequence: sessions[sessionId]!.lastSequence } : {}) };
-  });
-  const failure = (outcome as { failure?: { status: number; code: string; message: string } }).failure;
-  if (failure) throw new DailyUsageError(failure.status, failure.code, failure.message);
+  }, readOnly ? { readOnly: true } : {});
+  const failure = (outcome as { failure?: { status: number; code: string; message: string; dailyLimitApplies: boolean } }).failure;
+  if (failure) throw new DailyUsageError(failure.status, failure.code, failure.message, failure.dailyLimitApplies);
   return outcome;
 }
 
@@ -181,4 +187,25 @@ export async function operateOutletDailyUsage(db: Firestore, outletId: string, p
   const parsed = operationSchema.safeParse(raw);
   if (!parsed.success) throw new DailyUsageError(422, 'USAGE_INVALID_REQUEST', 'Invalid usage action. Client counters and timestamps are not accepted.');
   return usageTransaction(db, outletId, profileId, assigned, {}, clock, parsed.data);
+}
+
+// Transfer previews retain their valid source lease, but cannot use its exemption
+// to read an exhausted destination. This internal check grants no session and
+// keeps the public status endpoint available for recovery.
+export async function checkOutletDailyUsageAllowance(db: Firestore, outletId: string, profileId: string | null,
+  assigned: (profile: Record<string, unknown>) => string[], clock = () => Timestamp.now()) {
+  return usageTransaction(db, outletId, profileId, assigned, {}, clock, { action: 'status' }, true);
+}
+
+// Branding reads validate the same current policy and lease without settling,
+// initializing, resetting or renewing anything in Firestore. Not a lifecycle API.
+export async function readAuthorizedOutletLogoName(db: Firestore, outletId: string, profileId: string | null,
+  assigned: (profile: Record<string, unknown>) => string[], sessionId: string, generation: string, clock = () => Timestamp.now()) {
+  const parsed = operationSchema.safeParse({ action: 'check', sessionId, generation });
+  if (!parsed.success) throw new DailyUsageError(428, 'USAGE_SESSION_REQUIRED', 'Enter the outlet before loading its logo.');
+  const access = await usageTransaction(db, outletId, profileId, assigned, {}, clock, parsed.data, false, true);
+  if (!('outletName' in access) || typeof access.outletName !== 'string' || !access.outletName.trim()) {
+    throw new ProductCreationError(404, 'No outlet logo is available.');
+  }
+  return access.outletName;
 }

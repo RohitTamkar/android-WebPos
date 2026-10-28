@@ -44,7 +44,7 @@ void (async () => {
   results.push('Products whose categories were deleted remain listed under All');
 
   await openDeleteAll();
-  assert(button('Yes') && button('No'), 'Yes and No buttons');
+  assert(button('Yes') && button('No') && dialogText().includes('every category'), 'Confirmation explains product and category deletion');
   await click(button('No'));
   assert(!document.querySelector('dialog[open]') && deletes.length === 0 && names() === 'Tea,Coffee', 'No keeps products');
   results.push('Delete All is last in the menu; No closes without deleting');
@@ -53,7 +53,7 @@ void (async () => {
   await waitFor(() => dialogText().includes('Retry Delete All'), 'failure shown in dialog');
   assert(names() === 'Tea,Coffee', 'failed delete keeps list');
   await click(button('Yes'));
-  await waitFor(() => dialogText().includes('All products deleted successfully'), 'success message');
+  await waitFor(() => dialogText().includes('All products and categories deleted successfully'), 'success message');
   assert(deletes.length === 2 && deletes.every(request => JSON.stringify(request.body) === '{"confirm":"DELETE_ALL_PRODUCTS"}'), 'confirmed requests');
   await click(button('OK'));
   await waitFor(() => !document.querySelector('dialog[open]') && !names(), 'list empty after delete');

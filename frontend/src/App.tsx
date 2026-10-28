@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { OutletLogoPage } from './pages/OutletLogoPage.tsx';
+import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useBrowserHistoryState } from './utils/useBrowserHistoryState.ts';
 import { useWebUsage } from './utils/useWebUsage.ts';
-import { DAILY_WEB_USAGE_SCREEN_ENABLED } from './utils/featureFlags.ts';
+import { OutletAccessPaused, OutletAdmission } from './pages/OutletAccessPaused.tsx';
 import { LoginPage, type UserSession } from './pages/LoginPage.tsx';
 import { OutletSelectionPage, type OutletSummary } from './pages/OutletSelectionPage.tsx';
 import { CategoryPage } from './pages/CategoryPage.tsx';
@@ -33,7 +35,7 @@ import {
   Accessibility, BadgeIndianRupee, Banknote, Bot, Calculator, Download,
   CalendarCheck, CalendarDays, ChevronDown, CircleHelp, ClipboardCheck,
   ClipboardList, ContactRound, CreditCard, Database, Gauge, Home,
-  LayoutDashboard, LogOut, Menu, MessageSquareText, Monitor, Package, Radio, ReceiptText,
+  LayoutDashboard, LogOut, Menu, Monitor, Package, Radio, ReceiptText,
   PackageSearch, RefreshCw, SlidersHorizontal, Store, TrendingUp, Upload,
   UserRoundCog, Users, UsersRound, WalletCards, X,
 } from 'lucide-react';
@@ -43,7 +45,6 @@ import './Theme.css';
 
 const hiddenNavigationGroups = new Set(['Inventory']);
 const disabledNavigationItems = new Set(['Inventory:Products', 'Operations:Broadcast', 'Operations:Device', 'Operations:Multicounter']);
-const dashboardBroadcastActionEnabled = false;
 
 function Sparkline({ tone = 'cyan', compact = false }: { tone?: 'cyan' | 'green' | 'muted'; compact?: boolean }) {
   return (
@@ -125,8 +126,60 @@ function formatMoney(value = 0): string {
   }).format(value);
 }
 
+const navigationGroups = [
+    { label: 'Home', icon: <Home />, items: [{ label: 'Dashboard', icon: <LayoutDashboard /> }] },
+    { label: 'Masters', icon: <ClipboardList />, items: [
+      { label: 'Logo', icon: <Store /> },
+      { label: 'Category', icon: <SlidersHorizontal /> },
+      { label: 'Products', icon: <Package /> },
+      { label: 'Service Point', icon: <Store /> },
+      { label: 'Premises', icon: <Store /> },
+      { label: 'Stock In and Out', icon: <ClipboardCheck /> },
+      { label: 'Goods Received', icon: <ReceiptText /> },
+      { label: 'User Account', icon: <ContactRound /> },
+      { label: 'Employees/Salesman', icon: <UserRoundCog /> },
+      { label: 'Product Transfer', icon: <Database /> },
+      { label: 'Customer', icon: <UsersRound /> },
+    ] },
+    { label: 'Inventory', icon: <Package />, items: [
+      { label: 'Products', icon: <Store /> },
+      { label: 'Upload Excel', icon: <Upload /> },
+    ] },
+    { label: 'Operations', icon: <Bot />, items: [
+      { label: 'Upload Excel', icon: <Upload /> },
+      { label: 'Multicounter', icon: <Users /> },
+      { label: 'Device', icon: <Monitor /> },
+      { label: 'Broadcast', icon: <Radio /> },
+    ] },
+    { label: 'Reports', icon: <ReceiptText />, items: [
+      { label: 'Day Wise Report', icon: <CalendarDays /> },
+      { label: 'Shift Summary Report', icon: <CalendarCheck /> },
+      { label: 'Category Wise', icon: <SlidersHorizontal /> },
+      { label: 'Product Wise', icon: <PackageSearch /> },
+      { label: 'Stock Report', icon: <ClipboardCheck /> },
+      { label: 'Stock In-Out Report', icon: <ClipboardList /> },
+      { label: 'Stock Transfer Report', icon: <Accessibility /> },
+      { label: 'GST Report', icon: <Calculator /> },
+      { label: 'GST Report Day Wise', icon: <CalendarCheck /> },
+      { label: 'Bill Wise Sale Report', icon: <ReceiptText /> },
+    ] },
+  ].map(group => group.label === 'Masters'
+    ? { ...group, items: [...group.items].sort((a, b) => a.label.localeCompare(b.label, 'en', { sensitivity: 'base' })) } : group);
+
+const screens = navigationGroups.flatMap(group => group.items.map(item => ({ id: `${group.label}:${item.label}`, label: item.label })))
+  .filter(screen => !hiddenNavigationGroups.has(screen.id.split(':')[0]!) && !disabledNavigationItems.has(screen.id));
+const validScreen = (value: unknown): value is string => typeof value === 'string' && screens.some(screen => screen.id === value);
+
+const MemoProductsPage = memo(ProductsPage);
+const MemoCategoryPage = memo(CategoryPage);
+const MemoCustomersPage = memo(CustomersPage);
+const MemoEmployeesPage = memo(EmployeesPage);
+const MemoOutletLogoPage = memo(OutletLogoPage);
+
 export default function App() {
-  const [activeNavigation, setActiveNavigation] = useState({ id: 'Home:Dashboard', label: 'Dashboard' });
+  const [screenId, navigate] = useBrowserHistoryState('pos-screen', 'Home:Dashboard', validScreen);
+  const activeNavigation = screens.find(screen => screen.id === screenId)!;
+  const setActiveNavigation = (screen: { id: string; label: string }) => navigate(screen.id);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [clock, setClock] = useState('16:45:21');
   const [darkMode, setDarkMode] = useState(() => {
@@ -153,7 +206,9 @@ export default function App() {
     if (!saved) return null;
     try { return JSON.parse(saved) as OutletSummary; } catch { return null; }
   });
-  const usage = useWebUsage(session?.token, selectedOutlet?.id);
+  const [usageExit, setUsageExit] = useState<{ outlet: { name: string; branch: string }; userName: string } | null>(null);
+  const [externalInvalidated, setExternalInvalidated] = useState<'account' | 'outlet' | null>(null);
+  const usage = useWebUsage(externalInvalidated ? undefined : session?.token, selectedOutlet?.id);
   const releaseUsage = usage.release;
   const [dashboardData, setDashboardData] = useState<ShiftDashboardData | null>(null);
   const [dashboardLoading, setDashboardLoading] = useState(false);
@@ -195,6 +250,7 @@ export default function App() {
   }, []);
 
   const handleLoginSuccess = useCallback((user: UserSession) => {
+    setUsageExit(null);
     setSession(user);
     setSelectedOutlet(null);
     setDashboardData(null);
@@ -213,6 +269,8 @@ export default function App() {
   };
 
   const handleLogout = useCallback(() => {
+    setUsageExit(null);
+    setExternalInvalidated(null);
     void releaseUsage().catch(() => undefined);
     setLogoutConfirmationOpen(false);
     setSession(null);
@@ -223,6 +281,49 @@ export default function App() {
     localStorage.removeItem('pos_user_session');
     localStorage.removeItem('pos_selected_outlet');
   }, [releaseUsage]);
+
+  const exhaustedSession = useRef<string | null>(null);
+  useEffect(() => {
+    if (!usage.blocked || usage.dailyLimitApplies === false || !session || !selectedOutlet) { exhaustedSession.current = null; return; }
+    const key = `${session.token}:${selectedOutlet.id}`;
+    if (exhaustedSession.current === key) return;
+    exhaustedSession.current = key;
+    const context = { outlet: { name: selectedOutlet.name, branch: selectedOutlet.branch }, userName: session.name };
+    handleLogout();
+    // Preserve only display context for the restricted-outlet notice, never its
+    // authentication, selected outlet, counters, or lease credentials.
+    setUsageExit(context);
+  }, [usage.blocked, usage.dailyLimitApplies, session, selectedOutlet, handleLogout]);
+
+  useEffect(() => {
+    if (!session || !selectedOutlet) return;
+    const changed = (event: StorageEvent) => {
+      if (event.storageArea && event.storageArea !== localStorage) return;
+      if (event.key !== null && event.key !== 'pos_user_session' && event.key !== 'pos_selected_outlet') return;
+      const invalidate = (reason: 'account' | 'outlet') => {
+        if (usage.dailyLimitApplies === true) { setExternalInvalidated(reason); return; }
+        void releaseUsage().catch(() => undefined);
+        if (reason === 'account') setSession(null);
+        setSelectedOutlet(null); setDashboardData(null);
+        // Preserve the new login/selection owned by the other tab.
+      };
+      try {
+        const user = JSON.parse(localStorage.getItem('pos_user_session') || 'null');
+        const outlet = JSON.parse(localStorage.getItem('pos_selected_outlet') || 'null');
+        if (user?.token !== session.token) invalidate('account');
+        else if (outlet?.id !== selectedOutlet.id) invalidate('outlet');
+      } catch { invalidate('account'); }
+    };
+    window.addEventListener('storage', changed);
+    return () => window.removeEventListener('storage', changed);
+  }, [session, selectedOutlet, usage.dailyLimitApplies, releaseUsage]);
+  const leaveInvalidatedSession = useCallback(() => {
+    void releaseUsage().catch(() => undefined);
+    setExternalInvalidated(null);
+    if (externalInvalidated === 'account') setSession(null);
+    setSelectedOutlet(null); setDashboardData(null);
+    // Another tab may now own a different login. Do not overwrite its storage.
+  }, [releaseUsage, externalInvalidated]);
 
   const requestLogout = useCallback(() => {
     setLogoutConfirmationOpen(true);
@@ -246,7 +347,12 @@ export default function App() {
   }, [releaseUsage]);
 
   useEffect(() => {
-    if (!session || !selectedOutlet || !usage.ready) return;
+    if (usage.denied === 'account') handleLogout();
+    else if (usage.denied === 'outlet') handleChangeOutlet();
+  }, [usage.denied, handleLogout, handleChangeOutlet]);
+
+  useEffect(() => {
+    if (!session || !selectedOutlet || !usage.ready || activeNavigation.id !== 'Home:Dashboard') return;
 
     const controller = new AbortController();
     let inFlight = false;
@@ -301,7 +407,7 @@ export default function App() {
       window.removeEventListener('focus', refresh);
       window.removeEventListener('online', refresh);
     };
-  }, [session, selectedOutlet, dashboardDay, dashboardReloadKey, handleLogout, usage.ready]);
+  }, [session, selectedOutlet, dashboardDay, dashboardReloadKey, handleLogout, usage.ready, activeNavigation.id]);
 
   const exportDashboard = async () => {
     if (!session || !selectedOutlet || !dashboardData || dashboardLoading || dashboardError
@@ -318,7 +424,11 @@ export default function App() {
     }
   };
 
-  if (!session) return <LoginPage onLoginSuccess={handleLoginSuccess} />;
+  if (!session) return usageExit ? <>
+    <div hidden inert aria-hidden="true"><LoginPage onLoginSuccess={handleLoginSuccess} /></div>
+    <OutletAccessPaused outlet={usageExit.outlet} userName={usageExit.userName} message="" blocked checking={false} signedOut
+      onResume={() => setUsageExit(null)} onChangeOutlet={() => setUsageExit(null)} onSignOut={() => setUsageExit(null)} />
+  </> : <LoginPage onLoginSuccess={handleLoginSuccess} />;
   if (!selectedOutlet) return (
     <>
       <OutletSelectionPage session={session} onSelect={handleOutletSelect} onLogout={requestLogout} />
@@ -326,15 +436,11 @@ export default function App() {
     </>
   );
 
-  if (DAILY_WEB_USAGE_SCREEN_ENABLED && !usage.ready && !usage.suspended) return <main className="outlet-selection-page">
-    <section className="outlet-selection-content"><div className="outlet-state-card" role={usage.message ? 'alert' : 'status'}>
-      <strong>{usage.blocked ? 'Daily usage limit reached' : usage.message ? 'Web POS access paused' : 'Checking outlet access…'}</strong>
-      <p>{usage.message || `Verifying daily usage for ${selectedOutlet.name}…`}</p>
-      {!!usage.message && !usage.blocked && <button type="button" onClick={usage.retry}>Continue / Retry</button>}
-      <button type="button" onClick={handleChangeOutlet}>Change outlet</button>
-      <button type="button" onClick={handleLogout}>Sign out</button>
-    </div></section>
-  </main>;
+  // Only a confirmed restricted outlet may show the daily-usage screens.
+  // External notices are set only for a previously confirmed restricted session.
+  const restrictedSession = usage.dailyLimitApplies === true || Boolean(externalInvalidated);
+  const accessPaused = restrictedSession && ((!usage.ready && !usage.silentResume) || Boolean(externalInvalidated));
+  const reconnecting = !restrictedSession && !usage.ready && !usage.silentResume;
 
   const shifts: ShiftDashboardData[] = dashboardData?.shifts && dashboardData.shifts.length > 0
     ? dashboardData.shifts
@@ -353,52 +459,25 @@ export default function App() {
     ? displayData.openingAmt + displayData.cashSale - displayData.expCash
     : 0;
 
-  const navigationGroups = [
-    { label: 'Home', icon: <Home />, items: [{ label: 'Dashboard', icon: <LayoutDashboard /> }] },
-    { label: 'Masters', icon: <ClipboardList />, items: [
-      { label: 'Category', icon: <SlidersHorizontal /> },
-      { label: 'Products', icon: <Package /> },
-      { label: 'Service Point', icon: <Store /> },
-      { label: 'Premises', icon: <Store /> },
-      { label: 'Stock In and Out', icon: <ClipboardCheck /> },
-      { label: 'Goods Received', icon: <ReceiptText /> },
-      { label: 'User Account', icon: <ContactRound /> },
-      { label: 'Employees/Captain/Salesman', icon: <UserRoundCog /> },
-      { label: 'Category & Product Transfer', icon: <Database /> },
-      { label: 'Customer', icon: <UsersRound /> },
-    ] },
-    { label: 'Inventory', icon: <Package />, items: [
-      { label: 'Products', icon: <Store /> },
-      { label: 'Upload Excel', icon: <Upload /> },
-    ] },
-    { label: 'Operations', icon: <Bot />, items: [
-      { label: 'Upload Excel', icon: <Upload /> },
-      { label: 'Multicounter', icon: <Users /> },
-      { label: 'Device', icon: <Monitor /> },
-      { label: 'Broadcast', icon: <Radio /> },
-    ] },
-    { label: 'Reports', icon: <ReceiptText />, items: [
-      { label: 'Day Wise Report', icon: <CalendarDays /> },
-      { label: 'Shift Summary Report', icon: <CalendarCheck /> },
-      { label: 'Category Wise', icon: <SlidersHorizontal /> },
-      { label: 'Product Wise', icon: <PackageSearch /> },
-      { label: 'Stock Report', icon: <ClipboardCheck /> },
-      { label: 'Stock In-Out Report', icon: <ClipboardList /> },
-      { label: 'Stock Transfer Report', icon: <Accessibility /> },
-      { label: 'GST Report', icon: <Calculator /> },
-      { label: 'GST Report Day Wise', icon: <CalendarCheck /> },
-      { label: 'Bill Wise Sale Report', icon: <ReceiptText /> },
-    ] },
-  ];
+
 
   return (
-    <div className="retail-dashboard-shell">
+    <>
+    {accessPaused && !usage.authorized && !usage.message && !externalInvalidated
+      ? <OutletAdmission onRetry={usage.retry} onSignOut={handleLogout} />
+      : accessPaused && <OutletAccessPaused outlet={selectedOutlet} userName={session.name}
+      message={externalInvalidated === 'account' ? 'Your session changed in another tab. Sign in again to continue.' : externalInvalidated === 'outlet' ? 'Your outlet changed in another tab. Choose an outlet to continue.' : usage.message}
+      blocked={usage.blocked} checking={!externalInvalidated && !usage.message && !usage.blocked}
+      onResume={externalInvalidated ? leaveInvalidatedSession : usage.retry}
+      onChangeOutlet={externalInvalidated ? leaveInvalidatedSession : handleChangeOutlet} onSignOut={handleLogout} />}
+    <div className="retail-dashboard-shell" inert={accessPaused} aria-hidden={accessPaused || undefined} style={accessPaused ? { visibility: 'hidden', display: 'none' } : undefined}>
       {sidebarOpen && <button type="button" className="sidebar-scrim" aria-label="Close navigation" onClick={() => setSidebarOpen(false)} />}
       <aside className={`dashboard-sidebar ${sidebarOpen ? 'open' : ''}`} aria-label="Primary navigation">
         <button type="button" className="sidebar-close" aria-label="Close navigation" onClick={() => setSidebarOpen(false)}><X /></button>
         <div className="business-profile">
           <span className="business-avatar">{selectedOutlet.name.slice(0, 2).toUpperCase()}</span>
-          <div><small>Selected Outlet</small><strong>{selectedOutlet.name}</strong><span>{selectedOutlet.branch || selectedOutlet.country}</span></div>
+          <div className="business-outlet-details"><small>Selected Outlet</small><strong><span className="business-outlet-name">{selectedOutlet.name}</span>{selectedOutlet.active !== false && <i className="business-outlet-active" role="img" aria-label="Active outlet" />}</strong><span>{selectedOutlet.branch || selectedOutlet.country}</span></div>
+          <button type="button" className="business-outlet-switch" aria-label="Change Outlet" title="Change Outlet" onClick={handleChangeOutlet}><RefreshCw aria-hidden="true" /></button>
         </div>
         <nav className="sidebar-nav">
           {navigationGroups.filter(group => !hiddenNavigationGroups.has(group.label)).map((group) => (
@@ -439,11 +518,14 @@ export default function App() {
             </section>
           ))}
         </nav>
-        <div className="plan-card">
-          <small>Your Plan</small>
-          <div><strong>POS Pro</strong><span>Active</span></div>
-          <p>Valid till 24 Jan 2029</p>
-          <button type="button">Upgrade Plan</button>
+        <div className="sidebar-footer">
+          <div className="plan-card">
+            <small>Your Plan</small>
+            <div><strong>POS Pro</strong><span>Active</span></div>
+            <p>Valid till 24 Jan 2029</p>
+            <button type="button">Upgrade Plan</button>
+          </div>
+          <button type="button" className="sidebar-logout" onClick={requestLogout}><LogOut aria-hidden="true" /> Logout</button>
         </div>
       </aside>
 
@@ -457,21 +539,20 @@ export default function App() {
           </div>
           <div className="header-actions">
             <button className="theme-button" type="button" aria-label={darkMode ? 'Switch to light mode' : 'Switch to dark mode'} aria-pressed={darkMode} title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'} onClick={() => setDarkMode(current => !current)}><span aria-hidden="true">☾</span></button>
-            <ProfileMenu key={`${session.id}:${selectedOutlet.id}`} session={session} outletId={selectedOutlet.id} onSessionExpired={handleLogout} />
+            <ProfileMenu key={`${session.id}:${selectedOutlet.id}`} session={session} outletId={selectedOutlet.id} onSessionExpired={handleLogout} onChangeOutlet={handleChangeOutlet} />
           </div>
         </header>
 
-        <main className="dashboard-workspace">
-          {!DAILY_WEB_USAGE_SCREEN_ENABLED && !usage.ready && !usage.suspended && (
-            <section className="outlet-state-card" data-outlet-access-notice role={usage.message ? 'alert' : 'status'}>
-              <strong>{usage.blocked ? 'Daily usage limit reached' : usage.message ? 'Outlet access paused' : 'Checking outlet access…'}</strong>
-              <p>{usage.message || `Verifying access to ${selectedOutlet.name}…`}</p>
-              {!usage.blocked && <button type="button" onClick={usage.retry}>{usage.message ? 'Continue / Retry' : 'Retry connection'}</button>}
-              <button type="button" onClick={handleChangeOutlet}>Change outlet</button>
-              <button type="button" onClick={handleLogout}>Sign out</button>
-            </section>
-          )}
-          {!DAILY_WEB_USAGE_SCREEN_ENABLED && !usage.authorized ? null : activeNavigation.id === 'Masters:Goods Received' ? (
+        {reconnecting && usage.dailyLimitApplies === null && usage.message && <div className="outlet-connection-status" data-outlet-connection role="alert">
+          <span>{usage.message}</span>
+          <button type="button" onClick={usage.retry}>Retry connection</button>
+          <button type="button" onClick={handleLogout}>Sign Out</button>
+        </div>}
+        <main className="dashboard-workspace" inert={reconnecting} aria-hidden={reconnecting || undefined}
+          style={reconnecting ? { visibility: 'hidden' } : undefined}>
+          {!usage.authorized ? null : activeNavigation.id === 'Masters:Logo' ? (
+            <MemoOutletLogoPage outletId={selectedOutlet.id} outletName={selectedOutlet.name} token={session.token} />
+          ) : activeNavigation.id === 'Masters:Goods Received' ? (
             <GoodsReceivedPage key={`${session.id}:${selectedOutlet.id}`} outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} onCancel={() => setActiveNavigation({ id: 'Home:Dashboard', label: 'Dashboard' })} />
           ) : activeNavigation.id === 'Masters:Stock In and Out' ? (
             <StockAdjustmentPage key={`${session.id}:${selectedOutlet.id}`} outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
@@ -481,14 +562,14 @@ export default function App() {
             <DevicesPage key={`${session.id}:${selectedOutlet.id}`} outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
           ) : activeNavigation.id === 'Operations:Broadcast' ? (
             <BroadcastPage key={`${session.id}:${selectedOutlet.id}`} outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
-          ) : activeNavigation.id === 'Masters:Category & Product Transfer' ? (
+          ) : activeNavigation.id === 'Masters:Product Transfer' ? (
             <TransferPreviewPage key={`${session.id}:${selectedOutlet.id}`} outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
           ) : activeNavigation.id === 'Masters:Service Point' ? (
             <ServicePointsPage key={`${session.id}:${selectedOutlet.id}`} outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
           ) : activeNavigation.id === 'Masters:Customer' ? (
-            <CustomersPage key={`${session.id}:${selectedOutlet.id}`} outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
-          ) : activeNavigation.id === 'Masters:Employees/Captain/Salesman' ? (
-            <EmployeesPage key={`${session.id}:${selectedOutlet.id}`} outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
+            <MemoCustomersPage key={`${session.id}:${selectedOutlet.id}`} outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
+          ) : activeNavigation.id === 'Masters:Employees/Salesman' ? (
+            <MemoEmployeesPage key={`${session.id}:${selectedOutlet.id}`} outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
           ) : activeNavigation.id === 'Masters:User Account' ? (
             <UserAccountPage key={session.id} token={session.token} onSessionExpired={handleLogout} onSaved={handleAccountSaved} />
           ) : activeNavigation.id === 'Reports:Bill Wise Sale Report' ? (
@@ -512,11 +593,11 @@ export default function App() {
           ) : activeNavigation.id === 'Reports:Day Wise Report' ? (
             <DaywiseReportPage outlet={selectedOutlet} reportName={activeNavigation.label} token={session.token} onSessionExpired={handleLogout} />
           ) : activeNavigation.id === 'Masters:Category' ? (
-            <CategoryPage outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
+            <MemoCategoryPage outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
           ) : activeNavigation.id === 'Masters:Premises' ? (
             <PremisesPage key={`${session.id}:${selectedOutlet.id}`} outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
           ) : activeNavigation.id === 'Masters:Products' || activeNavigation.id === 'Inventory:Products' ? (
-            <ProductsPage outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
+            <MemoProductsPage outlet={selectedOutlet} token={session.token} onSessionExpired={handleLogout} />
           ) : activeNavigation.id === 'Inventory:Upload Excel' || activeNavigation.id === 'Operations:Upload Excel' ? (
             <UploadExcelPage outletId={selectedOutlet.id} token={session.token} onSessionExpired={handleLogout} />
           ) : (
@@ -580,19 +661,6 @@ export default function App() {
               </div>
 
               <aside className="dashboard-insights">
-                <article className="insight-card">
-                  <h2>Quick Actions</h2>
-                  <button
-                    type="button"
-                    onClick={() => setActiveNavigation({ id: 'Masters:Category', label: 'Category' })}
-                  >
-                    <SlidersHorizontal />
-                    <span><strong>Category Master</strong><small>Add, update & organize</small></span>
-                  </button>
-                  {/* <button type="button"><ShoppingCart /><span><strong>New Sale</strong><small>Start a new checkout</small></span></button> */}
-                  <button type="button" onClick={() => setActiveNavigation({ id: 'Operations:Upload Excel', label: 'Upload Excel' })}><Upload /><span><strong>Upload Stock</strong><small>Import products from Excel</small></span></button>
-                  {dashboardBroadcastActionEnabled && <button type="button" onClick={() => setActiveNavigation({ id: 'Operations:Broadcast', label: 'Broadcast' })}><MessageSquareText /><span><strong>Broadcast</strong><small>View devices and employees</small></span></button>}
-                </article>
                 <article className="insight-card shift-card">
                   <h2>{selectedShiftId === 'all' ? (activeShift && !activeShift.inActive ? 'Current Active Shift' : 'Latest Shift') : `Shift ${displayData?.shiftNo || '—'}`}</h2>
                   <div><span>Outlet</span><strong>{selectedOutlet.name}</strong></div>
@@ -602,10 +670,8 @@ export default function App() {
                   <div><span>Shift No.</span><strong>Shift {shiftToShow?.shiftNo || '—'}</strong></div>
                   <div><span>Bills</span><strong>{shiftToShow?.startBillNo || '—'} → {shiftToShow?.lastBillNo || '—'}</strong></div>
                   <div><span>Status</span><strong className={shiftToShow ? (shiftToShow.inActive ? 'status-closed' : 'status-active') : 'status-active'}>{shiftToShow ? (shiftToShow.inActive ? 'Closed' : 'Active') : 'Unavailable'}</strong></div>
-                  <button type="button" onClick={handleChangeOutlet}>Change outlet</button>
                 </article>
                 <button type="button" className="help-card"><CircleHelp /><span><strong>Need help?</strong><small>View POS documentation</small></span></button>
-                <button type="button" className="sidebar-logout" onClick={requestLogout}><LogOut /> Logout</button>
               </aside>
               </div>
             </>
@@ -614,5 +680,6 @@ export default function App() {
       </div>
       {logoutConfirmationOpen && <LogoutConfirmation onCancel={() => setLogoutConfirmationOpen(false)} onConfirm={handleLogout} />}
     </div>
+    </>
   );
 }

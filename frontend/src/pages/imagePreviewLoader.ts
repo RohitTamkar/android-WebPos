@@ -2,8 +2,11 @@
 const previews = new Map<string, { blob: Blob; expires: number }>();
 let cachedBytes = 0;
 let session = '';
-const MAX_BYTES = 6 * 1024 * 1024;
-const MAX_ENTRIES = 80;
+// Product images are often ~300 KB, so keep room for a few screens of thumbnails.
+const MAX_BYTES = 48 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
+const MAX_ENTRIES = 300;
+const ENTRY_LIFETIME_MS = 10 * 60_000;
 const keyFor = (endpoint: string, reference: string, token: string) => JSON.stringify([token, endpoint, reference]);
 
 function selectSession(token: string) {
@@ -12,11 +15,11 @@ function selectSession(token: string) {
 
 export function rememberImagePreview(endpoint: string, reference: string, token: string, blob: Blob) {
   selectSession(token);
-  if (!blob.type.startsWith('image/') || blob.size > MAX_BYTES) return;
+  if (!blob.type.startsWith('image/') || blob.size > MAX_IMAGE_BYTES) return;
   const key = keyFor(endpoint, reference, token);
   const old = previews.get(key);
   if (old) { cachedBytes -= old.blob.size; previews.delete(key); }
-  previews.set(key, { blob, expires: Date.now() + 30_000 }); cachedBytes += blob.size;
+  previews.set(key, { blob, expires: Date.now() + ENTRY_LIFETIME_MS }); cachedBytes += blob.size;
   while (cachedBytes > MAX_BYTES || previews.size > MAX_ENTRIES) {
     const first = previews.keys().next().value!;
     cachedBytes -= previews.get(first)!.blob.size; previews.delete(first);

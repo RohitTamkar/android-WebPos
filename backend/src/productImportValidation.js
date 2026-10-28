@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { productFields } from './productDefaults.js';
-import { parseProductCsv } from '../../frontend/src/pages/productCsvPreview.js';
+import { parseProductCsv, namedPremisesHeaders, premisesPriceKey } from '../../frontend/src/pages/productCsvPreview.js';
+import { categoryNameKey, planImportCategories } from './productImportCategories.js';
 // Approved for user-triggered, create-only imports into the existing PRODUCT collection.
 export const PRODUCT_IMPORT_WRITES_ENABLED = true;
 // Automatic Search Codes do not distinguish otherwise identical products.
@@ -8,13 +9,16 @@ const identityFields = ['name', 'regionalName', 'price', 'priceTable', 'mrpPrice
 export function productIdentity(fields) {
     return JSON.stringify(identityFields.map(key => fields[key]));
 }
-export function validateProductImport(source, categories, taxes = []) {
-    const preview = parseProductCsv(source);
+export function validateProductImport(source, categories, taxes = [], mode = 'standard') {
+    const preview = parseProductCsv(source, mode);
     const documents = [];
     const rows = preview.rows.map(row => ({ rowNumber: row.rowNumber, errors: [...row.errors] }));
     if (preview.headerErrors.length || !rows.length || rows.some(row => row.errors.length)) {
         return { canUpload: false, categoryChecked: false, headerErrors: preview.headerErrors, rows, documents };
     }
+    const premisesNames = mode === 'premises' ? namedPremisesHeaders(preview.headers) : [];
+    if (mode === 'premises' && !premisesNames.length)
+        return { canUpload: false, categoryChecked: false, headerErrors: ['Use named premises price columns, such as AC Table and Non AC Table, to upload. Legacy Premises columns remain preview-only.'], rows, documents };
     const identities = new Map();
     preview.rows.forEach((row, index) => {
         const c = row.cells.map(cell => cell.trim());
@@ -25,13 +29,13 @@ export function validateProductImport(source, categories, taxes = []) {
         }
         if (Number(c[2]) !== Number(c[3]))
             errors.push({ column: 'Price 1', message: 'Price 1 must equal Default Price for the supplied single-entry priceTable. A separate Price 1 mapping has not been supplied.' });
-        if (c[10] !== 'number')
+        if (c[10]?.toLowerCase() !== 'number')
             errors.push({ column: 'Unit Type', message: 'Only number (unitId 2) is supported by the supplied product template.' });
         if (Number(c[11]) !== 0)
             errors.push({ column: 'Stock', message: 'Only zero opening stock is supported until the stock-initialization workflow is specified.' });
         if (!['yes', 'no'].includes(c[12]?.toLowerCase() ?? ''))
             errors.push({ column: 'Weightable', message: 'Weightable must be yes or no.' });
-        const matches = categories.filter(category => category.name === c[6] && category.categoryNo === Number(c[7]));
+        const matches = categories.filter(category => categoryNameKey(category.name) === categoryNameKey(c[6] ?? ''));
         if (matches.length !== 1) {
             const numbered = categories.filter(category => category.categoryNo === Number(c[7]));
             const message = numbered.length === 1
@@ -50,6 +54,9 @@ export function validateProductImport(source, categories, taxes = []) {
             taxIndex: tax[0].index, hsnCode: '', unitId: 2,
             weighable: c[12].toLowerCase() === 'yes', stockable: false,
         }, index + 1, c[9]);
+        if (premisesNames.length)
+            fields.priceTable = JSON.stringify({ ...JSON.parse(fields.priceTable),
+                ...Object.fromEntries(premisesNames.map((name, index) => [premisesPriceKey(name), Number(c[14 + index])])) });
         const identity = productIdentity(fields);
         const first = identities.get(identity);
         if (first !== undefined) {
@@ -57,12 +64,12 @@ export function validateProductImport(source, categories, taxes = []) {
             return;
         }
         identities.set(identity, row.rowNumber);
-        documents.push({ rowNumber: row.rowNumber, fields, sourceIdentity: JSON.stringify(c) });
+        documents.push({ rowNumber: row.rowNumber, fields, sourceIdentity: JSON.stringify(premisesNames.length ? [premisesNames, c] : c) });
     });
     const canUpload = rows.every(row => !row.errors.length);
     return { canUpload, categoryChecked: true, headerErrors: [], rows, documents: canUpload ? documents : [] };
 }
-export async function checkAuthorizedProductImport(profileId, outletId, source, deps, acceptAttempt) {
+export async function checkAuthorizedProductImport(profileId, outletId, source, deps, acceptAttempt, mode = 'standard') {
     if (!profileId)
         return { status: 401, body: { success: false, message: 'Your session has expired. Please sign in again.' } };
     if (!outletId || outletId.includes('/'))
@@ -77,7 +84,7 @@ export async function checkAuthorizedProductImport(profileId, outletId, source, 
         return { status: 400, body: { success: false, message: 'The original spreadsheet text is required.' } };
     let local;
     try {
-        local = validateProductImport(source, []);
+        local = validateProductImport(source, [], [], mode);
     }
     catch (error) {
         return { status: 400, body: { success: false, message: error instanceof Error ? error.message : 'Invalid spreadsheet.' } };
@@ -85,7 +92,14 @@ export async function checkAuthorizedProductImport(profileId, outletId, source, 
     if (!local.categoryChecked)
         return { status: 422, body: { success: false, data: local } };
     const [categories, taxes] = await Promise.all([deps.readCategories(outletId), deps.readTaxes()]);
-    const data = validateProductImport(source, categories, taxes);
+    const plan = planImportCategories(source, categories, mode);
+    const data = { ...validateProductImport(source, plan.previewCategories, taxes, mode), categorySummary: { reused: plan.reused, toCreate: plan.missing.length } };
+    if (plan.issues.length) {
+        for (const row of data.rows)
+            row.errors.push(...plan.issues.filter(issue => issue.rowNumber === row.rowNumber).map(({ column, message }) => ({ column, message })));
+        data.canUpload = false;
+        data.documents = [];
+    }
     if (data.canUpload) {
         const existing = await deps.readProducts(outletId);
         try {

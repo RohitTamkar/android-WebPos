@@ -26,11 +26,17 @@ export async function updateOutletProduct(db: Firestore, outletId: string, id: s
     const patch = patchSchema.safeParse(raw);
     if (!patch.success) throw new ProductCreationError(422, 'Only editable product fields can be updated.',
       Object.fromEntries(patch.error.issues.map(issue => [String(issue.path[0]), issue.message])));
-    const [product, categories] = await Promise.all([
-      transaction.get(reference), transaction.get(outlet.collection('CATEGORY')),
-    ]);
+    const product = await transaction.get(reference);
     if (!product.exists) throw new ProductCreationError(404, 'This product no longer exists.');
     const stored = product.data()!;
+    // Flag-only updates do not need category reads or full product revalidation.
+    // Older products can retain their original unrelated fields unchanged.
+    if (Object.keys(raw as object).length && Object.keys(raw as object).every(key => key === 'stockable' || key === 'weighable')) {
+      const flags = Object.fromEntries(Object.keys(raw as object).map(key => [key, (patch.data as Record<string, unknown>)[key]]));
+      transaction.update(reference, flags);
+      return { documentId: id, fields: { ...stored, ...flags } };
+    }
+    const categories = await transaction.get(outlet.collection('CATEGORY'));
     // Pick only submitted keys: optional-field defaults must not reset unrelated values.
     const changes: Record<string, unknown> = Object.fromEntries(Object.keys(raw as object)
       .map(key => [key, (patch.data as Record<string, unknown>)[key]]));

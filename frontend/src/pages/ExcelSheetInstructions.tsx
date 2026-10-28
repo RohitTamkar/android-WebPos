@@ -1,6 +1,7 @@
 import { ChevronDown, FileSpreadsheet } from 'lucide-react';
 import { PRODUCT_COLUMNS } from './productCsvPreview.ts';
 import './ExcelSheetInstructions.css';
+import { DemoExcelTemplates } from './DemoExcelTemplates.tsx';
 
 // Illustrations only. Nothing in this component reads outlet data or performs uploads.
 const examples = [
@@ -43,6 +44,7 @@ const instructions = [
 
 export function ExcelSheetInstructions() {
   return <div className="excel-sheet-instructions">
+    <DemoExcelTemplates />
     <div className="sheet-instructions-layout">
       <section className="sheet-workbook" aria-labelledby="sheet-preview-title">
         <div className="sheet-workbook-heading"><span><FileSpreadsheet size={17} aria-hidden="true" /><strong id="sheet-preview-title">Products.csv</strong></span><span className="sheet-sample-badge">Illustrative sample</span></div>

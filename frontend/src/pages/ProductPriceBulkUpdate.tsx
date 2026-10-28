@@ -33,12 +33,34 @@ export function ProductPriceBulkUpdate({ products, outletId, token, onClose, onS
   products: PriceProduct[]; outletId: string; token: string; onClose: (updatedCount?: number) => void;
   onSaved: (product: PriceProduct) => void; onSessionExpired: () => void;
 }) {
+  const [premises, setPremises] = useState<string[]>([]);
+  const [premisesError, setPremisesError] = useState('');
+  const [premisesReload, setPremisesReload] = useState(0);
+  useEffect(() => {
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        setPremisesError('');
+        const response = await fetch(`/api/outlets/${encodeURIComponent(outletId)}/premises`, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal });
+        if (response.status === 401) { onSessionExpired(); return; }
+        const result = await response.json() as { success?: boolean; data?: { premises: { fields: { name?: unknown } }[] }; message?: string };
+        if (!response.ok || !result.success || !Array.isArray(result.data?.premises)) throw new Error(result.message || 'Unable to load premises.');
+        if (!controller.signal.aborted) setPremises(result.data.premises.flatMap(row => typeof row.fields.name === 'string' && row.fields.name.trim() ? [row.fields.name.trim()] : []));
+      } catch (error) { if (!controller.signal.aborted) setPremisesError((error as Error).message); }
+    })();
+    return () => controller.abort();
+  }, [outletId, token, onSessionExpired, premisesReload]);
   const rows = useMemo(() => [...products].sort((left, right) => codeText(left).localeCompare(codeText(right), 'en', { numeric: true, sensitivity: 'base' })), [products]);
   const columns = useMemo(() => {
     const keys = new Set<string>([DEFAULT_KEY]);
     rows.forEach(product => Object.keys(priceTableOf(product) ?? {}).forEach(key => keys.add(key)));
+    const normalize = (key: string) => key.trim().replace(/\s+/g, ' ').toLowerCase();
+    premises.forEach(name => {
+      const key = /\bprice$/i.test(name) ? name : `${name} price`;
+      if (![...keys].some(saved => normalize(saved) === normalize(key))) keys.add(key);
+    });
     return [...keys];
-  }, [rows]);
+  }, [rows, premises]);
   const [search, setSearch] = useState('');
   const visibleRows = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -57,7 +79,7 @@ export function ProductPriceBulkUpdate({ products, outletId, token, onClose, onS
   const changes = rows.flatMap(product => {
     const before = baseline.get(product.documentId), texts = draft.get(product.documentId);
     if (!before || !texts) return [];
-    const keys = Object.keys(before).filter(key => texts[key] !== priceText(before[key]));
+    const keys = Object.keys(texts).filter(key => texts[key] !== priceText(before[key]));
     return keys.length ? [{ product, keys, texts, before }] : [];
   });
   const invalid = changes.filter(change => change.keys.some(key => !validPrice(change.texts[key]!)));
@@ -66,9 +88,10 @@ export function ProductPriceBulkUpdate({ products, outletId, token, onClose, onS
 
   const edit = (documentId: string, key: string, text: string) => {
     setMessage('');
+    if (key !== DEFAULT_KEY) setLinked(current => new Map(current).set(documentId, false));
     setDraft(current => {
       const texts = { ...current.get(documentId)!, [key]: text };
-      if (key === DEFAULT_KEY && linked.get(documentId)) Object.keys(texts).forEach(other => { texts[other] = text; });
+      if (key === DEFAULT_KEY && linked.get(documentId) && columns.every(column => column in current.get(documentId)!)) columns.forEach(other => { texts[other] = text; });
       return new Map(current).set(documentId, texts);
     });
   };
@@ -77,7 +100,9 @@ export function ProductPriceBulkUpdate({ products, outletId, token, onClose, onS
     setLinked(current => new Map(current).set(documentId, value));
     if (value) setDraft(current => {
       const texts = { ...current.get(documentId)! };
-      Object.keys(texts).forEach(key => { texts[key] = texts[DEFAULT_KEY] ?? ''; });
+      const product = rows.find(row => row.documentId === documentId)!;
+      const value = texts[DEFAULT_KEY] ?? priceText(product.fields.price);
+      columns.forEach(key => { texts[key] = value; });
       return new Map(current).set(documentId, texts);
     });
   };
@@ -95,7 +120,7 @@ export function ProductPriceBulkUpdate({ products, outletId, token, onClose, onS
         try {
           const response = await fetch(`/api/outlets/${encodeURIComponent(outletId)}/products/${encodeURIComponent(product.documentId)}/prices`, {
             method: 'PATCH', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prices: Object.fromEntries(keys.map(key => [key, Number(texts[key])])), expected: Object.fromEntries(keys.map(key => [key, before[key]])) }),
+            body: JSON.stringify({ prices: Object.fromEntries(keys.map(key => [key, Number(texts[key])])), expected: Object.fromEntries(keys.map(key => [key, Object.hasOwn(before, key) ? before[key] : null])) }),
           });
           if (response.status === 401) { expired = true; return; }
           let result: { success?: boolean; message?: string; data?: PriceProduct } | null = null;
@@ -141,6 +166,7 @@ export function ProductPriceBulkUpdate({ products, outletId, token, onClose, onS
         <button type="button" className="btn-primary-add" disabled={saving || !rows.length} onClick={() => void update()}>{saving ? 'Updating…' : 'Update'}</button>
       </div>
     </div>
+    {premisesError && <p role="alert" className="category-form-error">{premisesError} <button type="button" className="btn-secondary" onClick={() => setPremisesReload(value => value + 1)}>Retry premises</button></p>}
     {message && <p className={failures.length || invalid.length ? 'category-form-error' : 'products-notice'} role={failures.length || invalid.length ? 'alert' : 'status'}>{message}</p>}
     {failures.length > 0 && <ul className="flags-failures" aria-label="Failed products">
       {failures.map(failure => <li key={failure.documentId}><strong>{failure.name}</strong>: {failure.message}</li>)}
@@ -160,18 +186,18 @@ export function ProductPriceBulkUpdate({ products, outletId, token, onClose, onS
           {!rows.length && <tr><td colSpan={columns.length + 2} className="flags-empty">No products found for this outlet.</td></tr>}
           {rows.length > 0 && !visibleRows.length && <tr><td colSpan={columns.length + 2} className="flags-empty">No products match your search.</td></tr>}
           {visibleRows.map(product => {
-            const name = productName(product), texts = draft.get(product.documentId), same = linked.get(product.documentId) === true;
+            const name = productName(product), texts = draft.get(product.documentId), same = linked.get(product.documentId) === true && !!texts && columns.every(key => key in texts);
             const error = failedIds.get(product.documentId);
             return <tr key={product.documentId} className={`${changedIds.has(product.documentId) ? 'changed' : ''}${error || invalidIds.has(product.documentId) ? ' failed' : ''}`}>
               <td className="products-name price-name-column">{name}
                 {!texts && <span className="flags-row-error">Price table is invalid; edit is unavailable.</span>}
                 {error && <span className="flags-row-error">{error}</span>}</td>
               <td className="price-same-column"><input type="checkbox" aria-label={`Same price for all premises for ${name}`} checked={same}
-                disabled={saving || !texts || Object.keys(texts).length < 2} onChange={event => link(product.documentId, event.target.checked)} /></td>
-              {columns.map(key => <td key={key} className="price-column">{texts && key in texts
-                ? <input type="text" inputMode="decimal" aria-label={`${columnLabel(key)} for ${name}`} value={texts[key]}
-                    aria-invalid={texts[key] !== priceText(baseline.get(product.documentId)?.[key]) && !validPrice(texts[key]!)}
-                    disabled={saving || (same && key !== DEFAULT_KEY)} onChange={event => edit(product.documentId, key, event.target.value)} />
+                disabled={saving || !texts || columns.length < 2} onChange={event => link(product.documentId, event.target.checked)} /></td>
+              {columns.map(key => <td key={key} className="price-column">{texts
+                ? <input type="text" inputMode="decimal" aria-label={`${columnLabel(key)} for ${name}`} value={texts[key] ?? ''}
+                    aria-invalid={(texts[key] ?? '') !== priceText(baseline.get(product.documentId)?.[key]) && !validPrice(texts[key] ?? '')}
+                    disabled={saving} onChange={event => edit(product.documentId, key, event.target.value)} />
                 : <span className="price-missing" title="No saved price for this premises">—</span>}</td>)}
             </tr>;
           })}

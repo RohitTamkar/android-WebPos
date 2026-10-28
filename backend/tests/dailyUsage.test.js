@@ -2,8 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { initializeOutletDailyUsage, operateOutletDailyUsage, resolveUsageTimeZone } from '../src/dailyUsage.js';
+import { createWebUsageGuard } from '../src/webUsageMiddleware.js';
+import { DAILY_WEB_USAGE_ENABLED } from '../../shared/webUsageFeature.js';
 const instant = (value) => Timestamp.fromDate(new Date(value));
 const start = instant('2026-10-19T10:00:00Z');
+const usagePath = 'OUTLET/actual-document/SESSION/dailyUsage';
 const assigned = (profile) => Array.isArray(profile.outlets) ? profile.outlets : [];
 const state = (date = '2026-10-19') => ({ date, timeZone: 'Asia/Kolkata', limitSeconds: 1800,
     usedSeconds: 450.125, settledAt: instant(`${date}T09:00:00Z`), updatedAt: instant(`${date}T09:00:00Z`),
@@ -19,9 +22,13 @@ function fixture() {
     let now = start, fail = false;
     let retry;
     let queue = Promise.resolve();
+    const reference = (path) => ({ path, collection: (name) => {
+            assert.equal(`${path}/${name}`, 'OUTLET/actual-document/SESSION');
+            return { doc: (id) => reference(`${path}/${name}/${id}`) };
+        } });
     const db = { collection: (collection) => {
-            assert.ok(['OUTLET', 'USER_PROFILE'].includes(collection), 'No new collection');
-            return { doc: (id) => ({ path: `${collection}/${id}` }) };
+            assert.ok(['OUTLET', 'USER_PROFILE'].includes(collection), 'No unrelated root collection');
+            return { doc: (id) => reference(`${collection}/${id}`) };
         }, runTransaction: (callback) => {
             const operation = queue.then(async () => {
                 let pending = [];
@@ -29,9 +36,8 @@ function fixture() {
                         assert.equal(pending.length, 0);
                         reads.push(ref.path);
                         return { data: () => records.get(ref.path) };
-                    }, update: (ref, patch) => {
-                        assert.equal(ref.path, 'OUTLET/actual-document');
-                        assert.deepEqual(Object.keys(patch), ['dailyUsage']);
+                    }, set: (ref, patch) => {
+                        assert.equal(ref.path, usagePath, 'Every usage write targets only the stable SESSION document');
                         pending.push({ path: ref.path, patch });
                     } };
                 let result = await callback(transaction);
@@ -45,10 +51,10 @@ function fixture() {
                 if (fail)
                     throw new Error('SIMULATED COMMIT FAILURE');
                 for (const { path, patch } of pending) {
-                    assert.ok(records.has(path));
-                    assert.ok(FieldValue.serverTimestamp().isEqual(patch.dailyUsage.updatedAt));
-                    const saved = { ...patch.dailyUsage, updatedAt: now };
-                    records.set(path, { ...records.get(path), dailyUsage: saved });
+                    assert.equal(path, usagePath);
+                    assert.ok(FieldValue.serverTimestamp().isEqual(patch.updatedAt));
+                    const saved = { ...patch, updatedAt: now };
+                    records.set(path, saved);
                     writes.push(saved);
                 }
                 return result;
@@ -56,19 +62,20 @@ function fixture() {
             queue = operation.then(() => undefined, () => undefined);
             return operation;
         } };
-    return { records, writes, reads, outlet: () => records.get('OUTLET/actual-document'),
+    return { db, records, writes, reads, outlet: () => records.get('OUTLET/actual-document'),
+        usage: () => records.get(usagePath), setUsage: (value) => records.set(usagePath, value),
         initialize: (raw = {}, user = 'user', id = 'actual-document') => initializeOutletDailyUsage(db, id, user, assigned, raw, () => now),
         operate: (raw, user = 'user') => operateOutletDailyUsage(db, 'actual-document', user, assigned, raw, () => now),
         time: (value) => { now = instant(value); }, fail: () => { fail = true; }, conflict: (fn) => { retry = fn; } };
 }
-test('initializes only dailyUsage using actual document ID and preserves every unrelated outlet field', async () => {
+test('creates SESSION/dailyUsage using the actual outlet document ID and preserves the entire outlet', async () => {
     const f = fixture();
     const before = { ...f.outlet() };
     const result = await f.initialize();
     assert.deepEqual(result, { outletId: 'actual-document', initialized: true, reset: false, date: '2026-10-19', timeZone: 'Asia/Kolkata', limitSeconds: 1800, usedSeconds: 0 });
-    const { dailyUsage, ...rest } = f.outlet();
-    assert.deepEqual(rest, before);
-    const usage = dailyUsage;
+    assert.deepEqual(f.outlet(), before);
+    assert.ok(!('dailyUsage' in f.outlet()));
+    const usage = f.usage();
     assert.equal(usage.usedSeconds, 0);
     assert.equal(usage.version, 1);
     assert.ok(usage.generation);
@@ -80,17 +87,17 @@ test('initializes only dailyUsage using actual document ID and preserves every u
 test('same-day initialization, refresh and relogin preserve counters, timestamps, generation and sessions without writing', async () => {
     const f = fixture();
     const existing = state();
-    f.outlet().dailyUsage = existing;
+    f.setUsage(existing);
     for (let i = 0; i < 3; i++)
         assert.equal((await f.initialize()).usedSeconds, 450.125);
-    assert.equal(f.outlet().dailyUsage, existing);
+    assert.equal(f.usage(), existing);
     assert.deepEqual(f.writes, []);
 });
 test('new local day resets the map, rotates generation, clears sessions and retains no history', async () => {
     const f = fixture();
-    f.outlet().dailyUsage = state('2026-10-18');
+    f.setUsage(state('2026-10-18'));
     const result = await f.initialize();
-    const usage = f.outlet().dailyUsage;
+    const usage = f.usage();
     assert.equal(result.reset, true);
     assert.equal(usage.usedSeconds, 0);
     assert.notEqual(usage.generation, 'existing-period');
@@ -123,9 +130,8 @@ test('missing country/timezone uses the actual server timezone and preserves exi
         const before = { ...f.outlet() };
         const result = await f.initialize();
         assert.equal(result.timeZone, Intl.DateTimeFormat().resolvedOptions().timeZone);
-        const { dailyUsage, ...rest } = f.outlet();
-        assert.deepEqual(rest, before);
-        assert.equal(dailyUsage.usedSeconds, 0);
+        assert.deepEqual(f.outlet(), before);
+        assert.equal(f.usage().usedSeconds, 0);
     }
 });
 test('timezone resolution prefers the outlet, supports server fallback, and fails closed for a broken server zone', () => {
@@ -137,7 +143,7 @@ test('timezone resolution prefers the outlet, supports server fallback, and fail
 });
 test('exhausted current-day allowance is never reset; initialization does not grant a login', async () => {
     const f = fixture();
-    f.outlet().dailyUsage = { ...state(), usedSeconds: 1800 };
+    f.setUsage({ ...state(), usedSeconds: 1800 });
     assert.equal((await f.initialize()).usedSeconds, 1800);
     assert.deepEqual(f.writes, []);
 });
@@ -146,9 +152,9 @@ test('malformed, future, unsupported and timezone-changed periods are preserved 
         { ...state(), date: '2026-02-30' }, { ...state(), timeZone: 'America/New_York' },
         { ...state(), sessions: Object.fromEntries(Array.from({ length: 101 }, (_, i) => [i, {}])) }]) {
         const f = fixture();
-        f.outlet().dailyUsage = existing;
+        f.setUsage(existing);
         await assert.rejects(f.initialize(), { status: 409 });
-        assert.equal(f.outlet().dailyUsage, existing);
+        assert.equal(f.usage(), existing);
         assert.deepEqual(f.writes, []);
     }
 });
@@ -158,7 +164,7 @@ test('concurrent initializers commit one period, and retries preserve newly reco
     assert.equal(results.filter(result => result.initialized).length, 1);
     assert.equal(f.writes.length, 1);
     const g = fixture();
-    g.conflict(() => { g.outlet().dailyUsage = state(); });
+    g.conflict(() => { g.setUsage(state()); });
     assert.equal((await g.initialize()).usedSeconds, 450.125);
     assert.deepEqual(g.writes, []);
 });
@@ -203,6 +209,182 @@ test('rejects forged input, unauthorized users, missing outlets and inactive pro
 const requestId = '00000000-0000-4000-8000-000000000001';
 const startSession = (f, id = requestId, user = 'user') => f.operate({ action: 'start', requestId: id }, user);
 const lifecycle = (session, action, sequence = session.sequence + (action === 'heartbeat' ? 1 : 0)) => ({ action, sessionId: session.sessionId, generation: session.generation, ...(action === 'check' ? {} : { sequence }) });
+test('authoritative policy is response metadata only, with unchanged accounting fields and write counts', async () => {
+    for (const eraseOutlet of [true, false]) {
+        const f = fixture();
+        f.outlet().eraseOutlet = eraseOutlet;
+        const before = { ...f.outlet() };
+        let session = await startSession(f);
+        assert.equal(session.dailyLimitApplies, !eraseOutlet);
+        assert.equal(f.writes.length, 1);
+        f.time('2026-10-19T10:00:10Z');
+        session = await f.operate(lifecycle(session, 'heartbeat'));
+        assert.equal(session.dailyLimitApplies, !eraseOutlet);
+        assert.equal(f.writes.length, 2);
+        await f.operate(lifecycle(session, 'stop'));
+        assert.equal(f.writes.length, 3);
+        assert.deepEqual(f.outlet(), before);
+        assert.deepEqual(Object.keys(f.usage()).sort(), ['date', 'timeZone', 'limitSeconds', 'usedSeconds', 'settledAt', 'updatedAt', 'generation', 'version', 'sessions'].sort());
+        assert.ok(!JSON.stringify(f.usage()).includes('dailyLimitApplies'));
+        f.usage().usedSeconds = 1800;
+        if (eraseOutlet)
+            assert.equal((await startSession(f)).dailyLimitApplies, false);
+        else
+            await assert.rejects(startSession(f), { status: 403, code: 'USAGE_LIMIT_REACHED', dailyLimitApplies: true });
+    }
+});
+test('ten active minutes, logout and relogin retain twenty minutes; final exhaustion and repeated cleanup never reset or double count', async () => {
+    const f = fixture();
+    let session = await startSession(f);
+    const generation = session.generation;
+    const at = (seconds) => f.time(new Date(start.toMillis() + seconds * 1000).toISOString());
+    await f.operate(lifecycle(session, 'stop'));
+    assert.equal(f.usage().usedSeconds, 0, 'Immediate logout consumes no time');
+    session = await startSession(f);
+    for (let seconds = 20; seconds < 600; seconds += 20) {
+        at(seconds);
+        session = await f.operate(lifecycle(session, 'heartbeat'));
+    }
+    at(600);
+    const stopped = await f.operate(lifecycle(session, 'stop'));
+    assert.equal(stopped.usedSeconds, 600, 'Stop commits the final elapsed interval');
+    assert.deepEqual(f.usage().sessions, {});
+    await assert.rejects(f.operate(lifecycle(session, 'stop')), { code: 'USAGE_SESSION_REQUIRED' });
+    assert.equal(f.usage().usedSeconds, 600, 'Duplicate stop cannot count the interval again');
+    at(3600);
+    session = await startSession(f);
+    assert.equal(session.remainingSeconds, 1200, 'Logged-out time is not consumed');
+    session = await startSession(f);
+    assert.equal(session.remainingSeconds, 1200, 'Refresh and repeated admission preserve the balance');
+    assert.equal(session.generation, generation);
+    for (let seconds = 3620; seconds < 4800; seconds += 20) {
+        at(seconds);
+        session = await f.operate(lifecycle(session, 'heartbeat'));
+    }
+    at(4800);
+    await assert.rejects(f.operate(lifecycle(session, 'heartbeat')), { code: 'USAGE_LIMIT_REACHED' });
+    await assert.rejects(f.operate(lifecycle(session, 'check')), { code: 'USAGE_LIMIT_REACHED' });
+    await assert.rejects(startSession(f), { code: 'USAGE_LIMIT_REACHED' });
+    // Exhaustion prunes expired leases; a delayed stop safely reports it gone.
+    await assert.rejects(f.operate(lifecycle(session, 'stop')), { code: 'USAGE_SESSION_REQUIRED' });
+    assert.equal(f.usage().usedSeconds, 1800);
+    assert.deepEqual(f.usage().sessions, {});
+});
+test('eraseOutlet true starts and renews valid leases below and at the cap, and permits more than 30 minutes', async () => {
+    for (const initialUsage of [0, 1790, 1800]) {
+        const f = fixture();
+        f.outlet().eraseOutlet = true;
+        f.setUsage({ ...state(), usedSeconds: initialUsage, settledAt: start, updatedAt: start, generation: requestId, sessions: {} });
+        const before = { ...f.outlet() };
+        let session = await startSession(f);
+        assert.equal(session.usedSeconds, initialUsage);
+        assert.equal(session.expiresAt, start.toMillis() + 30_000);
+        for (let elapsed = 20; elapsed <= 1840; elapsed += 20) {
+            f.time(new Date(start.toMillis() + elapsed * 1000).toISOString());
+            session = await f.operate(lifecycle(session, 'heartbeat'));
+            assert.equal(session.usedSeconds, Math.min(1800, initialUsage + elapsed));
+            assert.equal(session.expiresAt, start.toMillis() + (elapsed + 30) * 1000);
+            await f.operate(lifecycle(session, 'check'));
+        }
+        const restarted = await startSession(f, '00000000-0000-4000-8000-000000000002');
+        assert.equal(restarted.usedSeconds, 1800);
+        assert.equal(restarted.expiresAt, start.toMillis() + 1870_000);
+        assert.deepEqual(f.outlet(), before);
+        assert.deepEqual(Object.keys(f.usage()).sort(), ['date', 'timeZone', 'limitSeconds', 'usedSeconds', 'settledAt', 'updatedAt', 'generation', 'version', 'sessions'].sort());
+    }
+});
+test('eraseOutlet false retains short near-limit leases and denies checks, starts and renewals at exhaustion', async () => {
+    const f = fixture();
+    f.setUsage({ ...state(), usedSeconds: 1790, settledAt: start, updatedAt: start, generation: requestId, sessions: {} });
+    const session = await startSession(f);
+    assert.equal(f.outlet().eraseOutlet, false);
+    assert.equal(session.expiresAt, start.toMillis() + 10_000);
+    f.time(new Date(start.toMillis() + 9999).toISOString());
+    await f.operate(lifecycle(session, 'check'));
+    assert.equal(f.usage().usedSeconds, 1799.999);
+    f.time(new Date(start.toMillis() + 10_000).toISOString());
+    for (const action of ['check', 'heartbeat']) {
+        await assert.rejects(f.operate(lifecycle(session, action)), { status: 403, code: 'USAGE_LIMIT_REACHED' });
+    }
+    await assert.rejects(startSession(f), { status: 403, code: 'USAGE_LIMIT_REACHED' });
+    assert.equal(f.usage().usedSeconds, 1800);
+});
+test('Boolean flag changes preserve counters, period and leases without resetting the allowance', async () => {
+    const f = fixture();
+    let session = await startSession(f);
+    const generation = session.generation;
+    f.time(new Date(start.toMillis() + 10_000).toISOString());
+    await f.operate(lifecycle(session, 'check'));
+    assert.equal(f.usage().usedSeconds, 10);
+    for (const eraseOutlet of [true, false, true]) {
+        f.outlet().eraseOutlet = eraseOutlet;
+        const initialized = await f.initialize();
+        assert.equal(initialized.reset, false);
+        assert.equal(initialized.usedSeconds, 10);
+        await f.operate(lifecycle(session, 'check'));
+        assert.equal(f.usage().generation, generation);
+        assert.equal(f.usage().usedSeconds, 10);
+        assert.ok(f.usage().sessions[session.sessionId]);
+    }
+    f.usage().usedSeconds = 1800;
+    f.outlet().eraseOutlet = false;
+    await assert.rejects(f.operate(lifecycle(session, 'check')), { code: 'USAGE_LIMIT_REACHED' });
+    f.outlet().eraseOutlet = true;
+    session = await startSession(f);
+    await f.operate(lifecycle(session, 'check'));
+    assert.equal(f.usage().usedSeconds, 1800);
+    assert.equal(f.usage().generation, generation);
+    assert.equal(session.expiresAt, start.toMillis() + 40_000);
+});
+test('exempt sessions retain authentication, ownership, expiry, concurrency and commit-failure checks', async () => {
+    const f = fixture();
+    f.outlet().eraseOutlet = true;
+    f.records.set('USER_PROFILE/second', { active: true, outlets: ['actual-document'] });
+    const a = await startSession(f);
+    f.time(new Date(start.toMillis() + 5000).toISOString());
+    const b = await startSession(f, '00000000-0000-4000-8000-000000000002', 'second');
+    f.time(new Date(start.toMillis() + 15_000).toISOString());
+    await Promise.all([f.operate(lifecycle(a, 'heartbeat')), f.operate(lifecycle(b, 'heartbeat'), 'second')]);
+    assert.equal(f.usage().usedSeconds, 15);
+    await assert.rejects(f.operate(lifecycle(a, 'check'), 'second'), { code: 'USAGE_SESSION_REQUIRED' });
+    await assert.rejects(startSession(f, requestId, null), { status: 401 });
+    f.records.set('USER_PROFILE/foreign', { active: true, outlets: ['other'] });
+    await assert.rejects(startSession(f, requestId, 'foreign'), { status: 403 });
+    f.time(new Date(start.toMillis() + 46_000).toISOString());
+    await assert.rejects(f.operate(lifecycle(a, 'check')), { code: 'USAGE_SESSION_EXPIRED' });
+    const failed = fixture();
+    failed.outlet().eraseOutlet = true;
+    failed.fail();
+    await assert.rejects(startSession(failed), /SIMULATED COMMIT FAILURE/);
+    assert.deepEqual(failed.writes, []);
+});
+test('a transaction retry observes the authoritative Boolean flag change', async () => {
+    const f = fixture();
+    f.outlet().eraseOutlet = true;
+    f.setUsage({ ...state(), usedSeconds: 1800, settledAt: start, updatedAt: start, generation: requestId, sessions: {} });
+    f.conflict(() => { f.outlet().eraseOutlet = false; });
+    await assert.rejects(startSession(f), { code: 'USAGE_LIMIT_REACHED' });
+    assert.equal(f.usage().usedSeconds, 1800);
+});
+test('the existing guard enforces both Boolean policies in isolation while the compatibility indicator is enabled', async () => {
+    assert.equal(DAILY_WEB_USAGE_ENABLED, true);
+    for (const eraseOutlet of [true, false]) {
+        const f = fixture();
+        f.outlet().eraseOutlet = eraseOutlet;
+        const session = await startSession(f);
+        f.usage().usedSeconds = 1800;
+        const guard = createWebUsageGuard({ enabled: true, db: () => f.db, assigned, readToken: () => ({ profileDocId: 'user' }),
+            operate: (db, outletId, profileId, assignments, raw) => operateOutletDailyUsage(db, outletId, profileId, assignments, raw, () => start) });
+        let admitted = false;
+        const req = { path: '/products', method: 'GET', params: { outletId: 'actual-document' }, header: (name) => name === 'x-web-usage-session' ? session.sessionId : name === 'x-web-usage-generation' ? session.generation : undefined };
+        const res = { statusCode: 200, setHeader() { }, status(code) { this.statusCode = code; return this; }, json(body) { this.body = body; } };
+        await guard(req, res, () => { admitted = true; });
+        assert.equal(admitted, eraseOutlet);
+        assert.equal(res.statusCode, eraseOutlet ? 200 : 403);
+        assert.equal(f.usage().usedSeconds, 1800);
+    }
+    assert.equal(DAILY_WEB_USAGE_ENABLED, true);
+});
 test('entry starts a bounded lease; heartbeat settles elapsed time; checks do not renew leases', async () => {
     const f = fixture();
     const s = await startSession(f);
@@ -214,7 +396,7 @@ test('entry starts a bounded lease; heartbeat settles elapsed time; checks do no
     assert.equal(hb.expiresAt, start.toMillis() + 40_000);
     f.time('2026-10-19T10:00:20Z');
     await f.operate(lifecycle(hb, 'check'));
-    const saved = f.outlet().dailyUsage;
+    const saved = f.usage();
     assert.equal(saved.usedSeconds, 20);
     assert.equal(saved.sessions[s.sessionId].expiresAt.toMillis(), start.toMillis() + 40_000);
 });
@@ -226,7 +408,7 @@ test('logout pauses accounting; subsequent entry resumes accumulated usage', asy
     f.time('2026-10-19T11:00:00Z');
     const resumed = await startSession(f);
     assert.equal(resumed.usedSeconds, 12);
-    assert.equal(Object.keys(f.outlet().dailyUsage.sessions).length, 1);
+    assert.equal(Object.keys(f.usage().sessions).length, 1);
 });
 test('refresh uses the same session; delayed pre-refresh stop cannot delete its renewed lease', async () => {
     const f = fixture();
@@ -235,7 +417,7 @@ test('refresh uses the same session; delayed pre-refresh stop cannot delete its 
     const restored = await startSession(f);
     assert.equal(first.sessionId, restored.sessionId);
     assert.equal(restored.usedSeconds, 5);
-    assert.equal(Object.keys(f.outlet().dailyUsage.sessions).length, 1);
+    assert.equal(Object.keys(f.usage().sessions).length, 1);
     await assert.rejects(f.operate(lifecycle(first, 'stop')), { code: 'USAGE_STALE_HEARTBEAT' });
     await f.operate(lifecycle(restored, 'check'));
 });
@@ -247,23 +429,23 @@ test('concurrent employees consume the union of active intervals, never their su
     const b = await startSession(f, '00000000-0000-4000-8000-000000000002', 'second');
     f.time('2026-10-19T10:00:15Z');
     await Promise.all([f.operate(lifecycle(a, 'heartbeat')), f.operate(lifecycle(b, 'heartbeat'), 'second')]);
-    assert.equal(f.outlet().dailyUsage.usedSeconds, 15);
+    assert.equal(f.usage().usedSeconds, 15);
 });
 test('closed browsers/network loss stop consuming at lease expiry; stale heartbeats cannot reactivate', async () => {
     const f = fixture();
     const s = await startSession(f);
     f.time('2026-10-19T11:00:00Z');
     await assert.rejects(f.operate(lifecycle(s, 'heartbeat')), { code: 'USAGE_SESSION_EXPIRED' });
-    assert.equal(f.outlet().dailyUsage.usedSeconds, 30);
-    assert.deepEqual(f.outlet().dailyUsage.sessions, {});
+    assert.equal(f.usage().usedSeconds, 30);
+    assert.deepEqual(f.usage().sessions, {});
 });
 test('exhaustion is persisted and blocks both new entries and existing protected operations', async () => {
     const f = fixture();
     const s = await startSession(f);
-    f.outlet().dailyUsage.usedSeconds = 1790;
+    f.usage().usedSeconds = 1790;
     f.time('2026-10-19T10:00:10Z');
     await assert.rejects(f.operate(lifecycle(s, 'check')), { status: 403, code: 'USAGE_LIMIT_REACHED' });
-    assert.equal(f.outlet().dailyUsage.usedSeconds, 1800);
+    assert.equal(f.usage().usedSeconds, 1800);
     await assert.rejects(startSession(f), { status: 403, code: 'USAGE_LIMIT_REACHED' });
     await f.operate(lifecycle(s, 'stop'));
 });
@@ -295,26 +477,80 @@ test('accounting commit failure cannot grant access or modify the outlet', async
     assert.deepEqual(f.outlet(), before);
     assert.deepEqual(f.writes, []);
 });
-test('active session metadata remains bounded without creating new collections', async () => {
+test('active session metadata remains bounded in the single SESSION document', async () => {
     const f = fixture();
-    f.outlet().dailyUsage = { ...state(), usedSeconds: 0, settledAt: start, generation: '00000000-0000-4000-8000-000000000002',
+    f.setUsage({ ...state(), usedSeconds: 0, settledAt: start, generation: '00000000-0000-4000-8000-000000000002',
         sessions: Object.fromEntries(Array.from({ length: 100 }, (_, i) => [i.toString(16).padStart(64, '0'),
-            { profileDocId: 'user', expiresAt: Timestamp.fromMillis(start.toMillis() + 30000), lastSequence: 0 }])) };
+            { profileDocId: 'user', expiresAt: Timestamp.fromMillis(start.toMillis() + 30000), lastSequence: 0 }])) });
     await assert.rejects(startSession(f), { status: 429, code: 'USAGE_SESSION_CAPACITY' });
-    assert.equal(Object.keys(f.outlet().dailyUsage.sessions).length, 100);
+    assert.equal(Object.keys(f.usage().sessions).length, 100);
 });
 test('server timezone fallback preserves the current allowance on repeated initialization', async () => {
     const f = fixture();
     delete f.outlet().country;
     await f.initialize();
-    const usage = f.outlet().dailyUsage;
+    const usage = f.usage();
     usage.usedSeconds = 120;
     const generation = usage.generation, writes = f.writes.length;
     const resumed = await f.initialize();
     assert.equal(resumed.usedSeconds, 120);
     assert.equal(resumed.initialized, false);
-    assert.equal(f.outlet().dailyUsage.generation, generation);
+    assert.equal(f.usage().generation, generation);
     assert.equal(f.writes.length, writes);
     assert.ok(!('country' in f.outlet()));
+});
+test('first start creates a complete accounting document and lease, without outlet or unrelated writes', async () => {
+    const f = fixture();
+    f.records.set('OUTLET/actual-document/PRODUCT/p', { name: 'Preserve product' });
+    f.records.set('OUTLET/actual-document/SESSION/unrelated', { keep: true });
+    const before = new Map(f.records);
+    const session = await startSession(f);
+    assert.equal(f.records.size, before.size + 1);
+    for (const [path, record] of before)
+        assert.deepEqual(f.records.get(path), record);
+    const usage = f.usage();
+    assert.deepEqual(Object.keys(usage).sort(), ['date', 'timeZone', 'limitSeconds', 'usedSeconds', 'settledAt', 'updatedAt', 'generation', 'version', 'sessions'].sort());
+    assert.deepEqual(Object.keys(usage.sessions), [session.sessionId]);
+    assert.equal(usage.limitSeconds, 1800);
+    assert.equal(session.expiresAt - start.toMillis(), 30_000);
+});
+test('legacy-only usage blocks initialization and lifecycle writes without copying or resetting data', async () => {
+    for (const legacy of [state(), { ...state(), usedSeconds: 1800 }, state('2026-10-18'), null, {}]) {
+        const f = fixture();
+        f.outlet().dailyUsage = legacy;
+        const before = new Map(f.records);
+        await assert.rejects(f.initialize(), { status: 409, code: 'USAGE_LEGACY_REVIEW_REQUIRED' });
+        await assert.rejects(startSession(f), { status: 409, code: 'USAGE_LEGACY_REVIEW_REQUIRED' });
+        await assert.rejects(f.operate({ action: 'status' }), { status: 409, code: 'USAGE_LEGACY_REVIEW_REQUIRED' });
+        assert.deepEqual(f.records, before);
+        assert.equal(f.outlet().dailyUsage, legacy);
+        assert.ok(!f.records.has(usagePath));
+        assert.deepEqual(f.writes, []);
+    }
+});
+test('an existing SESSION document stays authoritative while stale legacy usage is left untouched', async () => {
+    const f = fixture();
+    const first = await startSession(f);
+    const legacy = { ...state(), usedSeconds: 1800 };
+    f.outlet().dailyUsage = legacy;
+    const outletBefore = { ...f.outlet() };
+    f.time('2026-10-19T10:00:10Z');
+    const renewed = await f.operate(lifecycle(first, 'heartbeat'));
+    assert.equal(renewed.usedSeconds, 10);
+    assert.equal(renewed.generation, first.generation);
+    assert.deepEqual(f.outlet(), outletBefore);
+    assert.equal(f.outlet().dailyUsage, legacy);
+    const writes = f.writes.length;
+    assert.equal((await f.initialize()).usedSeconds, 10);
+    assert.equal(f.writes.length, writes);
+});
+test('a concurrent legacy write prevents creating a fresh SESSION allowance on transaction retry', async () => {
+    const f = fixture();
+    const legacy = state();
+    f.conflict(() => { f.outlet().dailyUsage = legacy; });
+    await assert.rejects(startSession(f), { status: 409, code: 'USAGE_LEGACY_REVIEW_REQUIRED' });
+    assert.equal(f.outlet().dailyUsage, legacy);
+    assert.ok(!f.records.has(usagePath));
+    assert.deepEqual(f.writes, []);
 });
 //# sourceMappingURL=dailyUsage.test.js.map

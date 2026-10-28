@@ -1,5 +1,7 @@
+import { readMasterSnapshot, masterSnapshotRevision } from '../utils/masterSnapshots.ts';
+import { useRowBatches } from '../utils/useRowBatches.ts';
 import { useTimedNotice, useSuccessDismiss } from '../utils/useTimedNotice.ts';
-import { loadProductList, ProductListRequestError } from './productListApi.ts';
+import { loadProductList, ProductListRequestError, streamProductList } from './productListApi.ts';
 import { DeleteConfirmation } from './DeleteConfirmation.tsx';
 import { DeleteAllError, deleteAllRecords } from './deleteAllApi.ts';
 import { SuccessPopup } from './SuccessPopup.tsx';
@@ -66,6 +68,9 @@ function ProductsPageContent({ outlet, token, onSessionExpired }: ProductsPagePr
   const [categories, setCategories] = useState<ProductCategory[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // Set while the product stream is still arriving; bulk actions need the full list.
+  const [progress, setProgress] = useState<{ loaded: number; total: number | null } | null>(null);
+  const busyLoading = loading || !!progress;
   const [openMenu, setOpenMenu] = useState<'images' | 'more' | null>(null);
   const headerActions = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -117,12 +122,13 @@ function ProductsPageContent({ outlet, token, onSessionExpired }: ProductsPagePr
   const [deletingAll, setDeletingAll] = useState(false);
   const [deleteAllError, setDeleteAllError] = useState('');
   const [deleteAllDone, setDeleteAllDone] = useState(false);
+  const [flagsSuccess, setFlagsSuccess] = useState('');
   const deleteAllProducts = async () => {
     if (deleteBusy.current) return;
     deleteBusy.current = true; setDeletingAll(true); setDeleteAllError('');
     try {
       await deleteAllRecords(outlet.id, token, 'products');
-      setProducts([]); setSelectedCategory(null); setDeleteAllOpen(false); setDeleteAllDone(true);
+      setProducts([]); setCategories([]); setSelectedCategory(null); setDeleteAllOpen(false); setDeleteAllDone(true);
       setReloadKey(value => value + 1);
     } catch (error) {
       if (error instanceof DeleteAllError && error.status === 401) { setDeleteAllOpen(false); onSessionExpired(); return; }
@@ -133,28 +139,44 @@ function ProductsPageContent({ outlet, token, onSessionExpired }: ProductsPagePr
   useEffect(() => {
     const controller = new AbortController();
     async function loadProducts() {
-      setProducts([]);
-      setCategories([]);
+      const base = `/api/outlets/${encodeURIComponent(outlet.id)}`;
+      const cachedProducts = readMasterSnapshot<ProductDocument[]>(`${base}/products`, token);
+      const cachedCategories = readMasterSnapshot<ProductCategory[]>(`${base}/categories#metadata`, token);
+      const snapshotRevision = masterSnapshotRevision();
+      // Objects that came from the server; anything else in the list is a local add or edit.
+      const fromServer = new WeakSet<ProductDocument>(cachedProducts ?? []);
+      const withLocalChanges = (loaded: ProductDocument[]) => (current: ProductDocument[]) =>
+        [...new Map([...loaded, ...current.filter(product => !fromServer.has(product))].map(product => [product.documentId, product])).values()];
+      setProducts(cachedProducts ?? []);
+      setCategories(cachedCategories ?? []);
       setSelectedCategory(null);
-      setLoading(true);
+      setLoading(!cachedProducts || !cachedCategories);
+      setProgress(null);
       setError('');
       try {
-        const base = `/api/outlets/${encodeURIComponent(outlet.id)}`;
-        const [loadedProducts, loadedCategories] = await Promise.all([
-          loadProductList<ProductDocument>(`${base}/products`, token, controller.signal, 'products'),
-          loadProductList<ProductCategory>(`${base}/categories`, token, controller.signal, 'categories'),
-        ]);
+        const categoriesLoaded = loadProductList<ProductCategory>(`${base}/categories`, token, controller.signal, 'categories', true)
+          .then(loaded => { if (!controller.signal.aborted) setCategories(loaded); return loaded; });
+        // Without a cached list, show products batch by batch while the rest streams in.
+        const loadedProducts = await streamProductList<ProductDocument>(`${base}/products`, token, controller.signal, (loaded, total) => {
+          if (controller.signal.aborted) return;
+          setProgress({ loaded: loaded.length, total });
+          if (cachedProducts || !loaded.length) return;
+          for (const product of loaded) fromServer.add(product);
+          setProducts(withLocalChanges(loaded.slice()));
+          setLoading(false);
+        });
+        await categoriesLoaded;
         if (!controller.signal.aborted) {
-          // Keep products created while the initial list request was still loading.
-          setProducts(current => [...new Map([...loadedProducts, ...current].map(product => [product.documentId, product])).values()]);
-          setCategories(loadedCategories);
+          if (snapshotRevision !== masterSnapshotRevision()) { setReloadKey(value => value + 1); return; }
+          for (const product of loadedProducts) fromServer.add(product);
+          setProducts(withLocalChanges(loadedProducts));
         }
       } catch (requestError) {
         if (controller.signal.aborted) return;
         if (requestError instanceof ProductListRequestError && requestError.status === 401) { onSessionExpired(); return; }
         setError((requestError as Error).message);
       } finally {
-        if (!controller.signal.aborted) setLoading(false);
+        if (!controller.signal.aborted) { setLoading(false); setProgress(null); }
       }
     }
 
@@ -189,12 +211,15 @@ function ProductsPageContent({ outlet, token, onSessionExpired }: ProductsPagePr
         productText(product.fields[field]).toLowerCase().includes(query))), sort);
   }, [categoryProducts, search, sort]);
 
+  const { rows: renderedProducts, hasMore: hasMoreRows, sentinelRef: moreRowsRef } =
+    useRowBatches(visibleProducts, `${selectedCategory ?? ''}\u0000${search}\u0000${sort}`);
+
   if (imageBatchMode) return <ProductImageBatch key={`${outlet.id}:${imageBatchMode}`} mode={imageBatchMode} products={products}
     outletId={outlet.id} token={token} imageGrant={imageGrant} onSessionExpired={onSessionExpired} onClose={() => { setImageBatchMode(null); setImageGrant(''); }}
     onSaved={(documentId, image) => setProducts(current => current.map(product => product.documentId === documentId
       ? { ...product, fields: { ...product.fields, image } } : product))} />;
 
-  if ((taxOpen || discountOpen || flagsOpen || pricesOpen || assignmentOpen) && (loading || error)) return <section className="products-page-shell" aria-busy={loading}>
+  if ((taxOpen || discountOpen || flagsOpen || pricesOpen || assignmentOpen) && (busyLoading || error)) return <section className="products-page-shell" aria-busy={busyLoading}>
     <div className="products-header"><h1>{taxOpen ? 'Tax Settings' : discountOpen ? 'Update Discount' : flagsOpen ? 'Update Stockable & Weighable' : pricesOpen ? 'Update Bulk Price' : 'Assign Service Point'}</h1>
       <button type="button" className="btn-secondary" onClick={() => { setTaxOpen(false); setDiscountOpen(false); setFlagsOpen(false); setPricesOpen(false); setAssignmentOpen(false); }}>Cancel</button></div>
     <div className="products-empty" role={error ? 'alert' : 'status'}>{error || 'Loading products and categories…'}
@@ -238,8 +263,7 @@ function ProductsPageContent({ outlet, token, onSessionExpired }: ProductsPagePr
       setFlagsOpen(false);
       if (updatedCount) {
         setNoticeIsError(false);
-        setNotice(`Stockable & Weighable updated successfully for ${updatedCount} ${updatedCount === 1 ? 'product' : 'products'}.`);
-        setReloadKey(value => value + 1);
+        setFlagsSuccess(`Stockable & Weighable updated successfully for ${updatedCount} ${updatedCount === 1 ? 'product' : 'products'}.`);
       }
     }} />;
 
@@ -262,7 +286,7 @@ function ProductsPageContent({ outlet, token, onSessionExpired }: ProductsPagePr
   );
 
   return (
-    <section className="products-page-shell" aria-label="Products" aria-busy={loading}>
+    <section className="products-page-shell" aria-label="Products" aria-busy={busyLoading}>
       {assignmentOpen && <ProductServicePointAssignment outletId={outlet.id} token={token} categories={categories} onSessionExpired={onSessionExpired}
         onCancel={() => setAssignmentOpen(false)} onAssigned={result => {
           setProducts(current => current.map(product => product.fields.category === result.categoryId ? { ...product, fields: { ...product.fields, kitchenId: result.servicePointId } } : product));
@@ -292,9 +316,10 @@ function ProductsPageContent({ outlet, token, onSessionExpired }: ProductsPagePr
           }
         }} />}
       {deleteAllOpen && <DeleteConfirmation kind="product" name="all products" busy={deletingAll} error={deleteAllError}
-        title="Delete all products?" description={`Are you sure you want to delete all products? This will permanently remove all ${products.length} products from this outlet.`}
+        title="Delete all products?" description={`Are you sure you want to delete all products? This will permanently remove all ${products.length} products and every category from this outlet.`}
         confirmLabel="Yes" cancelLabel="No" onCancel={() => { if (!deleteBusy.current) setDeleteAllOpen(false); }} onConfirm={() => void deleteAllProducts()} />}
-      {deleteAllDone && <SuccessPopup message="All products deleted successfully" onDismiss={() => setDeleteAllDone(false)} />}
+      {flagsSuccess && <SuccessPopup message={flagsSuccess} onDismiss={() => setFlagsSuccess('')} />}
+      {deleteAllDone && <SuccessPopup message="All products and categories deleted successfully" onDismiss={() => setDeleteAllDone(false)} />}
       {deleteTarget && <DeleteConfirmation kind="product" name={deleteTarget.name} busy={deleting}
         onCancel={() => { if (!deleteBusy.current) setDeleteTarget(null); }} onConfirm={() => void deleteProduct(deleteTarget.id)} />}
       <div className="products-header">
@@ -309,17 +334,17 @@ function ProductsPageContent({ outlet, token, onSessionExpired }: ProductsPagePr
               <button type="button" className="products-images-toggle" aria-label="Product image options" aria-haspopup="menu" aria-expanded={openMenu === 'images'}
                 aria-controls="products-images-menu" onClick={() => toggleMenu('images')}><Images size={15} />Product Images<ChevronDown size={14} className="products-chevron" /></button>
               {openMenu === 'images' && <div id="products-images-menu" className="products-options-menu" role="menu">
-                <button type="button" role="menuitem" disabled={loading || !!error} onClick={() => requestImageAction('bulk')}>
+                <button type="button" role="menuitem" disabled={busyLoading || !!error} onClick={() => requestImageAction('bulk')}>
                   <span className="products-menu-icon"><ImagePlus size={15} /></span>Bulk Upload Images</button>
-                <button type="button" role="menuitem" disabled={loading || !!error} onClick={() => requestImageAction('shared')}>
+                <button type="button" role="menuitem" disabled={busyLoading || !!error} onClick={() => requestImageAction('shared')}>
                   <span className="products-menu-icon"><Images size={15} /></span>One Image for Multiple Products</button>
                 <div className="products-menu-divider" role="separator" />
-                <button type="button" role="menuitem" className="danger" disabled={loading || !!error || !products.some(product => productImageReference(product.fields))}
+                <button type="button" role="menuitem" className="danger" disabled={busyLoading || !!error || !products.some(product => productImageReference(product.fields))}
                   onClick={() => requestImageAction('remove')}><span className="products-menu-icon"><Trash2 size={15} /></span>Remove all product images</button>
               </div>}
             </div>
           </div>
-          <button type="button" className="products-refresh" disabled={loading} onClick={() => setReloadKey(value => value + 1)}>
+          <button type="button" className="products-refresh" disabled={busyLoading} onClick={() => setReloadKey(value => value + 1)}>
             <RefreshCw size={15} />Refresh
           </button>
           <div className="products-menu-anchor">
@@ -351,7 +376,7 @@ function ProductsPageContent({ outlet, token, onSessionExpired }: ProductsPagePr
               <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); setNotice(''); setDiscountOpen(true); }}>
                 <span className="products-menu-icon"><Percent size={15} /></span>Update Discount</button>
               <div className="products-menu-divider" role="separator" />
-              <button type="button" role="menuitem" className="danger" disabled={loading || !!error || !products.length}
+              <button type="button" role="menuitem" className="danger" disabled={busyLoading || !!error || (!products.length && !categories.length)}
                 onClick={() => { setOpenMenu(null); setNotice(''); setDeleteAllError(''); setDeleteAllOpen(true); }}>
                 <span className="products-menu-icon"><Trash2 size={15} /></span>Delete All</button>
             </div>}
@@ -391,7 +416,7 @@ function ProductsPageContent({ outlet, token, onSessionExpired }: ProductsPagePr
       </div>
       {loading || error || visibleProducts.length === 0 ? (
         <div className="products-empty" role={error ? 'alert' : 'status'}>
-          {loading ? 'Loading products…' : error || (products.length ? 'No products in this category.' : 'No products found for this outlet.')}
+          {loading || (progress && !error) ? 'Loading products…' : error || (products.length ? 'No products in this category.' : 'No products found for this outlet.')}
           {error && <button type="button" className="products-refresh" onClick={() => setReloadKey(value => value + 1)}>Retry</button>}
         </div>
       ) : (
@@ -399,7 +424,7 @@ function ProductsPageContent({ outlet, token, onSessionExpired }: ProductsPagePr
           <table className="products-table">
             <thead><tr><th>Code</th><th>Product Name</th><th>Regional Name</th><th>Sale Price</th><th>Image Preview</th><th className="products-actions-heading">Actions</th></tr></thead>
             <tbody>
-              {visibleProducts.map(product => (
+              {renderedProducts.map(product => (
                 <tr key={product.documentId}>
                   <td><span className="products-code">{productText(product.fields.code)}</span></td>
                   <td className="products-name">{productText(product.fields.name)}</td>
@@ -424,6 +449,7 @@ function ProductsPageContent({ outlet, token, onSessionExpired }: ProductsPagePr
               ))}
             </tbody>
           </table>
+          {hasMoreRows && <div ref={moreRowsRef} className="products-more-rows" role="status">Showing {renderedProducts.length} of {visibleProducts.length} products…</div>}
         </div>
       )}
     </section>

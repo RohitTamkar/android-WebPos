@@ -1,4 +1,7 @@
 .excel-sheet-instructions { min-width: 0; color: #193454; color-scheme: light; }
+.excel-sheet-instructions > .csv-upload-preview { margin-bottom: 18px; padding: 14px 16px; border: 1px solid #d9e3ef; border-radius: 10px; background: #f7faff; }
+.excel-sheet-instructions > .csv-upload-preview summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+.excel-sheet-instructions .csv-upload-file-controls { margin-top: 12px; }
 .sheet-instructions-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; }
 .sheet-workbook { min-width: 0; overflow: hidden; border: 1px solid #d9e3ef; border-radius: 10px; background: #fff; }
 .sheet-workbook-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 12px 14px; background: #f0f5fc; font-size: 12px; }

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowDownToLine, ArrowLeft, ArrowUpFromLine, Package, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
 import type { OutletSummary } from './OutletSelectionPage.tsx';
-import { loadProductList, ProductListRequestError } from './productListApi.ts';
+import { ProductListRequestError, streamProductList } from './productListApi.ts';
 import { createFirestoreDocumentId } from '../utils/requestId.ts';
 import { SuccessPopup } from './SuccessPopup.tsx';
 import './DevicesPage.css';
@@ -18,6 +18,7 @@ export function StockAdjustmentPage({ outlet, token, onSessionExpired }: { outle
   const [mode, setMode] = useState<'in' | 'out' | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  const [streaming, setStreaming] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -37,14 +38,19 @@ export function StockAdjustmentPage({ outlet, token, onSessionExpired }: { outle
     const controller = new AbortController();
     // Clear the previous request's data while synchronizing with this outlet/refresh.
     // eslint-disable-next-line react/set-state-in-effect
-    setLoading(true); setLoadError(''); setProducts([]);
-    void loadProductList<Product>(`${base}/products`, token, controller.signal, 'products')
-      .then(data => { if (!controller.signal.aborted) setProducts(data.filter(product => product.fields.stockable === true)); })
+    setLoading(true); setStreaming(true); setLoadError(''); setProducts([]);
+    const stockable = (data: Product[]) => data.filter(product => product.fields.stockable === true);
+    // Products become selectable batch by batch; saving waits for the complete list.
+    void streamProductList<Product>(`${base}/products`, token, controller.signal, loaded => {
+      if (controller.signal.aborted || !loaded.length) return;
+      setProducts(stockable(loaded)); setLoading(false);
+    })
+      .then(data => { if (!controller.signal.aborted) setProducts(stockable(data)); })
       .catch(failure => {
         if (controller.signal.aborted) return;
         if (failure instanceof ProductListRequestError && failure.status === 401) onSessionExpired();
         setLoadError((failure as Error).message);
-      }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
+      }).finally(() => { if (!controller.signal.aborted) { setLoading(false); setStreaming(false); } });
     return () => controller.abort();
   }, [base, token, reload, onSessionExpired]);
 
@@ -80,7 +86,7 @@ export function StockAdjustmentPage({ outlet, token, onSessionExpired }: { outle
     if (mode === 'out' && !row.remark.trim()) return 'Enter a stock-out remark.';
     return '';
   };
-  const canReview = rows.length > 0 && !rows.some(rowError) && !loading && !loadError;
+  const canReview = rows.length > 0 && !rows.some(rowError) && !loading && !streaming && !loadError;
   const locked = saving || uncertain;
   const addProduct = (productId: string) => {
     if (!productId || locked) return;
@@ -128,7 +134,7 @@ export function StockAdjustmentPage({ outlet, token, onSessionExpired }: { outle
       {success && <SuccessPopup message={success} onDismiss={() => setSuccess('')} />}
       {error && !confirming && <p role="alert" className="stock-error">{error}</p>}
       {loading ? <div className="devices-state" role="status"><RefreshCw />Loading products…</div> : loadError ? <div className="devices-state"><p role="alert">{loadError}</p><button type="button" className="devices-refresh" disabled={locked} onClick={refresh}>Retry loading products</button></div> : <>
-        {!products.length && <p role="status">No stockable products are available. Mark a product Stockable in Products to adjust its stock.</p>}
+        {!products.length && !streaming && <p role="status">No stockable products are available. Mark a product Stockable in Products to adjust its stock.</p>}
         <div className="stock-workspace">
         <div className="stock-workspace-heading"><div><h2>{mode === 'in' ? 'Receive stock' : 'Issue stock'}</h2><p>Select a product to add it instantly to your list.</p></div></div>
         <div className="stock-entry-toolbar"><label>Product<select aria-label="Select product" disabled={locked} value="" onChange={event => addProduct(event.target.value)}><option value="">Select Product</option>
@@ -138,7 +144,7 @@ export function StockAdjustmentPage({ outlet, token, onSessionExpired }: { outle
         <button type="button" className="devices-refresh" disabled={locked} onClick={refresh}><RefreshCw />Refresh stock</button></div>
         <div className="devices-table-scroll stock-entry-table"><table><thead><tr><th>Code</th><th>Product</th><th>Current stock</th><th>{mode === 'in' ? 'Quantity to add' : 'Quantity to remove'}</th>{mode === 'out' && <th>Remark</th>}<th><span className="stock-action-heading">Remove</span></th></tr></thead><tbody>
           {!rows.length && <tr><td colSpan={mode === 'out' ? 6 : 5}><div className="stock-empty"><div className="stock-empty-icon"><Package aria-hidden="true" /></div>
-            <strong>{products.length ? 'Your stock list is empty' : 'No stockable products yet'}</strong><p>{products.length ? 'Choose a product above, then enter the quantity.' : 'Mark products as Stockable in Products to get started.'}</p>
+            <strong>{products.length || streaming ? 'Your stock list is empty' : 'No stockable products yet'}</strong><p>{products.length || streaming ? 'Choose a product above, then enter the quantity.' : 'Mark products as Stockable in Products to get started.'}</p>
             <span>{mode === 'in' ? 'Received items will increase your current stock.' : 'Issued items will decrease your current stock.'}</span></div></td></tr>}
           {rows.map(row => { const product = findProduct(row.productId); const problem = rowError(row); return <tr key={row.productId}><td><span className="stock-product-code">{text(product?.fields.code)}</span></td><td><strong className="stock-product-name">{text(product?.fields.name)}</strong></td><td><span className="stock-current-quantity">{validStock(product?.fields.currentStock) ? quantity(product.fields.currentStock) : 'Unavailable'}</span></td>
             <td><input type="number" min="0.001" step="0.001" max={mode === 'out' && validStock(product?.fields.currentStock) ? product.fields.currentStock : 1e9} aria-invalid={!!problem} aria-label={`Quantity for ${text(product?.fields.name)}`} value={row.quantity} disabled={locked} onChange={event => { pending.current = null; setRows(current => current.map(value => value.productId === row.productId ? { ...value, quantity: event.target.value } : value)); }} />{problem && <small className="stock-error">{problem}</small>}</td>

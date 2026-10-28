@@ -63,6 +63,21 @@ test('receipt-only save preserves exact legacy nested fields, explicit numeric t
   assert.deepEqual(line.canWeight, { booleanValue: false }); assert.deepEqual(line.selected, { booleanValue: true });
   assert.deepEqual(f.records.get(`${base}/${input.documentId}`)!.supplier, supplier);
 });
+test('supplier can be omitted or null without creating a supplier; lost-response retries still save once', async () => {
+  for (const includeNull of [false, true]) {
+    const f = fixture(); f.records.delete(`OUTLET/outlet/SUPPLIER/${supplier.id}`);
+    const { supplier: _supplier, ...withoutSupplier } = input;
+    const body = includeNull ? { ...withoutSupplier, supplier: null } : withoutSupplier;
+    const before = structuredClone(f.records);
+    f.loseResponse(); await assert.rejects(f.save(body), /Response lost/);
+    assert.equal((await f.save(body)).alreadySaved, true);
+    assert.equal(f.writes.length, 1);
+    assert.deepEqual(f.writes[0]!.fields.supplier, { nullValue: null });
+    for (const [path, fields] of before) assert.deepEqual(f.records.get(path), fields);
+    await assert.rejects(f.save(input), /different receipt/);
+  }
+});
+
 test('retry, simultaneous double-click and lost response create exactly one receipt', async () => {
   const f = fixture(); f.loseResponse(); await assert.rejects(f.save(), /Response lost/);
   const results = await Promise.all([f.save(), f.save()]); assert.ok(results.every(result => result.alreadySaved)); assert.equal(f.writes.length, 1);

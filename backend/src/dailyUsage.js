@@ -7,9 +7,11 @@ export const WEB_USAGE_LEASE_SECONDS = 30;
 const limitSeconds = 1800;
 export class DailyUsageError extends ProductCreationError {
     code;
-    constructor(status, code, message) {
+    dailyLimitApplies;
+    constructor(status, code, message, dailyLimitApplies) {
         super(status, message);
         this.code = code;
+        this.dailyLimitApplies = dailyLimitApplies;
     }
 }
 const leaseSchema = z.object({ profileDocId: z.string().min(1).max(200), expiresAt: z.instanceof(Timestamp), lastSequence: z.number().int().nonnegative() }).strict();
@@ -60,7 +62,7 @@ function localDate(now, timeZone) {
     return `${part('year')}-${part('month')}-${part('day')}`;
 }
 // Shared transaction engine: every calculation is rerun after a transaction conflict.
-async function usageTransaction(db, outletId, profileId, assigned, raw = {}, clock = () => Timestamp.now(), operation) {
+async function usageTransaction(db, outletId, profileId, assigned, raw = {}, clock = () => Timestamp.now(), operation, requireAllowance = false, readOnly = false) {
     if (!profileId)
         throw new ProductCreationError(401, 'Your session has expired. Please sign in again.');
     if (!outletId || outletId.length > 200 || outletId.includes('/') || outletId === '.' || outletId === '..') {
@@ -70,6 +72,9 @@ async function usageTransaction(db, outletId, profileId, assigned, raw = {}, clo
         throw new ProductCreationError(422, 'Usage initialization accepts no client fields, counters or timestamps.');
     }
     const outletRef = db.collection('OUTLET').doc(outletId);
+    // One stable accounting document retains the existing map of concurrent leases.
+    // This storage name does not establish or enable Web POS-only enforcement.
+    const usageRef = outletRef.collection('SESSION').doc('dailyUsage');
     const outcome = await db.runTransaction(async (transaction) => {
         const profile = (await transaction.get(db.collection('USER_PROFILE').doc(profileId))).data();
         requireProductOutlet(profileId, outletId, profile, assigned);
@@ -78,10 +83,18 @@ async function usageTransaction(db, outletId, profileId, assigned, raw = {}, clo
             throw new ProductCreationError(404, 'Outlet not found.');
         if (outlet.active !== true)
             throw new ProductCreationError(403, 'This outlet is inactive.');
+        const exemptFromDailyLimit = outlet.eraseOutlet === true;
+        const stored = (await transaction.get(usageRef)).data();
+        if (readOnly && stored === undefined)
+            throw new DailyUsageError(428, 'USAGE_SESSION_REQUIRED', 'Enter the outlet before loading its logo.');
+        // Never silently grant a new allowance or migrate legacy data on entry.
+        // An existing SESSION document is authoritative; legacy fields stay untouched.
+        if (stored === undefined && outlet.dailyUsage !== undefined) {
+            throw new DailyUsageError(409, 'USAGE_LEGACY_REVIEW_REQUIRED', 'Legacy daily usage requires review before SESSION storage can be initialized. No usage data was migrated or reset.');
+        }
         const timeZone = resolveUsageTimeZone(outlet.country);
         const now = clock(); // Recalculate inside every retry, including retries across midnight.
         const date = localDate(now, timeZone);
-        const stored = outlet.dailyUsage;
         let reset = false;
         if (stored !== undefined) {
             const parsed = usageSchema.safeParse(stored);
@@ -108,9 +121,11 @@ async function usageTransaction(db, outletId, profileId, assigned, raw = {}, clo
             : { date, timeZone, limitSeconds, usedSeconds: 0, settledAt: now,
                 updatedAt: now, generation: randomUUID(), version: 1, sessions: {} };
         const initialized = stored === undefined || reset;
-        const summary = () => ({ outletId, initialized, reset, date, timeZone, limitSeconds, usedSeconds: dailyUsage.usedSeconds });
+        const summary = () => ({ outletId, initialized, reset, date, timeZone, limitSeconds, usedSeconds: dailyUsage.usedSeconds,
+            ...(readOnly ? { outletName: outlet.name } : {}) });
         if (!operation) {
-            transaction.update(outletRef, { dailyUsage: { ...dailyUsage, updatedAt: FieldValue.serverTimestamp() } });
+            if (!readOnly)
+                transaction.set(usageRef, { ...dailyUsage, updatedAt: FieldValue.serverTimestamp() });
             return summary();
         }
         const parsedSessions = z.record(z.string().regex(/^[a-f0-9]{64}$/), leaseSchema).safeParse(dailyUsage.sessions);
@@ -121,15 +136,16 @@ async function usageTransaction(db, outletId, profileId, assigned, raw = {}, clo
         const through = Math.min(nowMs, Math.max(dailyUsage.settledAt.toMillis(), ...Object.values(sessions).map(session => session.expiresAt.toMillis())));
         dailyUsage.usedSeconds = Math.min(limitSeconds, (Math.round(dailyUsage.usedSeconds * 1000) + Math.max(0, through - dailyUsage.settledAt.toMillis())) / 1000);
         dailyUsage.settledAt = now;
-        const persist = () => transaction.update(outletRef, { dailyUsage: { ...dailyUsage, sessions, updatedAt: FieldValue.serverTimestamp() } });
+        const persist = () => { if (!readOnly)
+            transaction.set(usageRef, { ...dailyUsage, sessions, updatedAt: FieldValue.serverTimestamp() }); };
         const failure = (status, code, message) => {
             for (const [id, session] of Object.entries(sessions))
                 if (session.expiresAt.toMillis() <= nowMs)
                     delete sessions[id];
             persist();
-            return { ...summary(), failure: { status, code, message } };
+            return { ...summary(), failure: { status, code, message, dailyLimitApplies: !exemptFromDailyLimit } };
         };
-        if (dailyUsage.usedSeconds >= limitSeconds && operation.action !== 'status' && operation.action !== 'stop') {
+        if (!exemptFromDailyLimit && dailyUsage.usedSeconds >= limitSeconds && (requireAllowance || operation.action !== 'status') && operation.action !== 'stop') {
             return failure(403, 'USAGE_LIMIT_REACHED', 'The daily 30-minute Web POS allowance for this outlet has been exhausted. Access resumes 24 Hrs later.');
         }
         if (operation.action !== 'status' && operation.action !== 'start') {
@@ -155,25 +171,30 @@ async function usageTransaction(db, outletId, profileId, assigned, raw = {}, clo
         for (const [id, session] of Object.entries(sessions))
             if (session.expiresAt.toMillis() <= nowMs)
                 delete sessions[id];
+        // Keep accounting capped at 1,800 seconds; exempt outlets still need normal,
+        // expiring leases even when there is no daily allowance remaining.
+        const expiresAt = Timestamp.fromMillis(exemptFromDailyLimit ? nowMs + WEB_USAGE_LEASE_SECONDS * 1000
+            : Math.min(nowMs + WEB_USAGE_LEASE_SECONDS * 1000, nowMs + Math.round((limitSeconds - dailyUsage.usedSeconds) * 1000)));
         let sessionId;
         if (operation.action === 'start') {
             sessionId = createHash('sha256').update(JSON.stringify([profileId, outletId, dailyUsage.generation, operation.requestId])).digest('hex');
             if (!sessions[sessionId] && Object.keys(sessions).length >= 100) {
                 return failure(429, 'USAGE_SESSION_CAPACITY', 'Too many active Web POS sessions. Wait for unused sessions to expire.');
             }
-            sessions[sessionId] = { profileDocId: profileId, expiresAt: Timestamp.fromMillis(Math.min(nowMs + WEB_USAGE_LEASE_SECONDS * 1000, nowMs + Math.round((limitSeconds - dailyUsage.usedSeconds) * 1000))), lastSequence: sessions[sessionId] ? sessions[sessionId].lastSequence + 1 : 0 };
+            sessions[sessionId] = { profileDocId: profileId, expiresAt, lastSequence: sessions[sessionId] ? sessions[sessionId].lastSequence + 1 : 0 };
         }
         else if (operation.action === 'heartbeat') {
             sessionId = operation.sessionId;
-            sessions[sessionId] = { profileDocId: profileId, expiresAt: Timestamp.fromMillis(Math.min(nowMs + WEB_USAGE_LEASE_SECONDS * 1000, nowMs + Math.round((limitSeconds - dailyUsage.usedSeconds) * 1000))), lastSequence: operation.sequence };
+            sessions[sessionId] = { profileDocId: profileId, expiresAt, lastSequence: operation.sequence };
         }
         persist();
-        return { ...summary(), remainingSeconds: Math.max(0, limitSeconds - dailyUsage.usedSeconds), generation: dailyUsage.generation,
+        // Response metadata only: never persist presentation policy in the usage document.
+        return { ...summary(), dailyLimitApplies: !exemptFromDailyLimit, remainingSeconds: Math.max(0, limitSeconds - dailyUsage.usedSeconds), generation: dailyUsage.generation,
             ...(sessionId ? { sessionId, expiresAt: sessions[sessionId].expiresAt.toMillis(), sequence: sessions[sessionId].lastSequence } : {}) };
-    });
+    }, readOnly ? { readOnly: true } : {});
     const failure = outcome.failure;
     if (failure)
-        throw new DailyUsageError(failure.status, failure.code, failure.message);
+        throw new DailyUsageError(failure.status, failure.code, failure.message, failure.dailyLimitApplies);
     return outcome;
 }
 // Kept for existing clients: initialization alone does not grant outlet access.
@@ -185,5 +206,23 @@ export async function operateOutletDailyUsage(db, outletId, profileId, assigned,
     if (!parsed.success)
         throw new DailyUsageError(422, 'USAGE_INVALID_REQUEST', 'Invalid usage action. Client counters and timestamps are not accepted.');
     return usageTransaction(db, outletId, profileId, assigned, {}, clock, parsed.data);
+}
+// Transfer previews retain their valid source lease, but cannot use its exemption
+// to read an exhausted destination. This internal check grants no session and
+// keeps the public status endpoint available for recovery.
+export async function checkOutletDailyUsageAllowance(db, outletId, profileId, assigned, clock = () => Timestamp.now()) {
+    return usageTransaction(db, outletId, profileId, assigned, {}, clock, { action: 'status' }, true);
+}
+// Branding reads validate the same current policy and lease without settling,
+// initializing, resetting or renewing anything in Firestore. Not a lifecycle API.
+export async function readAuthorizedOutletLogoName(db, outletId, profileId, assigned, sessionId, generation, clock = () => Timestamp.now()) {
+    const parsed = operationSchema.safeParse({ action: 'check', sessionId, generation });
+    if (!parsed.success)
+        throw new DailyUsageError(428, 'USAGE_SESSION_REQUIRED', 'Enter the outlet before loading its logo.');
+    const access = await usageTransaction(db, outletId, profileId, assigned, {}, clock, parsed.data, false, true);
+    if (!('outletName' in access) || typeof access.outletName !== 'string' || !access.outletName.trim()) {
+        throw new ProductCreationError(404, 'No outlet logo is available.');
+    }
+    return access.outletName;
 }
 //# sourceMappingURL=dailyUsage.js.map

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { productFields } from './productDefaults.js';
-import { parseProductCsv } from '../../frontend/src/pages/productCsvPreview.js';
+import { parseProductCsv, namedPremisesHeaders, premisesPriceKey, type ProductUploadMode } from '../../frontend/src/pages/productCsvPreview.js';
 import { categoryNameKey, planImportCategories } from './productImportCategories.js';
 
 // Approved for user-triggered, create-only imports into the existing PRODUCT collection.
@@ -15,13 +15,15 @@ export function productIdentity(fields: Record<string, unknown>): string {
   return JSON.stringify(identityFields.map(key => fields[key]));
 }
 
-export function validateProductImport(source: string, categories: ImportCategory[], taxes: ImportTax[] = []) {
-  const preview = parseProductCsv(source);
+export function validateProductImport(source: string, categories: ImportCategory[], taxes: ImportTax[] = [], mode: ProductUploadMode = 'standard') {
+  const preview = parseProductCsv(source, mode);
   const documents: ImportDocument[] = [];
   const rows = preview.rows.map(row => ({ rowNumber: row.rowNumber, errors: [...row.errors] }));
   if (preview.headerErrors.length || !rows.length || rows.some(row => row.errors.length)) {
     return { canUpload: false, categoryChecked: false, headerErrors: preview.headerErrors, rows, documents };
   }
+  const premisesNames = mode === 'premises' ? namedPremisesHeaders(preview.headers) : [];
+  if (mode === 'premises' && !premisesNames.length) return { canUpload: false, categoryChecked: false, headerErrors: ['Use named premises price columns, such as AC Table and Non AC Table, to upload. Legacy Premises columns remain preview-only.'], rows, documents };
   const identities = new Map<string, number>();
   preview.rows.forEach((row, index) => {
     const c = row.cells.map(cell => cell.trim());
@@ -50,6 +52,8 @@ export function validateProductImport(source: string, categories: ImportCategory
       taxIndex: tax[0]!.index, hsnCode: '', unitId: 2,
       weighable: c[12]!.toLowerCase() === 'yes', stockable: false,
     }, index + 1, c[9]!);
+    if (premisesNames.length) fields.priceTable = JSON.stringify({ ...JSON.parse(fields.priceTable),
+      ...Object.fromEntries(premisesNames.map((name, index) => [premisesPriceKey(name), Number(c[14 + index])])) });
     const identity = productIdentity(fields);
     const first = identities.get(identity);
     if (first !== undefined) {
@@ -57,7 +61,7 @@ export function validateProductImport(source: string, categories: ImportCategory
       return;
     }
     identities.set(identity, row.rowNumber);
-    documents.push({ rowNumber: row.rowNumber, fields, sourceIdentity: JSON.stringify(c) });
+    documents.push({ rowNumber: row.rowNumber, fields, sourceIdentity: JSON.stringify(premisesNames.length ? [premisesNames, c] : c) });
   });
   const canUpload = rows.every(row => !row.errors.length);
   return { canUpload, categoryChecked: true, headerErrors: [] as string[], rows, documents: canUpload ? documents : [] };
@@ -70,7 +74,7 @@ export interface ImportValidationDependencies {
   readTaxes: () => Promise<ImportTax[]>;
   readProducts: (outletId: string) => Promise<StoredImportProduct[]>;
 }
-export async function checkAuthorizedProductImport(profileId: string | null, outletId: string, source: unknown, deps: ImportValidationDependencies, acceptAttempt?: () => void) {
+export async function checkAuthorizedProductImport(profileId: string | null, outletId: string, source: unknown, deps: ImportValidationDependencies, acceptAttempt?: () => void, mode: ProductUploadMode = 'standard') {
   if (!profileId) return { status: 401, body: { success: false, message: 'Your session has expired. Please sign in again.' } };
   if (!outletId || outletId.includes('/')) return { status: 400, body: { success: false, message: 'A valid outlet is required.' } };
   const profile = await deps.readProfile(profileId);
@@ -79,12 +83,12 @@ export async function checkAuthorizedProductImport(profileId: string | null, out
   acceptAttempt?.();
   if (typeof source !== 'string') return { status: 400, body: { success: false, message: 'The original spreadsheet text is required.' } };
   let local: ReturnType<typeof validateProductImport>;
-  try { local = validateProductImport(source, []); }
+  try { local = validateProductImport(source, [], [], mode); }
   catch (error) { return { status: 400, body: { success: false, message: error instanceof Error ? error.message : 'Invalid spreadsheet.' } }; }
   if (!local.categoryChecked) return { status: 422, body: { success: false, data: local } };
   const [categories, taxes] = await Promise.all([deps.readCategories(outletId), deps.readTaxes()]);
-  const plan = planImportCategories(source, categories);
-  const data = { ...validateProductImport(source, plan.previewCategories, taxes), categorySummary: { reused: plan.reused, toCreate: plan.missing.length } };
+  const plan = planImportCategories(source, categories, mode);
+  const data = { ...validateProductImport(source, plan.previewCategories, taxes, mode), categorySummary: { reused: plan.reused, toCreate: plan.missing.length } };
   if (plan.issues.length) {
     for (const row of data.rows) row.errors.push(...plan.issues.filter(issue => issue.rowNumber === row.rowNumber).map(({ column, message }) => ({ column, message })));
     data.canUpload = false; data.documents = [];

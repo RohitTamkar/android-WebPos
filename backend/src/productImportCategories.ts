@@ -1,5 +1,5 @@
 import type { Firestore } from 'firebase-admin/firestore';
-import { parseProductCsv } from '../../frontend/src/pages/productCsvPreview.js';
+import { parseProductCsv, type ProductUploadMode } from '../../frontend/src/pages/productCsvPreview.js';
 import { categoryCreationFields, categoryCreationSchema } from './categoryCreation.js';
 import { ProductCreationError, requireProductOutlet } from './productCreation.js';
 import type { ImportCategory } from './productImportValidation.js';
@@ -7,8 +7,8 @@ import type { ImportCategory } from './productImportValidation.js';
 export const categoryNameKey = (name: string) => name.trim().toLowerCase();
 export interface CategoryImportIssue { rowNumber: number; column: string; message: string }
 export interface CategoryEntry { name: string; categoryNo: number; rows: number[]; id?: string }
-export function planImportCategories(source: string, existing: ImportCategory[]) {
-  const preview = parseProductCsv(source);
+export function planImportCategories(source: string, existing: ImportCategory[], mode: ProductUploadMode = 'standard') {
+  const preview = parseProductCsv(source, mode);
   const issues: CategoryImportIssue[] = [];
   const entries: CategoryEntry[] = [];
   const byName = new Map<string, CategoryEntry>();
@@ -60,7 +60,7 @@ export interface CategoryResolution {
   success: boolean; categories: ImportCategory[]; created: number; reused: number; issues: CategoryImportIssue[];
 }
 export async function resolveImportCategories(db: Firestore, outletId: string, profileId: string | null,
-  assigned: (profile: Record<string, unknown>) => string[], source: string): Promise<CategoryResolution> {
+  assigned: (profile: Record<string, unknown>) => string[], source: string, mode: ProductUploadMode = 'standard'): Promise<CategoryResolution> {
   // Validate paths before constructing references. The transaction rechecks access.
   if (!profileId || !outletId || outletId.includes('/') || outletId === '.' || outletId === '..') {
     requireProductOutlet(profileId, outletId, undefined, assigned);
@@ -80,7 +80,7 @@ export async function resolveImportCategories(db: Firestore, outletId: string, p
         const categories: ImportCategory[] = snapshot.docs.map(document => ({ id: document.id,
           name: typeof document.data().name === 'string' ? document.data().name as string : '',
           categoryNo: typeof document.data().categoryNo === 'number' ? document.data().categoryNo as number : null }));
-        const plan = planImportCategories(source, categories);
+        const plan = planImportCategories(source, categories, mode);
         unresolvedRows = plan.missing.flatMap(entry => entry.rows);
         reused = Math.max(0, plan.reused - created);
         if (plan.issues.length) return { categories, plan, created: 0 };
@@ -100,7 +100,7 @@ export async function resolveImportCategories(db: Firestore, outletId: string, p
     } catch (error) {
       const message = error instanceof Error && /access|session|outlet/i.test(error.message) ? error.message
         : 'Category creation could not be confirmed. No products were attempted; retry the same file to reuse categories already created.';
-      return { success: false, categories: [], created, reused, issues: parseProductCsv(source).rows
+      return { success: false, categories: [], created, reused, issues: parseProductCsv(source, mode).rows
         .filter(row => !unresolvedRows.length || unresolvedRows.includes(row.rowNumber))
         .map(row => ({ rowNumber: row.rowNumber, column: 'Category Name / Category No', message })) };
     }

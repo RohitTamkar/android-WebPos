@@ -266,10 +266,19 @@ test('rejects field/value injection, stock, history, source codes and malformed 
   await assert.rejects(f.transfer({ ...f.productRequest, destinationOutletId: 'source' }), { status: 422 });
   assert.deepEqual(f.writes, []);
 });
-test('unresolved/foreign category mappings, missing source fields and invalid tax/unit references cannot create products', async () => {
+test('products without a category, or with a deleted source category, transfer with no category so they list under All', async () => {
+  for (const category of [undefined, '', 'deleted-category']) {
+    const f = fixture(); Object.assign(f.records.get('OUTLET/source/PRODUCT/p1')!, { category }); f.productRequest.categoryMappings = {};
+    const fields = typeof category === 'string' ? requiredFields : requiredFields.filter(field => field !== 'category');
+    const result = await f.transfer({ ...f.productRequest, products: [{ sourceProductId: 'p1', fields }] });
+    assert.equal(result.created, 1); assert.equal(newProducts(f)[0]!.category, '');
+    assert.ok(!f.writes.some(path => path.includes('/CATEGORY/')));
+  }
+});
+test('unresolved/foreign category mappings, missing source fields and malformed tax/unit values cannot create products', async () => {
   const f = fixture(); await assert.rejects(f.transfer({ ...f.productRequest, categoryMappings: { c1: 'foreign-category' } }), { status: 422 });
   const missing = fixture(); missing.productRequest.categoryMappings = {}; assert.equal((await missing.transfer(missing.productRequest)).skipped, 1);
-  for (const change of [{ taxIndex: 999 }, { unitId: 999 }, { name: undefined }]) {
+  for (const change of [{ taxIndex: -1 }, { unitId: 1.5 }, { name: undefined }]) {
     const g = fixture(); Object.assign(g.records.get('OUTLET/source/PRODUCT/p1')!, change);
     assert.equal((await g.transfer(g.productRequest)).skipped, 1); assert.deepEqual(g.writes, []);
   }
@@ -376,13 +385,21 @@ test('transfer options: all five together, and missing optional source fields ar
   assert.match(result.items[0]!.reason, /source stock unavailable/);
 });
 
-test('transfer options: price table disagreement still skips, and invalid tax references are never substituted', async () => {
+test('transfer options: price table disagreement still skips; products without a price table use their Selling Price', async () => {
   const price = fixture(); price.records.get('OUTLET/source/PRODUCT/p1')!.priceTable = '{"default price":40}';
   const priced = await withOptions(price, { prices: true });
   assert.equal(priced.created, 0); assert.match(priced.items[0]!.reason, /default price table must agree/);
-  const tax = fixture(); tax.records.get('OUTLET/source/PRODUCT/p1')!.taxIndex = 77;
-  const taxed = await withOptions(tax, { taxes: true });
-  assert.equal(taxed.created, 0); assert.match(taxed.items[0]!.reason, /tax or unit reference is invalid/); assert.equal(tax.writes.length, 0);
+  for (const priceTable of ['', undefined]) {
+    const empty = fixture(); Object.assign(empty.records.get('OUTLET/source/PRODUCT/p1')!, { priceTable, price: 0 });
+    assert.equal((await withOptions(empty, { prices: true })).created, 1);
+    assert.deepEqual(JSON.parse(String(newProducts(empty)[0]!.priceTable)), { 'default price': 0 });
+  }
+});
+test('combo and raw-material products keep their type, tax 0 and Android units outside the web unit list', async () => {
+  const f = fixture(); Object.assign(f.records.get('OUTLET/source/PRODUCT/p1')!, { type: 2, taxIndex: 0, unitId: 13 });
+  assert.equal((await withOptions(f, { taxes: true })).created, 1);
+  const product = newProducts(f)[0]!;
+  assert.equal(product.type, 2); assert.equal(product.taxIndex, 0); assert.equal(product.unitId, 13);
 });
 
 test('transfer options: Images unchecked creates the product without image fields and touches no storage', async () => {
@@ -419,13 +436,11 @@ test('transfer options: invalid option payloads and unauthorized requests are re
   assert.equal(g.writes.length, 0);
 });
 
-test('taxes are validated against the Android tax catalog used by Add/Edit Product, not TAX_MASTER', async () => {
+test('taxes are copied from the source product without reading TAX_MASTER', async () => {
   const f = fixture(); f.records.get('OUTLET/source/PRODUCT/p1')!.taxIndex = 9;
   const result = await withOptions(f, { taxes: true });
   assert.equal(result.created, 1); assert.equal(newProducts(f)[0]!.taxIndex, 9);
   assert.ok(!f.reads.some(path => path.includes('TAX_MASTER')));
-  const unknown = fixture(); unknown.records.get('OUTLET/source/PRODUCT/p1')!.taxIndex = 13;
-  assert.equal((await withOptions(unknown, { taxes: true })).created, 0);
 });
 
 test('Category Transfer adds nothing to a category already present in the destination', async () => {

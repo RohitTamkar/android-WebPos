@@ -12,7 +12,7 @@ export function DemoExcelTemplates() {
     catch { setError('Unable to download the template. Please try again.'); }
     finally { setBusy(false); }
   };
-  return <details className="csv-upload-preview">
+  return <details className="csv-upload-preview" open>
     <summary>Demo Excel Sheet</summary>
     <div className="csv-upload-file-controls">
       <button type="button" disabled={busy} onClick={() => void download('standard')}>Download Standard Template</button>

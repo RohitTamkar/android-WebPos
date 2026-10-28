@@ -1,3 +1,4 @@
+import { createOutletLogoHandler } from './outletLogo.js';
 import express from "express";
 import { listOutletServicePoints, createOutletServicePoint, updateOutletServicePoint, deleteOutletServicePoint, assignCategoryServicePoint } from './servicePoints.js';
 import { productExportRouter } from './productExportRoutes.js';
@@ -8,7 +9,8 @@ import { verifyProductImagePin, requireProductImageAuthorization } from "./produ
 import { verifyTransferPreviewPin } from "./transferPreviewPin.js";
 import { issueTransferAuthorization, transferOutletMasters } from "./masterTransfer.js";
 import { listOutletDevices } from "./devices.js";
-import { listOutletCustomers, createOutletCustomer } from "./customers.js";
+import { authorizedCustomers, customerDetails, listOutletCustomers, createOutletCustomer, updateOutletCustomer } from "./customers.js";
+import { deleteOutletMaster } from './outletMasterDeletion.js';
 import { listOutletEmployees, createOutletEmployee } from "./employees.js";
 import { readUserAccount, updateUserAccount, UserAccountError } from "./userAccount.js";
 import { updateOutletProduct } from "./productUpdate.js";
@@ -26,6 +28,8 @@ import { deleteAllOutletRecords, deleteOutletRecord, OutletDeletionError } from 
 import { createOutletProduct, requireProductOutlet, PRODUCT_UNITS, ProductCreationError } from "./productCreation.js";
 import type { Request, RequestHandler, Response } from "express";
 import cors from "cors";
+import { compressLargeJson } from "./jsonCompression.js";
+import { streamDocuments, wantsListStream } from "./documentStream.js";
 import dotenv from "dotenv";
 import { fileURLToPath } from "node:url";
 import jwt from "jsonwebtoken";
@@ -34,9 +38,10 @@ import { z } from "zod";
 import { FirebaseConfigurationError, getFirebaseApp, getFirebaseStorageBucket, getFirestoreDb, logFirebaseConfigurationError, verifyFirebaseConnection } from "./firebase.js";
 import { ImageStorageError, readMasterImage, removeMasterImage, uploadMasterImage, type MasterImageCollection, type MasterImageKind } from "./imageStorage.js";
 import { summarizeDay } from "./daywiseSummary.js";
-import { stockDirection, stockMovementRecord } from "./stockMovementReport.js";
+import { productRate, stockDirection, stockMovementRecord, unpricedProductIds } from "./stockMovementReport.js";
 import { isStockTransfer, stockTransferRecord } from "./stockTransferReport.js";
 import { checkAuthorizedProductImport, nextProductCode, PRODUCT_IMPORT_WRITES_ENABLED } from "./productImportValidation.js";
+import { parseProductCsv, namedPremisesHeaders } from '../../frontend/src/pages/productCsvPreview.js';
 import { persistProductImportWithCategories } from './productImportFlow.js';
 import { resolveImportCategories } from './productImportCategories.js';
 import { categoryCreationFields, categoryCreationSchema } from './categoryCreation.js';
@@ -57,9 +62,17 @@ const IMAGE_JWT_SECRET = process.env.PRODUCT_IMAGE_SECRET || process.env.JWT_SEC
 const TRANSFER_JWT_SECRET = process.env.MASTER_TRANSFER_SECRET || process.env.JWT_SECRET || '';
 
 app.use(cors());
+app.use(compressLargeJson());
 app.use("/api/outlets/:outletId/products/import", express.json({ limit: "12mb" }));
 app.use('/api/outlets/:outletId/product-image-assignments', express.json({ limit: '800kb' }));
 app.use(express.json());
+// Logo actions preserve Firestore state; only explicit uploads/removals change Storage.
+const outletLogoDependencies = { readToken: readAccessToken, db: getFirestoreDb,
+  bucket: getFirebaseStorageBucket, assigned: assignedOutletIds };
+app.get('/api/outlets/:outletId/logo', createOutletLogoHandler(outletLogoDependencies));
+app.put('/api/outlets/:outletId/logo', (req, res, next) => imageBodyParser(req, res, next),
+  createOutletLogoHandler(outletLogoDependencies, 'upload'));
+app.delete('/api/outlets/:outletId/logo', createOutletLogoHandler(outletLogoDependencies, 'remove'));
 // All outlet-scoped routes in this Express backend belong to Web POS.
 // Checks never renew leases; dashboard polling therefore cannot keep a session active.
 app.use('/api/outlets/:outletId', createWebUsageGuard({ readToken: readAccessToken,
@@ -710,9 +723,14 @@ app.get("/api/outlets/:outletId/reports/stock-movements", async (req: Request, r
     }
     const goods = db.collection("OUTLET").doc(outletId).collection("GOODS_RECEIVED");
     const snapshots = await Promise.all(days.map(day => goods.where("dayID", "==", day).get()));
-    const movements = snapshots.flatMap(snapshot => snapshot.docs)
-      .filter(document => stockDirection(document.data()) !== null)
-      .map(document => stockMovementRecord(document.id, document.data()))
+    const documents = snapshots.flatMap(snapshot => snapshot.docs).filter(document => stockDirection(document.data()) !== null);
+    const productIds = [...new Set(documents.flatMap(document => unpricedProductIds(document.data())))];
+    const productDocuments = productIds.length
+      ? await db.getAll(...productIds.map(id => db.collection("OUTLET").doc(outletId).collection("PRODUCT").doc(id)))
+      : [];
+    const rates = new Map(productDocuments.map(document => [document.id, productRate(document.data())]));
+    const movements = documents
+      .map(document => stockMovementRecord(document.id, document.data(), rates))
       .filter(entry => !direction || entry.direction === direction)
       .filter(entry => !search || [entry.transactionNo, entry.supplier, entry.remark,
         ...entry.items.flatMap(item => [item.name, item.productId])]
@@ -1035,6 +1053,10 @@ app.get("/api/outlets/:outletId/categories", async (req: Request, res: Response)
 
   try {
     const db = getFirestoreDb();
+    const outletRef = db.collection("OUTLET").doc(outletId);
+    // Read categories alongside the profile; they are only used after access is confirmed.
+    const categoriesRead = outletRef.collection("CATEGORY").get();
+    categoriesRead.catch(() => undefined);
     const profileDocument = await db.collection("USER_PROFILE").doc(token.profileDocId).get();
     const profile = profileDocument.data();
     if (!profileDocument.exists || !profile || profile.active !== true) {
@@ -1046,17 +1068,11 @@ app.get("/api/outlets/:outletId/categories", async (req: Request, res: Response)
       return;
     }
 
-    const outletRef = db.collection("OUTLET").doc(outletId);
-    const [categorySnapshot, productSnapshot] = await Promise.all([
-      outletRef.collection("CATEGORY").get(),
-      outletRef.collection("PRODUCT").get()
-    ]);
-
-    const productCounts = new Map<string, number>();
-    for (const document of productSnapshot.docs) {
-      const categoryId = stringValue(document.data().category);
-      if (categoryId) productCounts.set(categoryId, (productCounts.get(categoryId) ?? 0) + 1);
-    }
+    const includeCounts = req.header('x-category-counts') !== 'omit';
+    const categorySnapshot = await categoriesRead;
+    // Count per category with aggregation queries instead of reading every product.
+    const productCounts = new Map(includeCounts ? await Promise.all(categorySnapshot.docs.map(async document => [document.id,
+      (await outletRef.collection("PRODUCT").where("category", "==", document.id).count().get()).data().count] as const)) : []);
 
     const categories = categorySnapshot.docs
       .map(document => {
@@ -1069,7 +1085,7 @@ app.get("/api/outlets/:outletId/categories", async (req: Request, res: Response)
           dayType: stringValue(category.dayType),
           active: typeof category.inActive === "boolean" || typeof category.active === "boolean"
             ? category.inActive !== true && category.active !== false : null,
-          productCount: productCounts.get(document.id) ?? 0,
+          ...(includeCounts ? { productCount: productCounts.get(document.id) ?? 0 } : {}),
           createdAt: document.createTime?.toDate().toISOString() ?? "",
           ...(typeof category.imagePath === 'string' ? { imagePath: category.imagePath } : {})
         };
@@ -1105,10 +1121,10 @@ async function authorizeImageTarget(req: Request, res: Response, collection: Mas
   }
   try {
     const db = getFirestoreDb();
-    const profile = (await db.collection('USER_PROFILE').doc(token.profileDocId).get()).data();
-    requireProductOutlet(token.profileDocId, outletId, profile, assignedOutletIds);
     const document = db.collection('OUTLET').doc(outletId).collection(collection).doc(documentId);
-    const snapshot = await document.get();
+    // Read the record alongside the profile; it is only used after access is confirmed.
+    const [profileSnapshot, snapshot] = await Promise.all([db.collection('USER_PROFILE').doc(token.profileDocId).get(), document.get()]);
+    requireProductOutlet(token.profileDocId, outletId, profileSnapshot.data(), assignedOutletIds);
     if (!snapshot.exists) {
       res.status(404).json({ success: false, message: 'This record no longer exists.' });
       return null;
@@ -1266,6 +1282,7 @@ app.post('/api/outlets/:outletId/usage/:action', async (req: Request, res: Respo
     res.json({ success: true, data });
   } catch (error) {
     res.status(error instanceof ProductCreationError ? error.status : 503).json({ success: false,
+      ...(error instanceof DailyUsageError && typeof error.dailyLimitApplies === 'boolean' ? { dailyLimitApplies: error.dailyLimitApplies } : {}),
       code: error instanceof DailyUsageError ? error.code : 'USAGE_UNAVAILABLE',
       message: error instanceof ProductCreationError ? error.message : 'Unable to verify Web POS usage. Access has not been granted.' });
   }
@@ -1393,11 +1410,45 @@ app.post('/api/outlets/:outletId/products/assign-service-point', async (req: Req
 });
 
 // Customer reads and creates are scoped to the signed-in user's assigned outlet.
+for (const [route, collection] of [['premises', 'PREMISES'], ['employees', 'EMPLOYEE'], ['customers', 'CUSTOMER']] as const) {
+  app.delete(`/api/outlets/:outletId/${route}/:documentId`, async (req: Request, res: Response): Promise<void> => {
+    res.setHeader('Cache-Control', 'no-store');
+    const token = readAccessToken(req);
+    if (!token) { res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' }); return; }
+    try {
+      const data = await deleteOutletMaster(getFirestoreDb(), String(req.params.outletId ?? ''), collection,
+        String(req.params.documentId ?? ''), token.profileDocId, assignedOutletIds);
+      res.json({ success: true, data });
+    } catch (error) {
+      res.status(error instanceof ProductCreationError ? error.status : 503).json({ success: false,
+        message: error instanceof ProductCreationError ? error.message : 'The deletion could not be confirmed. Retry to confirm the outcome.' });
+    }
+  });
+}
+
+app.patch('/api/outlets/:outletId/customers/:documentId', async (req: Request, res: Response): Promise<void> => {
+  const token = readAccessToken(req);
+  if (!token) { res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' }); return; }
+  try {
+    const data = await updateOutletCustomer(getFirestoreDb(), String(req.params.outletId ?? ''), String(req.params.documentId ?? ''),
+      token.profileDocId, assignedOutletIds, req.body);
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(error instanceof ProductCreationError ? error.status : 503).json({ success: false,
+      message: error instanceof ProductCreationError ? error.message : 'The customer update could not be confirmed. Retry the same changes.' });
+  }
+});
+
 app.get("/api/outlets/:outletId/customers", async (req: Request, res: Response): Promise<void> => {
   res.setHeader('Cache-Control', 'no-store');
   const token = readAccessToken(req);
   if (!token) { res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' }); return; }
   try {
+    if (wantsListStream(req)) {
+      const customers = await authorizedCustomers(getFirestoreDb(), String(req.params.outletId ?? ''), token.profileDocId, assignedOutletIds);
+      await streamDocuments(req, res, customers, document => customerDetails(document.id, document.data()), 'Unable to load customers. Please try again.');
+      return;
+    }
     const data = await listOutletCustomers(getFirestoreDb(), String(req.params.outletId ?? ''), token.profileDocId, assignedOutletIds);
     res.json({ success: true, data });
   } catch (error) {
@@ -1518,7 +1569,13 @@ app.get("/api/outlets/:outletId/products", async (req: Request, res: Response): 
       return;
     }
 
-    const snapshot = await db.collection("OUTLET").doc(outletId).collection("PRODUCT").get();
+    const productQuery = db.collection("OUTLET").doc(outletId).collection("PRODUCT");
+    if (wantsListStream(req)) {
+      // Keep the document ID separate so a stored `id` field is preserved too.
+      await streamDocuments(req, res, productQuery, document => ({ documentId: document.id, fields: document.data() }), "Unable to load products right now");
+      return;
+    }
+    const snapshot = await productQuery.get();
     // Keep the document ID separate so a stored `id` field is preserved too.
     res.json({ success: true, data: snapshot.docs.map(document => ({
       documentId: document.id,
@@ -1758,7 +1815,7 @@ app.post("/api/outlets/:outletId/products/import/validate", async (req: Request,
   const parameter = req.params.outletId;
   const outletId = Array.isArray(parameter) ? parameter[0] ?? "" : parameter ?? "";
   try {
-    const result = await checkAuthorizedProductImport(token?.profileDocId ?? null, outletId, req.body?.source, productImportDependencies(), () => productImportQuota.check(outletId));
+    const result = await checkAuthorizedProductImport(token?.profileDocId ?? null, outletId, req.body?.source, productImportDependencies(), () => productImportQuota.check(outletId), req.body?.mode === 'premises' ? 'premises' : 'standard');
     res.status(result.status).json({ ...result.body, writesEnabled: PRODUCT_IMPORT_WRITES_ENABLED });
   } catch (error) {
     if (error instanceof ProductImportQuotaError) {
@@ -1770,19 +1827,16 @@ app.post("/api/outlets/:outletId/products/import/validate", async (req: Request,
   }
 });
 
-// Both entry points share the same outlet counter. Premises persistence stays disabled.
+// Both entry points share validation, quota, retry reconciliation and category creation.
 app.post(["/api/outlets/:outletId/products/import", "/api/outlets/:outletId/products/import/premises"], async (req: Request, res: Response): Promise<void> => {
   const token = readAccessToken(req);
   const parameter = req.params.outletId;
   const outletId = Array.isArray(parameter) ? parameter[0] ?? "" : parameter ?? "";
   try {
+    const mode = /\/premises\/?$/i.test(req.path) ? 'premises' : 'standard';
     const checked = await checkAuthorizedProductImport(token?.profileDocId ?? null, outletId, req.body?.source, productImportDependencies(), () => {
       productImportQuota.accept(outletId);
-      // Never strip premises columns or pass a premises request to the standard writer.
-      if (/\/premises\/?$/i.test(req.path)) {
-        throw new ProductCreationError(422, "Premises prices cannot be imported until the columns are mapped to this outlet's configured premises. No products were saved.");
-      }
-    });
+    }, mode);
     if (checked.status !== 200 || !checked.body.data?.canUpload) {
       res.status(checked.status).json(checked.body); return;
     }
@@ -1795,12 +1849,13 @@ app.post(["/api/outlets/:outletId/products/import", "/api/outlets/:outletId/prod
       res.status(409).json({ success: false, message: "Search Codes changed or were not previewed. Review the updated preview before uploading again." }); return;
     }
     const result = await persistProductImportWithCategories(outletId, token!.profileDocId, req.body.source, codes, productImportDependencies(),
-      () => resolveImportCategories(getFirestoreDb(), outletId, token!.profileDocId, assignedOutletIds, req.body.source), {
+      () => resolveImportCategories(getFirestoreDb(), outletId, token!.profileDocId, assignedOutletIds, req.body.source, mode), {
       enabled: PRODUCT_IMPORT_WRITES_ENABLED,
       readExisting: async id => (await getFirestoreDb().collection("OUTLET").doc(id).collection("PRODUCT").get()).docs
         .map(document => ({ id: document.id, fields: document.data() })),
-      createChunk: (id, documents) => createProductImportChunk(getFirestoreDb(), id, documents),
-    });
+      createChunk: (id, documents) => createProductImportChunk(getFirestoreDb(), id, documents, mode === 'premises'
+        ? { names: namedPremisesHeaders(parseProductCsv(req.body.source, mode).headers), profileId: token!.profileDocId, assigned: assignedOutletIds } : undefined),
+    }, mode);
     res.status(result.success ? 200 : 503).json({ success: result.success, data: result });
   } catch (error) {
     if (error instanceof ProductImportQuotaError) {

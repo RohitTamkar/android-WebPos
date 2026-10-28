@@ -50,7 +50,7 @@ export function ProductImageRemoval({ products, outletId, outletName, token, ima
     <div className="modal-header"><h3 id="remove-images-title">{started ? 'Product image removal results' : 'Remove all product images?'}</h3></div>
     <div className="modal-body">
       <p id="remove-images-description">Remove images from <strong>{rows.length} products</strong> in <strong>{outletName}</strong>?
-        {' '}This includes every category and products hidden by search. Product records and shared Storage files are kept.</p>
+      </p>
       {started && <p className={!running && failed === 0 ? 'products-notice' : undefined} role="status">{running ? 'Removing product images…' : failed ? 'Removal finished with errors.' : 'Product images removed successfully.'}
         {' '}{removed} removed; {failed} failed.</p>}
       {failed > 0 && <ul>{rows.filter(row => row.status === 'failed').map(row => <li key={row.documentId}>{row.name}: {row.message}</li>)}</ul>}

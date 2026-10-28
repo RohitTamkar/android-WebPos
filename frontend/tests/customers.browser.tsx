@@ -1,3 +1,4 @@
+import { readMasterSnapshot } from '../src/utils/masterSnapshots.ts';
 import { createRoot } from 'react-dom/client';
 import App from '../src/App.tsx';
 import '../src/index.css';
@@ -41,8 +42,10 @@ function edit(id: string, value: string, textarea = false) {
 const add = () => document.querySelector<HTMLButtonElement>('.category-header-row .btn-primary-add')!;
 const save = () => document.querySelector<HTMLButtonElement>('.customer-form-page button[type=submit]')!;
 async function openPage() {
+  const cached = readMasterSnapshot('/api/outlets/shop/customers', 'mock-token');
   releaseGet = undefined; nav('Customer').click(); await until(() => releaseGet, 'list request');
-  assert(document.querySelector('.customers-page [role=status]')?.textContent?.includes('Loading'), 'Shows loading while customers are fetched');
+  if (cached) assert(!document.querySelector('.customers-page [role=status]')?.textContent?.includes('Loading'), 'Recent customers remain visible while the fresh list loads');
+  else assert(document.querySelector('.customers-page [role=status]')?.textContent?.includes('Loading'), 'First customer load shows progress');
   releaseGet!(); await pause();
 }
 function checkLayout() {
@@ -106,7 +109,10 @@ void (async () => {
   assert(add().textContent?.includes('Add Customer') && document.querySelector('.customer-state')?.textContent?.includes('No customers found'), 'Empty lists clearly offer Add Customer');
   add().click(); await until(form, 'empty add'); document.querySelector<HTMLButtonElement>('[aria-label="Close customer form"]')!.click(); await pause();
   assert(!form(), 'Cancel returns to the customer list');
-  nav('Dashboard').click(); await pause(); getStatus = 503; await openPage(); await until(() => document.querySelector('.customer-state [role=alert]'), 'load failure');
+  nav('Dashboard').click(); await pause(); getStatus = 503; await openPage();
+  // A temporary server error is retried once automatically before it is reported.
+  releaseGet = undefined; await until(() => releaseGet, 'automatic retry'); releaseGet!();
+  await until(() => document.querySelector('.customer-state [role=alert]'), 'load failure');
   assert(!document.querySelector('.customers-table-scroll') && add().disabled, 'Fetch failure shows an error without stale results');
   getStatus = 200; releaseGet = undefined; document.querySelector<HTMLButtonElement>('.customer-state button')!.click();
   await until(() => releaseGet, 'retry list'); releaseGet!(); await until(() => document.querySelector('.customer-state h2'), 'retry completed');

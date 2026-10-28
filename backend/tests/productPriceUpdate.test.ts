@@ -12,6 +12,7 @@ const path = 'OUTLET/outlet/PRODUCT/p1';
 function fixture(priceTable: unknown = '{"default price":80,"AC Table price":30,"TABLE price":80}') {
   const records = new Map<string, Record<string, unknown>>([
     ['USER_PROFILE/user', { active: true, outlets: ['outlet'] }],
+    ['OUTLET/outlet/PREMISES/non-ac', { name: 'Non AC' }],
     [path, { name: 'MASALA PAPAD', code: '1', price: 80, mrpPrice: 90, currentStock: 12, barcode: 'b', priceTable, custom: { keep: true } }],
     ['OUTLET/foreign/PRODUCT/p1', { name: 'Foreign', priceTable: '{"default price":1}' }],
   ]);
@@ -21,7 +22,7 @@ function fixture(priceTable: unknown = '{"default price":80,"AC Table price":30,
     async runTransaction(callback: (transaction: unknown) => Promise<unknown>) {
       const pending: typeof updates = [];
       const result = await callback({
-        get: async (ref: Ref) => { reads.push(ref.path); return { exists: records.has(ref.path), data: () => records.get(ref.path) }; },
+        get: async (ref: Ref) => { reads.push(ref.path); return { exists: records.has(ref.path), data: () => records.get(ref.path), docs: [...records].filter(([path]) => path.startsWith(`${ref.path}/`)).map(([path, fields]) => ({ id: path.split('/').at(-1), data: () => fields })) }; },
         update: (ref: Ref, fields: Record<string, unknown>) => pending.push({ path: ref.path, fields }),
       });
       for (const update of pending) { records.set(update.path, { ...records.get(update.path), ...update.fields }); updates.push(update); }
@@ -82,4 +83,14 @@ test('unauthorized sessions, outlets and paths are rejected before product reads
   f.records.set('USER_PROFILE/user', { active: false, outlets: ['outlet'] });
   await rejects(updateProductPrices(f.db, 'outlet', 'p1', 'user', assigned, body), 403);
   assert.ok(f.reads.every(read => read.startsWith('USER_PROFILE/'))); assert.deepEqual(f.updates, []);
+});
+
+ test('missing configured premises prices can be added with optimistic conflict checks', async () => {
+  const f = fixture({ 'default price': 50 });
+  const body = { prices: { 'Non AC price': 70 }, expected: { 'Non AC price': null } };
+  await updateProductPrices(f.db, 'outlet', 'p1', 'user', assigned, body);
+  assert.deepEqual(f.records.get(path)!.priceTable, { 'default price': 50, 'Non AC price': 70 });
+  await updateProductPrices(f.db, 'outlet', 'p1', 'user', assigned, body);
+  await rejects(updateProductPrices(f.db, 'outlet', 'p1', 'user', assigned, { prices: { 'Non AC price': 80 }, expected: { 'Non AC price': null } }), 409);
+  await rejects(updateProductPrices(f.db, 'outlet', 'p1', 'user', assigned, { prices: { 'Foreign price': 80 }, expected: { 'Foreign price': null } }), 422);
 });

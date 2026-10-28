@@ -1,3 +1,4 @@
+import { OutletMasterDeleteButton } from './OutletMasterDeleteButton.tsx';
 import { useTimedNotice } from '../utils/useTimedNotice.ts';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { ArrowLeft, Plus, RefreshCw, Search, Store, X } from 'lucide-react';
@@ -162,10 +163,10 @@ export function PremisesPage({ outlet, token, onSessionExpired, onClose }: {
       {error ? <p role="alert" className="category-form-error">{error}<button type="button" className="btn-secondary" onClick={() => setReload(value => value + 1)}>Retry</button></p>
         : !data ? <p role="status">Loading premises…</p>
         : !visible.length ? <div className="premises-empty">{search ? 'No premises match your search.' : 'No premises created yet.'}</div>
-        : <div className="premises-list">{visible.map(row => <button type="button" className="premises-list-item" key={row.documentId} onClick={() => openEdit(row)} aria-label={`Edit premise ${text(row.fields.name)}`}>
+        : <div className="premises-list">{visible.map(row => <div className="premises-list-row" key={row.documentId}><button type="button" className="premises-list-item" key={row.documentId} onClick={() => openEdit(row)} aria-label={`Edit premise ${text(row.fields.name)}`}>
           <div><h2><span>{text(row.fields.code)})</span> {text(row.fields.name)}</h2><p>Type {text(row.fields.type)}</p></div>
           <div className="premises-list-count">No. of {row.fields.type === 'Room' ? 'Rooms' : row.fields.type === 'Bill' ? 'Bills' : 'Tables'}: <strong>{text(row.fields.tables)}</strong><small>Range starts at {text(row.fields.range)}</small></div>
-        </button>)}</div>}
+        </button><OutletMasterDeleteButton outletId={outlet.id} token={token} collection="premises" documentId={row.documentId} name={text(row.fields.name)} onSessionExpired={onSessionExpired} onDeleted={() => { setData(current => current ? { ...current, premises: current.premises.filter(premise => premise.documentId !== row.documentId) } : current); setNotice('Premises deleted successfully.'); }} /></div>)}</div>}
     </section>
   );
 }

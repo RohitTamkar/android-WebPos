@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { ProductCreationError } from '../../backend/src/productCreation.js';
 import { checkAuthorizedProductImport } from '../../backend/src/productImportValidation.ts';
 import ts from 'typescript';
+import { PRODUCT_COLUMNS, parseProductCsv, namedPremisesHeaders } from '../src/pages/productCsvPreview.ts';
 import { createInMemoryProductImportQuota, ProductImportQuotaError, PRODUCT_UPLOAD_WINDOW_MS } from '../../backend/src/productImportQuota.ts';
 
 // Execute only the actual confirmation route. Do not load the server, Firebase,
@@ -29,11 +30,17 @@ function fixture({ status = 200, writesEnabled = true, persist } = {}) {
   const authorizations = [];
   const dependencies = {
     readAccessToken: req => req.user ? { profileDocId: req.user } : null,
-    checkAuthorizedProductImport: async (profile, outlet, file, deps, acceptAttempt) => {
-      authorizations.push({ profile, outlet, file });
+    checkAuthorizedProductImport: async (profile, outlet, file, deps, acceptAttempt, mode = 'standard') => {
+      authorizations.push({ profile, outlet, file, mode });
       if (!profile) return { status: 401, body: { success: false, message: 'Unauthorized' } };
       if (status !== 403) acceptAttempt?.();
       if (status !== 200) return { status, body: { success: false, message: 'Rejected before acceptance' } };
+      if (mode === 'premises') {
+        try {
+          const preview = parseProductCsv(file, 'premises');
+          if (preview.headerErrors.length || !namedPremisesHeaders(preview.headers).length || preview.rows.some(row => row.errors.length)) return { status: 422, body: { success: false } };
+        } catch { return { status: 422, body: { success: false } }; }
+      }
       return { status: 200, body: { data: { canUpload: true, documents: [{ rowNumber: 2, fields: { code: 1 } }] } } };
     },
     productImportDependencies: () => ({}),
@@ -297,7 +304,7 @@ test('standard and premises import endpoints use one combined two-attempt outlet
     for (const type of types) {
       const response = await f.request('identical-content', { type });
       assert.equal(response.status, type === 'premises' ? 422 : 200);
-      if (type === 'premises') assert.match(response.body.message, /cannot be imported.*mapped/);
+      if (type === 'premises') assert.equal(response.body.success, false);
     }
     for (const type of ['standard', 'premises']) {
       const response = await f.request('identical-content', { type, filename: 'renamed-copy.csv', user: 'another-user' });
@@ -357,4 +364,16 @@ test('premises route casing and trailing slashes cannot fall back to the standar
     assert.equal((await f.request('standard-shaped-file', { type: 'premises', routePath })).status, 429);
     assert.equal(f.writes.length, 1);
   }
+});
+
+
+test('named premises confirmation routes through the premises mode and shares the outlet quota', async () => {
+  const f = fixture();
+  const file = [[...PRODUCT_COLUMNS, 'AC Table', 'Non AC Table'],
+    ['Product', 'Local', '20', '20', '0', '0', 'Food', '1', '0', '0', 'number', '0', 'no', '', '25.50', '0']].map(row => row.join(',')).join('\n');
+  assert.equal((await f.request(file, { type: 'premises' })).status, 200);
+  assert.equal(f.authorizations[0].mode, 'premises');
+  assert.equal(f.writes[0].at(-1), 'premises');
+  assert.equal((await f.request('standard')).status, 200);
+  assert.equal((await f.request(file, { type: 'premises' })).status, 429);
 });

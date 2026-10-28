@@ -5,7 +5,13 @@ export const PRODUCT_COLUMNS = [
 ];
 export const PREMISES_PRODUCT_COLUMNS = [...PRODUCT_COLUMNS, 'Premises'];
 export const PREMISES_TEMPLATE_COLUMNS = [...PRODUCT_COLUMNS, 'Premises 1', 'Premises 2', 'Premises 3'];
-export const PREMISES_IMPORT_LIMITATION = 'Premises prices can be previewed, but saving is unavailable until the price columns are mapped to the outlet’s configured premises. No premises prices will be saved.';
+export const PREMISES_IMPORT_LIMITATION = 'Legacy Premises and numbered Premises columns remain preview-only. Use named premises price columns, such as AC Table and Non AC Table, to upload.';
+// Named price columns are distinct from the legacy, unmapped premises formats.
+export function namedPremisesHeaders(headers) {
+    const names = headers.slice(PRODUCT_COLUMNS.length).map(name => name.trim().replace(/\s+/gu, ' '));
+    return names.length && names.every(name => name && !/^premises?(?:\s*\d+)?$/i.test(name)) ? names : [];
+}
+export const premisesPriceKey = (name) => /\bprice$/i.test(name) ? name : `${name} price`;
 export const MAX_FILE_BYTES = 5 * 1024 * 1024;
 export const MAX_PRODUCT_ROWS = 10000;
 const MAX_CELL_LENGTH = 20000;
@@ -139,6 +145,9 @@ export function parseProductCsv(source, mode = 'standard') {
             const match = /^premises?\s*([1-9]\d*)$/i.exec(normalizeHeader(header));
             return match && Number(match[1]) === index + 1;
         });
+    const namedPremises = mode === 'premises' ? namedPremisesHeaders(headers) : [];
+    if (namedPremises.length)
+        expectedColumns = [...PRODUCT_COLUMNS, ...namedPremises];
     if (numberedPremises)
         expectedColumns = [...PRODUCT_COLUMNS, ...premisesHeaders.map((_, index) => `Premises ${index + 1}`)];
     // Check original parsed data before trimming, skipping blank rows or validating.
@@ -159,8 +168,8 @@ export function parseProductCsv(source, mode = 'standard') {
                     continue;
                 if (character === ' ' && (NAME_COLUMNS.includes(columnIndex) || mode === 'premises' && columnIndex >= PRODUCT_COLUMNS.length))
                     continue;
-                // Numbered premises columns contain prices; decimal points are valid there.
-                if (numberedPremises && columnIndex >= PRODUCT_COLUMNS.length && character === '.' && NUMBER_PATTERN.test(cell.trim()))
+                // Named and numbered premises columns contain prices; decimal points are valid there.
+                if ((numberedPremises || namedPremises.length > 0) && columnIndex >= PRODUCT_COLUMNS.length && character === '.' && NUMBER_PATTERN.test(cell.trim()))
                     continue;
                 if (!whitespace && !PROHIBITED_CELL_CHARACTERS.has(character))
                     continue;
@@ -173,15 +182,24 @@ export function parseProductCsv(source, mode = 'standard') {
     }
     if (first < 0)
         throw new Error('The selected file contains only blank rows.');
-    const trimmed = headers.map(header => {
+    const trimmed = headers.map((header, index) => {
+        if (namedPremises.length && index >= PRODUCT_COLUMNS.length)
+            return namedPremises[index - PRODUCT_COLUMNS.length];
         let normalized = normalizeHeader(header);
         if (numberedPremises)
             normalized = normalized.replace(/^premises?\s*(\d+)$/, 'premises $1');
         return expectedColumns.find(column => column.toLowerCase() === normalized) ?? header.trim();
     });
     const headerErrors = [];
-    if (mode === 'premises' && premisesHeaders.length > 1 && !numberedPremises) {
+    if (mode === 'premises' && premisesHeaders.length > 1 && !numberedPremises && !namedPremises.length) {
         headerErrors.push('After Search Code, use Premises 1, Premises 2, Premises 3, and further columns in numbered order.');
+    }
+    if (namedPremises.length) {
+        const keys = namedPremises.map(name => premisesPriceKey(name).toLowerCase());
+        if (namedPremises.some(name => name.length > 200) || keys.includes('default price'))
+            headerErrors.push('Premises names must be at most 200 characters and cannot replace Default Price.');
+        if (new Set(keys).size !== keys.length)
+            headerErrors.push('Duplicate premises names or price columns. Use each premises only once.');
     }
     const missing = expectedColumns.filter(column => !trimmed.includes(column));
     const unexpected = trimmed.filter(header => !expectedColumns.some(column => column === header));
@@ -248,10 +266,10 @@ export function parseProductCsv(source, mode = 'standard') {
                     const label = expectedColumns[column];
                     if (!premises)
                         row.errors.push({ column: label, message: `${label} must not be blank.` });
-                    else if (numberedPremises && (!NUMBER_PATTERN.test(premises) || !Number.isFinite(Number(premises)) || Number(premises) < 0)) {
+                    else if ((numberedPremises || namedPremises.length > 0) && (!NUMBER_PATTERN.test(premises) || !Number.isFinite(Number(premises)) || Number(premises) < 0)) {
                         row.errors.push({ column: label, message: 'Enter a finite, non-negative selling price for this premises.' });
                     }
-                    else
+                    else if (!namedPremises.length)
                         row.warnings.push({ column: label, message: numberedPremises
                                 ? `Cannot map selling price ${JSON.stringify(premises)} in ${label} to a configured premises. Confirmation is disabled.`
                                 : `Cannot verify premises ${JSON.stringify(premises)} for this outlet: no premises lookup is available. Confirmation is disabled.` });

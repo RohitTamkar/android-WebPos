@@ -7,7 +7,8 @@ async function run(path = '/dashboard', options: { method?: string; missing?: bo
   const calls: any[] = []; let next = false;
   const guard = createWebUsageGuard({ enabled: true, readToken: () => options.anonymous ? null : { profileDocId: 'signed' },
     db: () => { calls.push('db'); return {} as any; }, assigned: () => [],
-    operate: async (...args: any[]) => { calls.push(args); if (options.error) throw options.error; return {} as any; } });
+    operate: async (...args: any[]) => { calls.push(args); if (options.error) throw options.error; return {} as any; },
+    checkAllowance: async (...args: any[]) => { calls.push(['destination', args[1], args[2]]); return {} as any; } });
   const req: any = { path, params: { outletId: 'outlet' }, method: options.method ?? 'GET', header: (name: string) =>
     name === 'x-web-usage-outlet' ? options.context : options.missing ? undefined : name === 'x-web-usage-session' ? 'session' : 'generation' };
   const res: any = { statusCode: 200, setHeader() {}, status(code: number) { this.statusCode = code; return this; }, json(value: any) { this.body = value; } };
@@ -38,4 +39,5 @@ test('recovery/status/release remain available, cross-outlet writes cannot use a
   assert.equal((await run('/product-image-assignments', { method: 'POST', context: 'other' })).next, false);
   assert.equal((await run('/employees', { context: 'other' })).next, false);
   const preview = await run('/categories', { context: 'source' }); assert.equal(preview.next, true); assert.equal(preview.calls[1][1], 'source');
+  assert.deepEqual(preview.calls.at(-1), ['destination', 'outlet', 'signed']);
 });

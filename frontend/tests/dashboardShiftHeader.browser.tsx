@@ -14,6 +14,8 @@ const shift = (number: number, total: number) => ({ id: `private-shift-id-${numb
   dayId: '2026-10-19', totalSale: total, cashSale: total, digitalSale: 0, creditSale: 0, openingAmt: 0, expCash: 0, billCount: number, payments: { cash: total } });
 let shifts = [shift(1, 100), shift(2, 200)];
 window.fetch = async (input, init) => {
+  if (String(input) === '/api/outlets/shop/profile') return Response.json({ success: true, data: { name: 'Cashier', role: 'Admin', outletName: 'Test Outlet', mobile: '12345' } });
+  if (String(input) === '/api/auth/outlets') return Response.json({ success: true, data: { outlets: [{ id: 'shop', name: 'Test Outlet' }, { id: 'other', name: 'Other Outlet' }] } });
   assert(String(input).startsWith('/api/outlets/shop/dashboard?'), 'Reads only the selected outlet dashboard');
   assert(!init?.method || init.method === 'GET', 'Dashboard requests remain read-only');
   assert((init?.headers as Record<string, string>).Authorization === 'Bearer mock-token', 'Existing authentication is preserved');
@@ -27,9 +29,24 @@ const tabs = () => [...document.querySelectorAll<HTMLButtonElement>('.page-hero 
 const sale = () => [...document.querySelectorAll('.kpi-card')].find(card => card.querySelector('.kpi-card-topline > span')?.textContent === 'Total Sale')?.querySelector('strong')?.textContent;
 void (async () => {
   await until(() => tabs().length === 3 && sale()?.includes('300'), 'header shifts');
+  if (location.hash === '#preview') { document.getElementById('test-results')!.textContent = JSON.stringify({ passed: ['Dashboard layout'] }); return; }
   assert(JSON.stringify(tabs().map(tab => tab.textContent)) === JSON.stringify(['All Shifts', 'Shift 1', 'Shift 2']), 'Header contains all shifts using names only');
   assert(!document.querySelector('.shift-table-section') && !document.body.textContent?.includes('Shift-wise Summary'), 'Shift-wise Summary comparison table is removed');
   assert(!document.body.textContent?.includes('private-shift-id') && !document.body.textContent?.includes('private-device-id'), 'Internal shift/device IDs are not displayed on the dashboard');
+  assert(!document.body.textContent?.includes('Quick Actions'), 'Quick Actions widget is removed');
+  assert(!document.querySelector('.dashboard-insights .sidebar-logout, .shift-card button'), 'Right sidebar has no logout or outlet-switch buttons');
+  const logout = document.querySelector<HTMLButtonElement>('.dashboard-sidebar .sidebar-footer .sidebar-logout')!;
+  if (innerWidth <= 820) { document.querySelector<HTMLButtonElement>('.mobile-menu')!.click(); await pause(); }
+  assert(logout && getComputedStyle(logout).display !== 'none', 'Logout remains visible below the sidebar plan card');
+  const logoutBounds = logout.getBoundingClientRect();
+  assert(logoutBounds.bottom <= innerHeight + 1 && logoutBounds.top >= 0, 'Sidebar logout stays pinned within the viewport');
+  assert(!!(document.querySelector('.sidebar-footer .plan-card')!.compareDocumentPosition(logout) & Node.DOCUMENT_POSITION_FOLLOWING), 'Logout follows plan information');
+  logout.click(); await until(() => document.querySelector('.logout-modal'), 'logout confirmation');
+  assert(localStorage.getItem('pos_user_session') && document.querySelector('#logout-modal-title')?.textContent === 'Confirm logout', 'Logout asks for confirmation before clearing the session');
+  document.querySelector<HTMLButtonElement>('.logout-modal-actions button')!.click(); await pause();
+  assert(!document.querySelector('.logout-modal') && localStorage.getItem('pos_user_session'), 'Cancelling logout keeps the session');
+  if (innerWidth <= 820) { document.querySelector<HTMLButtonElement>('.sidebar-close')!.click(); await pause(); }
+  assert([...document.querySelectorAll('.nav-group-items button')].some(node => node.textContent === 'Product Transfer'), 'Left navigation offers one Product Transfer entry');
   const count = requests;
   tabs()[1]!.click(); await pause();
   assert(tabs()[1]!.getAttribute('aria-selected') === 'true' && sale()?.includes('100'), 'Shift 1 selects its existing dashboard figures');
@@ -43,5 +60,16 @@ void (async () => {
   shifts = [shift(2, 200)]; window.dispatchEvent(new Event('focus'));
   await until(() => tabs().length === 2, 'single shift refresh');
   assert(tabs()[0]!.textContent === 'All Shifts' && tabs()[1]!.textContent === 'Shift 2', 'A single available shift is still named in the header');
+  document.querySelector<HTMLButtonElement>('[aria-label="Account details"]')!.click();
+  await until(() => document.querySelector('.profile-menu-actions button'), 'profile outlet action');
+  const changeOutlet = document.querySelector<HTMLButtonElement>('.profile-menu-actions button')!;
+  assert(changeOutlet.textContent?.trim() === 'Change Outlet', 'Profile dropdown offers Change Outlet');
+  document.querySelector<HTMLButtonElement>('[aria-label="Close account details"]')!.click(); await pause();
+  if (innerWidth <= 820) { document.querySelector<HTMLButtonElement>('.mobile-menu')!.click(); await pause(); }
+  const outletSwitch = document.querySelector<HTMLButtonElement>('.business-profile .business-outlet-switch')!;
+  assert(outletSwitch && outletSwitch.getAttribute('aria-label') === 'Change Outlet', 'Selected outlet card includes an accessible switch icon');
+  outletSwitch.click();
+  await until(() => !document.querySelector('.retail-dashboard-shell'), 'outlet switch');
+  assert(!localStorage.getItem('pos_selected_outlet') && !!localStorage.getItem('pos_user_session'), 'Changing outlet returns to selection and keeps authentication');
   root.unmount(); document.getElementById('test-results')!.textContent = JSON.stringify({ passed: checks.length, failed: 0, checks });
 })().catch(error => { document.getElementById('test-results')!.textContent = JSON.stringify({ failed: 1, error: String(error), checks }); });

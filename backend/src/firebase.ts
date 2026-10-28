@@ -2,10 +2,16 @@ import { applicationDefault, cert, getApp, getApps, initializeApp } from "fireba
 import type { App, AppOptions } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
+import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import { createPrivateKey } from "node:crypto";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+// Each Cloud Storage download stacks node-fetch, teeny-request and Storage
+// pipelines on one response body (11 error/close listeners). That is expected,
+// not a leak, but trips Node's default limit of 10 on every logo read.
+EventEmitter.defaultMaxListeners = 15;
 
 let firebaseApp: App | undefined;
 

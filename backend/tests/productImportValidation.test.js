@@ -74,7 +74,7 @@ test('different Price 1, unsupported units, nonzero stock and missing numerics b
     }
 });
 test('missing, conflicting or ambiguous category and tax lookups reject the complete file', () => {
-    for (const cats of [[], [{ ...categories[0], categoryNo: 2 }], [...categories, ...categories]]) {
+    for (const cats of [[], [{ ...categories[0], name: 'Other' }], [...categories, ...categories]]) {
         const result = validateProductImport(source(), cats, taxes);
         assert.equal(result.canUpload, false);
         assert.equal(result.documents.length, 0);

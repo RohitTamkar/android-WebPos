@@ -65,7 +65,10 @@ const select = (headers: readonly string[], blank = false) => {
 };
 void (async () => {
   await until(() => document.querySelector('.upload-excel-options'), 'page');
-  assert(!!document.querySelector('summary')?.textContent?.includes('Demo Excel Sheet'), 'Demo Excel Sheet section appears on the page');
+  assert(!button('Download Standard Template'), 'Templates are not on the upload option screen');
+  [...document.querySelectorAll<HTMLButtonElement>('.upload-excel-option')].find(button => button.textContent?.includes('Excel Sheet Instructions'))!.click();
+  await until(() => document.querySelector('.excel-sheet-instructions'), 'instruction templates');
+  assert(!!document.querySelector('dialog[open] summary')?.textContent?.includes('Demo Excel Sheet'), 'Demo Excel Sheet appears inside instructions');
   assert(!!button('Download Standard Template') && !!button('Download Premises-Wise Template'), 'both template download options exist');
   document.querySelector('details')!.open = true;
   for (const [index, label] of ['Download Standard Template', 'Download Premises-Wise Template'].entries()) {
@@ -77,6 +80,8 @@ void (async () => {
   assert(downloads.map(download => download.filename).join(',') === 'Product_Upload_Demo.xlsx,Premises_Wise_Product_Upload_Demo.xlsx', 'download filenames match the requested names');
   assert(apiCalls === 0, 'template downloads do not call the import API or consume attempts');
 
+  document.querySelector<HTMLButtonElement>('[aria-label="Close information"]')!.click();
+  await until(() => !document.querySelector('dialog[open]'), 'instructions closed');
   [...document.querySelectorAll<HTMLButtonElement>('.upload-excel-option')].find(button => button.textContent?.includes('Upload with Premises'))!.click();
   await until(() => document.querySelector('input[type=file]'), 'quota check');
   assert(document.querySelector('.upload-excel-dialog .csv-upload-preview')?.textContent?.includes('Upload attempts remaining for this outlet: 1'), 'remaining attempts come from the backend on opening');

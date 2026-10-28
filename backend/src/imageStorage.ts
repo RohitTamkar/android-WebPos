@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { FieldValue, type Firestore, type DocumentSnapshot } from 'firebase-admin/firestore';
 
-type StorageBucket = { file(path: string): any };
+type StorageBucket = { file(path: string, options?: { generation?: string; preconditionOpts?: { ifGenerationMatch: string | number } }): any };
 export type MasterImageStorageBucket = StorageBucket;
 
 export type MasterImageCollection = 'PRODUCT' | 'CATEGORY';
@@ -98,10 +98,105 @@ function isReadableImagePath(path: unknown, kind: MasterImageKind, outletId: str
       && productImageStoragePath(path.slice('product_images/'.length)) === path);
 }
 
+// Recently read images, reused only while Storage still reports the same object
+// generation, so a replaced file is never served from memory.
+const IMAGE_CACHE_BYTES = 64 * 1024 * 1024;
+const imageCache = new Map<string, { generation: string; bytes: Buffer; contentType: ReturnType<typeof detectImage> }>();
+let imageCacheBytes = 0;
+
+function rememberStorageImage(imagePath: string, generation: string, bytes: Buffer, contentType: ReturnType<typeof detectImage>) {
+  const old = imageCache.get(imagePath);
+  if (old) { imageCacheBytes -= old.bytes.length; imageCache.delete(imagePath); }
+  if (!generation || bytes.length > IMAGE_CACHE_BYTES / 8) return;
+  imageCache.set(imagePath, { generation, bytes, contentType }); imageCacheBytes += bytes.length;
+  while (imageCacheBytes > IMAGE_CACHE_BYTES) {
+    const [oldest, entry] = imageCache.entries().next().value!;
+    imageCacheBytes -= entry.bytes.length; imageCache.delete(oldest);
+  }
+}
+
 async function readStorageImage(bucket: StorageBucket, imagePath: string) {
-  const [url] = await bucket.file(imagePath).getSignedUrl({ action: 'read', expires: Date.now() + 60_000 });
+  const file = bucket.file(imagePath);
+  // Without a known generation the image is read normally and not cached.
+  const generation: Promise<string> = Promise.resolve().then(() => file.getMetadata())
+    .then(([metadata]: [{ generation?: unknown }]) => String(metadata?.generation ?? ''), () => '');
+  const cached = imageCache.get(imagePath);
+  if (cached && cached.generation === await generation) {
+    imageCache.delete(imagePath); imageCache.set(imagePath, cached); // Most recently used last.
+    return { bytes: cached.bytes, contentType: cached.contentType };
+  }
+  const [url] = await file.getSignedUrl({ action: 'read', expires: Date.now() + 60_000 });
   const bytes = await fetchImageBytes(url);
-  return { bytes, contentType: detectImage(bytes) };
+  const contentType = detectImage(bytes);
+  rememberStorageImage(imagePath, await generation, bytes, contentType);
+  return { bytes, contentType };
+}
+
+export type OutletLogoVariant = 'header' | 'footer';
+export function outletLogoPath(outletName: string, outletId: string, variant: OutletLogoVariant = 'header') {
+  validateRecordIds(outletId, outletId);
+  if (variant !== 'header' && variant !== 'footer') throw new ImageStorageError(400, 'Select Header Logo or Footer Logo.');
+  if (!outletName.trim() || outletName.length > 200 || (outletName.includes('/') || outletName.includes('\\') || [...outletName].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127))
+    || outletName === '.' || outletName === '..') throw new ImageStorageError(404, 'No outlet logo is available.');
+  // Existing Android object names: preserve spaces exactly and never append an extension.
+  return `images/${outletName}/${variant === 'footer' ? 'footer/' : ''}${outletId}`;
+}
+
+function logoStorageError(error: unknown): never {
+  if (error instanceof ImageStorageError) throw error;
+  const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
+  if (code === '412') throw new ImageStorageError(409, 'This logo changed elsewhere. Reload it before trying again.');
+  if (code === '404') throw new ImageStorageError(404, 'No logo is saved for this outlet.');
+  throw new ImageStorageError(503, 'Logo Storage is unavailable or access was denied. Please try again.');
+}
+
+export async function readOutletLogo(bucket: StorageBucket, outletName: string, outletId: string, variant: OutletLogoVariant = 'header', onGeneration?: (generation: string) => void) {
+  const path = outletLogoPath(outletName, outletId, variant);
+  try {
+    const [metadata] = await bucket.file(path).getMetadata();
+    const generation = String(metadata.generation ?? '');
+    if (!/^[1-9]\d*$/.test(generation)) throw new ImageStorageError(503, 'The logo version could not be verified.');
+    onGeneration?.(generation);
+    // Stream the pinned object directly through the Admin SDK: no signed-URL
+    // signing request or second HTTP client. Bound decoded bytes and total time.
+    if (Number(metadata.size) > MAX_IMAGE_BYTES) throw new ImageStorageError(413, 'Images must be 5 MB or smaller.');
+    const stream = bucket.file(path, { generation }).createReadStream({ validation: 'crc32c' });
+    const timeout = setTimeout(() => stream.destroy(new ImageStorageError(503, 'Loading the logo timed out.')), 15_000);
+    const chunks: Buffer[] = [];
+    let size = 0;
+    try {
+      for await (const chunk of stream) {
+        const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        size += bytes.length;
+        if (size > MAX_IMAGE_BYTES) { stream.destroy(); throw new ImageStorageError(413, 'Images must be 5 MB or smaller.'); }
+        chunks.push(bytes);
+      }
+      const bytes = Buffer.concat(chunks);
+      return { bytes, contentType: detectImage(bytes), generation };
+    } finally { clearTimeout(timeout); stream.destroy(); }
+  } catch (error) { return logoStorageError(error); }
+}
+
+export async function saveOutletLogo(bucket: StorageBucket, outletName: string, outletId: string, variant: OutletLogoVariant,
+  bytes: Buffer, expectedGeneration: string, declaredType: string) {
+  const path = outletLogoPath(outletName, outletId, variant);
+  if (!/^(0|[1-9]\d*)$/.test(expectedGeneration)) throw new ImageStorageError(422, 'Load the logo before uploading.');
+  const contentType = detectImage(bytes);
+  if (contentType !== declaredType) throw new ImageStorageError(415, 'Choose a valid JPEG, PNG, or WebP image.');
+  try {
+    await bucket.file(path).save(bytes, { resumable: false, validation: 'crc32c',
+      preconditionOpts: { ifGenerationMatch: expectedGeneration }, metadata: { contentType, cacheControl: 'private, no-store' } });
+    return { saved: true };
+  } catch (error) { return logoStorageError(error); }
+}
+
+export async function removeOutletLogo(bucket: StorageBucket, outletName: string, outletId: string, variant: OutletLogoVariant, expectedGeneration: string) {
+  const path = outletLogoPath(outletName, outletId, variant);
+  if (!/^[1-9]\d*$/.test(expectedGeneration)) throw new ImageStorageError(422, 'Load the existing logo before removing it.');
+  try {
+    await bucket.file(path, { preconditionOpts: { ifGenerationMatch: expectedGeneration } }).delete({ ignoreNotFound: true });
+    return { removed: true };
+  } catch (error) { return logoStorageError(error); }
 }
 
 function masterImageCopyPath(kind: MasterImageKind, sourceOutletId: string, sourceDocumentId: string,

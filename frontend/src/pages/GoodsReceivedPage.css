@@ -5,7 +5,7 @@
 .goods-received-page .goods-supplier-select label { flex: 0 1 440px; }
 .goods-received-page .goods-supplier-select :is(select, button) { min-height: 44px; }
 .goods-received-page .goods-add-supplier { color: var(--blue); border-color: color-mix(in srgb, var(--blue) 25%, var(--line)); background: color-mix(in srgb, var(--blue) 4%, var(--card)); }
-.goods-received-page .goods-products-heading { padding: 24px 24px 16px; }
+.goods-received-page .goods-products-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 24px 24px 16px; }
 .goods-received-page .goods-products-heading h2 { margin: 0; font-size: 17px; font-weight: 650; }
 .goods-received-page .goods-products-heading p { margin: 6px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .goods-received-page .goods-category-tabs { display: flex; gap: 8px; overflow-x: auto; padding: 0 24px 20px; }
@@ -66,3 +66,5 @@
   .goods-supplier-dialog { padding: 20px; }
   .goods-supplier-form-grid { grid-template-columns: 1fr; gap: 16px; }
 }
+
+.goods-received-page .goods-receipt-total { margin-right: auto; align-self: center; font-size: 15px; font-variant-numeric: tabular-nums; }

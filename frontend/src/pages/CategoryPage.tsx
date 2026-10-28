@@ -1,7 +1,9 @@
+import { readMasterSnapshot, masterSnapshotRevision, rememberMasterSnapshot } from '../utils/masterSnapshots.ts';
 import { useTimedNotice } from '../utils/useTimedNotice.ts';
 import { EditCategoryForm, CategoryUpdatedPopup } from './EditCategoryForm.tsx';
 import { DeleteConfirmation } from './DeleteConfirmation.tsx';
 import { DeleteAllError, deleteAllRecords } from './deleteAllApi.ts';
+import { loadProductList } from './productListApi.ts';
 import { SuccessPopup } from './SuccessPopup.tsx';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
@@ -29,7 +31,7 @@ export interface Category {
   regionalName: string;
   dayType: string;
   status: 'Active' | 'Inactive' | '—';
-  productCount: number;
+  productCount: number | null;
   color: string;
   createdAt: string;
   imagePath?: string;
@@ -43,7 +45,7 @@ interface FirebaseCategory {
   regionalName: string;
   dayType: string;
   active: boolean | null;
-  productCount: number;
+  productCount?: number;
   createdAt: string;
   imagePath?: string;
 }
@@ -67,7 +69,7 @@ function toCategory(category: FirebaseCategory, index: number): Category {
     regionalName: category.regionalName,
     dayType: category.dayType,
     status: category.active === null ? '—' : category.active ? 'Active' : 'Inactive',
-    productCount: category.productCount,
+    productCount: category.productCount ?? null,
     color: PRESET_COLORS[index % PRESET_COLORS.length] ?? '#3567f0',
     createdAt: category.createdAt ? category.createdAt.slice(0, 10) : '—',
     imagePath: category.imagePath,
@@ -113,9 +115,20 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
   // Load existing categories without modifying their Firestore documents.
   useEffect(() => {
     const controller = new AbortController();
-    setLoading(true);
+    const url = `/api/outlets/${encodeURIComponent(outlet.id)}/categories`;
+    const cached = readMasterSnapshot<FirebaseCategory[]>(url, token);
+    const revision = masterSnapshotRevision();
+    if (cached) setCategories(cached.map(toCategory));
+    setLoading(!cached);
     setError('');
-    fetch(`/api/outlets/${encodeURIComponent(outlet.id)}/categories`, {
+    // Names arrive quickly; product counts take longer, so show the list first.
+    let namesShown = false;
+    if (!cached) void loadProductList<FirebaseCategory>(url, token, controller.signal, 'categories', true).then(names => {
+      if (controller.signal.aborted || revision !== masterSnapshotRevision()) return;
+      setCategories(current => [...new Map([...names.map(toCategory), ...current].map(category => [category.id, category])).values()]);
+      namesShown = true; setLoading(false);
+    }, () => { /* The full request below reports errors. */ });
+    fetch(url, {
       headers: { Authorization: `Bearer ${token}` }, signal: controller.signal,
     })
       .then(async response => {
@@ -126,7 +139,13 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
           throw new Error('Your session has expired.');
         }
         if (!response.ok || !result.data) throw new Error(result.message || 'Unable to load categories.');
-        setCategories(result.data.map(toCategory));
+        if (revision !== masterSnapshotRevision()) { setReloadKey(value => value + 1); return; }
+        rememberMasterSnapshot(url, token, result.data, revision);
+        if (namesShown) {
+          // Fill counts in without discarding categories added or edited meanwhile.
+          const counts = new Map(result.data.map(category => [category.id, category.productCount ?? null]));
+          setCategories(current => current.map(category => ({ ...category, productCount: counts.get(category.id) ?? category.productCount })));
+        } else setCategories(result.data.map(toCategory));
       })
       .catch(requestError => {
         if (!controller.signal.aborted) setError((requestError as Error).message);
@@ -154,7 +173,7 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
     const total = categories.length;
     const active = categories.filter((c) => c.status === 'Active').length;
     const inactive = categories.filter((c) => c.status === 'Inactive').length;
-    const totalItems = categories.reduce((sum, c) => sum + c.productCount, 0);
+    const totalItems = categories.reduce((sum, c) => sum + (c.productCount ?? 0), 0);
     return { total, active, inactive, totalItems };
   }, [categories]);
 
@@ -380,7 +399,7 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
                   <td>
                     <span className="product-count-chip">
                       <Package size={14} color="#64748b" />
-                      {cat.productCount} items
+                      {cat.productCount ?? '…'} items
                     </span>
                   </td>
                   <td style={{ color: '#64748b', fontSize: '12px' }}>

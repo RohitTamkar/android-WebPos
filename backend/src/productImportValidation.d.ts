@@ -1,3 +1,4 @@
+import { type ProductUploadMode } from '../../frontend/src/pages/productCsvPreview.js';
 export declare const PRODUCT_IMPORT_WRITES_ENABLED = true;
 export interface ImportCategory {
     id: string;
@@ -19,7 +20,7 @@ export interface ImportDocument {
     sourceIdentity?: string;
 }
 export declare function productIdentity(fields: Record<string, unknown>): string;
-export declare function validateProductImport(source: string, categories: ImportCategory[], taxes?: ImportTax[]): {
+export declare function validateProductImport(source: string, categories: ImportCategory[], taxes?: ImportTax[], mode?: ProductUploadMode): {
     canUpload: boolean;
     categoryChecked: boolean;
     headerErrors: string[];
@@ -36,7 +37,7 @@ export interface ImportValidationDependencies {
     readTaxes: () => Promise<ImportTax[]>;
     readProducts: (outletId: string) => Promise<StoredImportProduct[]>;
 }
-export declare function checkAuthorizedProductImport(profileId: string | null, outletId: string, source: unknown, deps: ImportValidationDependencies, acceptAttempt?: () => void): Promise<{
+export declare function checkAuthorizedProductImport(profileId: string | null, outletId: string, source: unknown, deps: ImportValidationDependencies, acceptAttempt?: () => void, mode?: ProductUploadMode): Promise<{
     status: number;
     body: {
         success: boolean;

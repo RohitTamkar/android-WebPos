@@ -27,15 +27,20 @@ export function employeeDetails(documentId: string, fields: Record<string, unkno
 }
 
 export async function listOutletEmployees(db: Firestore, outletId: string, profileId: string | null, assigned: Assignments) {
-  requireProductOutlet(profileId, outletId, profileId ? (await db.collection('USER_PROFILE').doc(profileId).get()).data() : undefined, assigned);
+  if (!profileId) throw new ProductCreationError(401, 'Your session has expired. Please sign in again.');
+  if (!outletId || outletId.includes('/')) throw new ProductCreationError(400, 'A valid outlet is required.');
   const outlet = db.collection('OUTLET').doc(outletId);
-  if (!(await outlet.get()).exists) throw new ProductCreationError(404, 'Outlet not found.');
-  const [records, ...profileGroups] = await Promise.all([
+  // Read everything together; access is checked before any of it is returned.
+  const [profile, outletSnapshot, records, ...profileGroups] = await Promise.all([
+    db.collection('USER_PROFILE').doc(profileId).get(),
+    outlet.get(),
     outlet.collection('EMPLOYEE').get(),
     ...(['outlets', 'outletList', 'outletId'] as const).map(field => db.collection('USER_PROFILE')
       .where(field, field === 'outletId' ? '==' : 'array-contains', outletId)
       .select('name', 'active', 'outlets', 'outletList', 'outletId').get()),
   ]);
+  requireProductOutlet(profileId, outletId, profile.data(), assigned);
+  if (!outletSnapshot.exists) throw new ProductCreationError(404, 'Outlet not found.');
   const profiles = [...new Map(profileGroups.flatMap(group => group.docs).map(doc => [doc.id, doc])).values()];
   const employees = records.docs.map(doc => employeeDetails(doc.id, doc.data()))
     .sort((a, b) => (a.searchCode ?? Infinity) - (b.searchCode ?? Infinity) || a.name.localeCompare(b.name));

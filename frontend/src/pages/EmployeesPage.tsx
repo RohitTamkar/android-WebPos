@@ -1,3 +1,5 @@
+import { readMasterSnapshot, masterSnapshotRevision, rememberMasterSnapshot } from '../utils/masterSnapshots.ts';
+import { OutletMasterDeleteButton } from './OutletMasterDeleteButton.tsx';
 import { useTimedNotice } from '../utils/useTimedNotice.ts';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Plus, RefreshCw, Save, UserRoundCog, X } from 'lucide-react';
@@ -33,16 +35,21 @@ export function EmployeesPage({ outlet, token, onSessionExpired }: {
 
   useEffect(() => {
     const controller = new AbortController(); requests.current = controller;
-    setData(null); setError(''); setDraft(null); setNotice(''); setSelectedId(''); setSaving(false); busy.current = false;
+    const url = `/api/outlets/${encodeURIComponent(outlet.id)}/employees`;
+    const cached = readMasterSnapshot<EmployeeList>(url, token);
+    const revision = masterSnapshotRevision();
+    setData(cached ?? null); setError(''); setDraft(null); setNotice(''); setSelectedId(''); setSaving(false); busy.current = false;
     void (async () => {
       try {
-        const response = await fetch(`/api/outlets/${encodeURIComponent(outlet.id)}/employees`, {
+        const response = await fetch(url, {
           headers: { Authorization: `Bearer ${token}` }, cache: 'no-store', signal: controller.signal,
         });
         const result = await response.json() as { data?: EmployeeList; message?: string };
         if (controller.signal.aborted) return;
         if (response.status === 401) { onSessionExpired(); return; }
         if (!response.ok || !result.data) throw new Error(result.message || 'Unable to load employees.');
+        if (revision !== masterSnapshotRevision()) { setReload(value => value + 1); return; }
+        rememberMasterSnapshot(url, token, result.data, revision);
         setData(result.data);
       } catch (failure) { if (!controller.signal.aborted) setError((failure as Error).message); }
     })();
@@ -117,17 +124,18 @@ export function EmployeesPage({ outlet, token, onSessionExpired }: {
       </form></section>;
 
   return <section className="employees-page category-page-shell">
-    <div className="category-header-row"><div className="category-title-group"><h1><UserRoundCog size={22} /> Employees / Captain / Salesman</h1><p>{outlet.name} · Select a person from your outlet’s employee list.</p></div>
+    <div className="category-header-row"><div className="category-title-group"><h1><UserRoundCog size={22} /> Employees / Salesman</h1><p>{outlet.name} · Select a person from your outlet’s employee list.</p></div>
       <button type="button" className="btn-primary-add" disabled={!data || !!error} onClick={openAdd}><Plus size={16} /> Add {kind}</button></div>
-    <div className="employees-selection"><label htmlFor="employee-selection-kind">Select as</label><select id="employee-selection-kind" value={kind} disabled={!!draft} onChange={event => { setKind(event.target.value); setNotice(''); }}><option>Employee</option><option>Captain</option><option>Salesman</option></select>
+    <div className="employees-selection"><label htmlFor="employee-selection-kind">Select as</label><select id="employee-selection-kind" value={kind} disabled={!!draft} onChange={event => { setKind(event.target.value); setNotice(''); }}><option>Employee</option><option>Salesman</option></select>
       {selected && <p role="status">Selected {kind.toLowerCase()}: <strong>{selected.name}</strong> · {selected.mobile}</p>}</div>
     {notice && <p className="employees-notice" role="status">{notice}</p>}
     {error ? <div className="employees-state"><p role="alert">{error}</p><button type="button" className="btn-secondary" onClick={() => setReload(value => value + 1)}><RefreshCw size={16} /> Retry</button></div> : !data ? <p className="employees-state" role="status">Loading employees…</p> : !data.employees.length ?
       <div className="employees-state"><UserRoundCog size={28} /><h2>No employees found</h2><p>Add a {kind.toLowerCase()} to get started.</p><button type="button" className="btn-primary-add" onClick={openAdd}><Plus size={16} /> Add {kind}</button></div> :
-      <div className="employees-table-scroll"><table><thead><tr><th>Select</th><th>Name</th><th>Mobile</th><th>Search code</th><th>Balance</th><th>Joining date</th><th>User account</th></tr></thead><tbody>{data.employees.map(employee => <tr key={employee.documentId} className={selectedId === employee.documentId ? 'selected' : ''}>
+      <div className="employees-table-scroll"><table><thead><tr><th>Select</th><th>Name</th><th>Mobile</th><th>Search code</th><th>Balance</th><th>Joining date</th><th>User account</th><th>Actions</th></tr></thead><tbody>{data.employees.map(employee => <tr key={employee.documentId} className={selectedId === employee.documentId ? 'selected' : ''}>
         <td><input id={`employee-${employee.documentId}`} type="radio" name="selected-employee" aria-label={`Select ${employee.name}`} checked={selectedId === employee.documentId} onChange={() => setSelectedId(employee.documentId)} /></td>
         <td><label htmlFor={`employee-${employee.documentId}`}>{employee.name}</label></td><td>{employee.mobile || '—'}</td><td>{employee.searchCode ?? '—'}</td><td>{employee.balanceAmt || '0'}</td><td>{employee.dateOfJoining || '—'}</td>
         <td>{employee.userId ? data.userAccounts.find(user => user.userId === employee.userId)?.name || 'Assigned account' : 'Not assigned'}</td>
+        <td><OutletMasterDeleteButton outletId={outlet.id} token={token} collection="employees" documentId={employee.documentId} name={employee.name || 'Unnamed employee'} onSessionExpired={onSessionExpired} onDeleted={() => { setData(current => current ? { ...current, employees: current.employees.filter(row => row.documentId !== employee.documentId) } : current); if (selectedId === employee.documentId) setSelectedId(''); setNotice('Employee deleted successfully.'); }} /></td>
       </tr>)}</tbody></table></div>}
 
   </section>;

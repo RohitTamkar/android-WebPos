@@ -113,14 +113,18 @@ void (async () => {
   failIds.clear(); patches.length = 0;
   await click(button('Update'));
   await waitFor(() => document.querySelector('[aria-label="More options"]'), 'return to Products');
-  assert(!document.querySelector('.products-notice'), 'Completed update leaves no success banner');
+  await waitFor(() => document.querySelector('dialog[open].category-updated-popup'), 'centered success popup');
+  assert(document.querySelector('dialog[open]')!.textContent!.includes('Stockable & Weighable updated successfully'), 'Completed flag update shows success popup');
+  const rect = document.querySelector('dialog[open]')!.getBoundingClientRect();
+  assert(Math.abs(rect.left + rect.width / 2 - (window.visualViewport?.width ?? document.documentElement.clientWidth) / 2) < 3 && Math.abs(rect.top + rect.height / 2 - (window.visualViewport?.height ?? innerHeight) / 2) < 3, 'Success popup is centered on the visible screen');
+  await click(button('OK'));
   assert(JSON.stringify(patches) === JSON.stringify([{ id: 'p2', body: { weighable: false } }]), 'retry resends only failed product');
-  await waitFor(() => listLoads === 2, 'product list reloaded');
+  assert(listLoads === 1, 'Saved product responses update the list without an unnecessary reload');
   for (const [id, fields] of untouched) {
     const now = store.get(id)!;
     for (const key of ['name', 'code', 'price', 'currentStock', 'barcode', 'category']) assert(now[key] === fields[key], `${id}.${key} preserved`);
   }
-  results.push('Retry updates only remaining product, reloads list, and preserves unrelated fields');
+  results.push('Retry updates only remaining product, shows centered success, avoids reload and preserves unrelated fields');
 
   await openScreen(); await click(button('Update'));
   assert(document.querySelector('.products-notice')?.textContent === 'No changes to update.' && patches.length === 1, 'no-op update');

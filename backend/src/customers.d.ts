@@ -47,5 +47,20 @@ export declare function createOutletCustomer(db: Firestore, outletId: string, pr
     anniversaryDate: string;
     allowedCredit: boolean;
 }>;
+export declare function updateOutletCustomer(db: Firestore, outletId: string, documentId: string, profileId: string | null, assigned: Assignments, raw: unknown): Promise<{
+    documentId: string;
+    name: string;
+    contact: string;
+    altContact: string;
+    email: string;
+    gstNo: string;
+    address: string;
+    creditLimit: number;
+    dayLimit: number;
+    balance: number;
+    birthdayDate: string;
+    anniversaryDate: string;
+    allowedCredit: boolean;
+}>;
 export {};
 //# sourceMappingURL=customers.d.ts.map

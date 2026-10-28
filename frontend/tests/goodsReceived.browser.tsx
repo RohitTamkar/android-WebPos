@@ -37,8 +37,8 @@ window.fetch = async (url, init) => {
     return Response.json({ success: true, data: { documentId: saved ? 'N'.repeat(20) : 'R'.repeat(20), supplierDraftId: 'D'.repeat(20), suppliers: [existingSupplier], receipts } });
   }
   const payload = JSON.parse(String(init.body)); posts.push(payload);
-  assert(payload.documentId === 'R'.repeat(20) && payload.goodsReceivedNo === payload.documentId, 'Stable auto-ID also supplies the receipt number');
-  if (!saved) { saved++; receipts.push({ documentId: payload.documentId, fields: { supplier: payload.supplier, goodsReceivedNo: payload.goodsReceivedNo, createDate: Date.now(), goodsReceivedItemBeanList: [{ name: 'Rice', quantity: payload.items[0].quantity }] } }); }
+  assert(['R'.repeat(20), 'N'.repeat(20)].includes(payload.documentId) && payload.goodsReceivedNo === payload.documentId, 'Stable auto-ID also supplies the receipt number');
+  if (!receipts.some(receipt => receipt.documentId === payload.documentId)) { saved++; receipts.push({ documentId: payload.documentId, fields: { supplier: payload.supplier, goodsReceivedNo: payload.goodsReceivedNo, createDate: Date.now(), goodsReceivedItemBeanList: [{ name: 'Rice', quantity: payload.items[0].quantity }] } }); }
   if (loseResponse) { loseResponse = false; throw new Error('Response lost after commit'); }
   return Response.json({ success: true, data: { documentId: payload.documentId, alreadySaved: true } });
 };
@@ -63,16 +63,17 @@ void (async () => {
   await until(() => document.querySelector('[aria-label="Product categories"]'), 'outlet loaded');
   if (location.hash === '#preview') { document.getElementById('test-results')!.textContent = JSON.stringify({ passed: ['Goods Received layout'] }); return; }
   assert(posts.length === 0 && reads === 1, 'Opening reads data without writes');
+  assert(document.querySelector('[aria-label="Current stock for Rice"]')?.textContent === '3', 'Existing product stock is displayed before any received quantity is entered');
   assert(!document.body.textContent?.includes('Receipt entry only') && !document.body.textContent?.includes('Goods Received Number') && !document.body.textContent?.includes('Search suppliers') && !document.body.textContent?.includes('Only the receipt record will be saved'), 'Requested notices and fields are removed');
   assert(!document.querySelector('.goods-receipt-panel, .goods-catalog-panel, details'), 'Split panels and catalog toggles removed');
   const table = document.querySelector('.goods-products-table')!;
   const searchField = document.querySelector('.goods-search-field')!;
-  assert(!!(table.compareDocumentPosition(searchField) & Node.DOCUMENT_POSITION_FOLLOWING), 'Search is below the product list');
+  assert(!!(searchField.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING) && !!(document.querySelector('.goods-supplier-select')!.compareDocumentPosition(searchField) & Node.DOCUMENT_POSITION_FOLLOWING), 'Search is below supplier selection and above products');
   assert(!!(document.querySelector('.goods-category-tabs')!.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING), 'Category tabs are above the product list');
   assert([...document.querySelectorAll('.goods-entry-footer button')].map(node => node.textContent?.trim()).join(',') === 'Cancel,Save', 'Footer has only Cancel and Save');
   assert(!document.body.textContent?.includes('Receipt items') && !document.querySelector('.goods-entry-values'), 'Separate receipt list and entry panel removed');
   assert(!document.body.textContent?.includes('Untracked'), 'Non-stockable products excluded');
-  button('Save').click(); await pause(); assert(document.querySelector('[role="alert"]')?.textContent?.includes('supplier'), 'Supplier required');
+  button('Save').click(); await pause(); assert(document.querySelector('[role="alert"]')?.textContent?.includes('at least one product'), 'Products required but supplier is optional');
   button('Add Supplier').click(); await pause();
   assert(document.querySelectorAll('.goods-supplier-form-grid input').length === 8, 'Supplier modal contains exactly the eight requested fields');
   for (const label of ['Name','Mobile','Short Name','Search Code','Alternate Numbers','Email','GST IN','Address']) assert(labelled(label), `Supplier field: ${label}`);
@@ -98,18 +99,33 @@ void (async () => {
   assert(document.querySelector<HTMLInputElement>('[aria-label="Include Rice"]')!.checked, 'Selection survives filtering');
   assert(document.querySelector<HTMLInputElement>('[aria-label="Received quantity for Tea"]')!.disabled, 'Unselected products are excluded from receipt edits');
   await setValue(qty(), '0'); button('Save').click(); await pause(); assert(posts.length === 0 && document.querySelector('[role="alert"]')?.textContent?.includes('positive'), 'Invalid quantity makes no write');
-  await setValue(qty(), '58'); button('Save').click(); await pause(); assert(posts.length === 0 && document.querySelector('dialog[open]'), 'Review precedes write');
+  await setValue(qty(), '58');
+  products[0]!.fields.currentStock = 12;
+  button('Refresh stock').click();
+  await until(() => document.querySelector('[aria-label="Current stock for Rice"]')?.textContent === '12', 'fresh saved stock');
+  assert(qty().value === '58', 'Refreshing existing stock preserves the receipt quantity');
+  products[0]!.fields.currentStock = 13;
+  window.dispatchEvent(new Event('focus'));
+  await until(() => document.querySelector('[aria-label="Current stock for Rice"]')?.textContent === '13', 'stock refresh on returning to the page');
+  assert(document.querySelector('.goods-line-total')!.textContent?.includes('1,334.00') && document.querySelector('.goods-receipt-total')!.textContent?.includes('1,334.00'), 'Quantity times selling price updates line and receipt totals even with zero cost');
+  button('Save').click(); await pause(); assert(posts.length === 0 && document.querySelector('dialog[open]'), 'Review precedes write');
   button('Keep editing').click(); await pause(); assert(qty() && posts.length === 0, 'Cancelling confirmation retains draft and makes no write');
   button('Save').click(); await pause(); button('Confirm receipt').click();
   await until(() => [...document.querySelectorAll('button')].some(node => node.textContent === 'Retry confirmation'), 'uncertain save');
-  assert(saved === 1 && labelled('Supplier').matches(':disabled'), 'Uncertain save locks form');
+  assert(saved === 1 && labelled('Supplier (optional)').matches(':disabled'), 'Uncertain save locks form');
   assert(posts[0].supplier.id === 'D'.repeat(20) && posts[0].supplier.gstin === 'GST123' && posts[0].supplier.alternateNumber === null, 'Exact supplier map submitted');
   button('Retry confirmation').click(); button('Retry confirmation').click();
   await until(() => document.body.textContent?.includes('Goods receipt saved') && !document.body.textContent?.includes('Loading outlet'), 'save and refresh');
   assert(saved === 1 && posts.length === 2 && JSON.stringify(posts[0]) === JSON.stringify(posts[1]), 'Lost-response retry uses identical receipt once');
   assert(reads === 2 && !document.body.textContent?.includes('Saved receipts'), 'Receipt data refreshes without displaying saved receipts');
-  assert(labelled('Supplier').value === '', 'Draft clears only after confirmed save');
-  assert(products[0].fields.currentStock === 3 && storageWrites === 0, 'No product balance or browser storage changes');
+  assert(labelled('Supplier (optional)').value === '', 'Draft clears only after confirmed save');
+  assert(products[0].fields.currentStock === 13 && storageWrites === 0, 'Receipt save preserves the latest externally refreshed stock and never changes browser storage');
+  document.querySelector<HTMLButtonElement>('[aria-label="Select product Rice"]')!.click(); await pause();
+  button('Save').click(); await until(() => document.querySelector('dialog[open]'), 'review without a supplier');
+  assert(document.querySelector('dialog[open]')?.textContent?.includes('No supplier'), 'Review explains that no supplier was selected');
+  button('Confirm receipt').click();
+  await until(() => saved === 2 && !document.body.textContent?.includes('Loading outlet') && !document.querySelector('dialog[open]'), 'saved without supplier');
+  assert(posts.at(-1).supplier === null, 'Receipt without supplier sends null instead of fabricating a supplier');
   button('Cancel').click(); assert(cancelled, 'Cancel navigation retained');
   passed.push('authenticated reads, stockable product selection, supplier master save/retry and receipt snapshot, validation, confirmation cancellation, one receipt on retry, refresh without receipt history, no stock/storage writes');
   document.getElementById('test-results')!.textContent = JSON.stringify({ passed });

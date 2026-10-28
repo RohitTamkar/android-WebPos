@@ -43,7 +43,7 @@ test('recent previews and verified uploads reuse bytes; changed references, reco
 test('expired and oversized cache entries are discarded; authorization failures are never cached', async t => {
   const start = Date.now();
   rememberImagePreview('/p/image', 'ref', 'expiry-session', image());
-  t.mock.method(Date, 'now', () => start + 31_000);
+  t.mock.method(Date, 'now', () => start + 10 * 60_000 + 1_000);
   assert.equal(cachedImagePreview('/p/image', 'ref', 'expiry-session'), undefined);
   rememberImagePreview('/large/image', 'ref', 'expiry-session', new Blob([new Uint8Array(7 * 1024 * 1024)], { type: 'image/png' }));
   assert.equal(cachedImagePreview('/large/image', 'ref', 'expiry-session'), undefined);

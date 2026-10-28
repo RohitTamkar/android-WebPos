@@ -1,0 +1,4 @@
+.master-delete-action { display: inline-flex; flex-shrink: 0; }
+.master-delete-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--red) 20%, var(--line)); border-radius: 7px; background: transparent; color: var(--red); font: inherit; font-size: 12px; cursor: pointer; }
+.master-delete-button:hover { background: color-mix(in srgb, var(--red) 6%, var(--card)); }
+.master-delete-button:focus-visible { outline: 2px solid var(--red); outline-offset: 3px; }

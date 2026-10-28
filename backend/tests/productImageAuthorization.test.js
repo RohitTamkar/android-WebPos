@@ -16,7 +16,7 @@ function fixture() {
 for (const action of ['bulk', 'shared', 'remove']) {
     test(`${action}: correct PIN issues only an outlet/action/session scoped grant; wrong or empty PIN never does`, async () => {
         const f = fixture();
-        for (const quickPin of ['', '9999', '123', '1234567'])
+        for (const quickPin of ['', '9999', '123', '12345', '123456', '1234567', '12ab'])
             await assert.rejects(f.verify({ action, quickPin }), { status: quickPin === '9999' ? 422 : 400 });
         const result = await f.verify({ action, quickPin: '1234' });
         assert.equal(result.verified, true);
@@ -55,5 +55,11 @@ test('five wrong attempts are rate limited and grants expire after fifteen minut
     const result = await g.verify({ action: 'remove', quickPin: '1234' });
     t.mock.method(Date, 'now', () => start + 16 * 60_000);
     assert.throws(() => requireProductImageAuthorization(secret, result.imageToken, g.id, 'outlet', 'Bearer session', ['remove']), { status: 403 });
+});
+test('image authorization uses the signed-in login PIN, preserving leading zeroes', async () => {
+    const f = fixture();
+    f.profile.quickPin = '0123';
+    await assert.rejects(f.verify({ action: 'bulk', quickPin: '1234' }), { status: 422 });
+    assert.equal((await f.verify({ action: 'bulk', quickPin: '0123' })).verified, true);
 });
 //# sourceMappingURL=productImageAuthorization.test.js.map

@@ -4,7 +4,7 @@ import './CategoryPage.css';
 import './DeleteConfirmation.css';
 
 export function DeleteConfirmation({ kind, name, busy, onCancel, onConfirm, displayOnly = false, error, title, description, confirmLabel, cancelLabel = 'Cancel' }: {
-  kind: 'product' | 'category' | 'service point'; name: string; busy: boolean; onCancel: () => void; onConfirm: () => void;
+  kind: 'product' | 'category' | 'service point' | 'premises' | 'employee' | 'customer'; name: string; busy: boolean; onCancel: () => void; onConfirm: () => void;
   displayOnly?: boolean;
   error?: string;
   /** Optional wording overrides, e.g. for Delete All. */

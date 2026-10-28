@@ -7,13 +7,20 @@ import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 const testDirectory = fileURLToPath(new URL('.', import.meta.url));
+const testEntry = process.argv[2] || 'addProductForm.browser.tsx';
+// UI-only fixtures mock their page APIs, not usage lifecycle APIs. Isolate the
+// admission hook there; usage suites always exercise the real hook and policy.
+const exerciseUsage = process.env.WEB_USAGE_TEST_ENABLED === '1' || /^dailyUsage/.test(testEntry);
 const temporary = await mkdtemp(join(tmpdir(), 'pos-product-form-'));
 let server;
 try {
-  await build({ entryPoints: [resolve(testDirectory, process.argv[2] || 'addProductForm.browser.tsx')], bundle: true,
-    plugins: process.env.WEB_USAGE_TEST_ENABLED === '1' ? [{ name: 'enable-retained-usage-for-tests', setup(build) {
-      build.onLoad({ filter: /[\\/]shared[\\/]webUsageFeature\.ts$/ }, () => ({ contents: 'export const DAILY_WEB_USAGE_ENABLED = true;', loader: 'ts' }));
-    } }] : [],
+  await build({ entryPoints: [resolve(testDirectory, testEntry)], bundle: true,
+    plugins: exerciseUsage ? [] : [{ name: 'isolate-admission-in-ui-only-fixtures', setup(build) {
+      build.onLoad({ filter: /[\\/]utils[\\/]useWebUsage\.ts$/ }, () => ({
+        contents: "import { useCallback } from 'react'; export function useWebUsage() { const release = useCallback(() => Promise.resolve(), []); return { authorized: true, ready: true, message: '', blocked: false, suspended: false, release, retry() {} }; }",
+        loader: 'ts', resolveDir: resolve(testDirectory, '../src/utils'),
+      }));
+    } }],
     outfile: join(temporary, 'ui.js'), format: 'iife', jsx: 'automatic', loader: { '.png': 'dataurl' }, define: { 'process.env.NODE_ENV': '"production"' } });
   server = createServer(async (req, res) => {
     if (req.url === '/') { res.setHeader('Content-Type', 'text/html'); res.end('<html><head><link rel="stylesheet" href="/ui.css"></head><body><div id="root"></div><pre id="test-results">pending</pre><script src="/ui.js"></script></body></html>'); return; }

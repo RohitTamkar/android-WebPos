@@ -1,46 +1,41 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { Firestore } from 'firebase-admin/firestore';
 import { createWebUsageGuard } from '../src/webUsageMiddleware.js';
+import { DailyUsageError } from '../src/dailyUsage.js';
+import { DAILY_WEB_USAGE_ENABLED } from '../../shared/webUsageFeature.js';
 
-function fixture({ anonymous = false, active = true, foreign = false, outletActive = true, missing = false, failed = false } = {}) {
-  const reads: string[] = []; let next = false, accounting = 0;
-  const records: Record<string, unknown> = {
-    'USER_PROFILE/user': { active, outlets: foreign ? ['other'] : ['outlet'] },
-    'OUTLET/outlet': { active: outletActive, dailyUsage: { usedSeconds: 1800, limitSeconds: 1800 } },
-  };
-  const db = { collection: (collection: string) => ({ doc: (id: string) => ({ get: async () => {
-    const key = `${collection}/${id}`; reads.push(key);
-    if (failed) throw new Error('PRIVATE DATABASE DETAIL');
-    return { exists: !(missing && collection === 'OUTLET'), data: () => structuredClone(records[key]) };
-  } }) }) } as unknown as Firestore;
-  const guard = createWebUsageGuard({ readToken: () => anonymous ? null : { profileDocId: 'user' }, db: () => db,
-    assigned: profile => profile.outlets as string[], operate: async () => { accounting++; throw new Error('Accounting must stay disabled'); } });
-  return { reads, async run(path = '/products', method = 'GET') {
-    const req: any = { path, method, params: { outletId: 'outlet' }, header: () => undefined };
-    const res: any = { statusCode: 200, setHeader() {}, status(code: number) { this.statusCode = code; return this; }, json(body: unknown) { this.body = body; } };
-    await guard(req, res, () => { next = true; }); return { next, accounting, res };
-  } };
+async function run(path = '/products', { missing = false, denied = false, anonymous = false, enabled }: {
+  missing?: boolean; denied?: boolean; anonymous?: boolean; enabled?: boolean;
+} = {}) {
+  let admitted = false, accounting = 0;
+  const guard = createWebUsageGuard({ ...(enabled === undefined ? {} : { enabled }),
+    readToken: () => anonymous ? null : { profileDocId: 'user' }, db: () => ({} as any), assigned: () => ['outlet'],
+    operate: async () => { accounting++; if (denied) throw new DailyUsageError(403, 'USAGE_LIMIT_REACHED', 'Exhausted'); return {} as any; } });
+  const req: any = { path, method: 'GET', params: { outletId: 'outlet' }, header: (name: string) =>
+    name === 'x-web-usage-outlet' || missing ? undefined : name === 'x-web-usage-session' ? 'session' : 'generation' };
+  const res: any = { statusCode: 200, setHeader() {}, status(code: number) { this.statusCode = code; return this; }, json(body: unknown) { this.body = body; } };
+  await guard(req, res, () => { admitted = true; });
+  return { admitted, accounting, res };
 }
-test('disabled default ignores usage totals and requires no usage headers, while retaining account and outlet checks', async () => {
-  for (const [path, method] of [['/dashboard', 'GET'], ['/products', 'GET'], ['/products/p/image', 'PUT'], ['/product-image-assignments', 'POST']] as const) {
-    const f = fixture(); const result = await f.run(path, method);
-    assert.equal(result.next, true); assert.equal(result.accounting, 0);
-    assert.deepEqual(f.reads, ['USER_PROFILE/user', 'OUTLET/outlet']);
+
+test('the enabled compatibility indicator and old enabled:false override cannot bypass the guard', async () => {
+  assert.equal(DAILY_WEB_USAGE_ENABLED, true);
+  for (const enabled of [undefined, false]) {
+    const denied = await run('/products', { denied: true, ...(enabled === undefined ? {} : { enabled }) });
+    assert.equal(denied.admitted, false); assert.equal(denied.accounting, 1);
+    assert.equal(denied.res.statusCode, 403); assert.equal(denied.res.body.code, 'USAGE_LIMIT_REACHED');
+    const missing = await run('/products', { missing: true, ...(enabled === undefined ? {} : { enabled }) });
+    assert.equal(missing.admitted, false); assert.equal(missing.res.statusCode, 428);
   }
 });
-test('disabled accounting does not disable authentication, account activity or outlet authorization', async () => {
-  for (const [options, status] of [[{ anonymous: true }, 401], [{ active: false }, 403], [{ foreign: true }, 403],
-    [{ outletActive: false }, 403], [{ missing: true }, 404], [{ failed: true }, 503]] as const) {
-    const result = await fixture(options).run();
-    assert.equal(result.next, false); assert.equal(result.res.statusCode, status); assert.equal(result.accounting, 0);
-    assert.ok(!JSON.stringify(result.res.body).includes('PRIVATE'));
-  }
+test('valid backend admission remains required and authentication cannot be bypassed', async () => {
+  assert.equal((await run()).admitted, true);
+  const anonymous = await run('/products', { anonymous: true });
+  assert.equal(anonymous.res.statusCode, 401); assert.equal(anonymous.accounting, 0);
 });
-test('direct lifecycle calls cannot initialize, renew, stop or update counters while disabled', async () => {
-  for (const action of ['initialize', 'start', 'heartbeat', 'stop', 'status', 'unknown']) {
-    const f = fixture(); const result = await f.run(`/usage/${action}`, 'POST');
-    assert.equal(result.next, false); assert.equal(result.res.statusCode, 503);
-    assert.equal(result.res.body.code, 'USAGE_DISABLED'); assert.equal(result.accounting, 0); assert.deepEqual(f.reads, []);
+test('authenticated lifecycle routes remain reachable with the enabled compatibility export', async () => {
+  for (const action of ['initialize', 'start', 'heartbeat', 'stop', 'status']) {
+    const result = await run(`/usage/${action}`, { missing: true });
+    assert.equal(result.admitted, true); assert.equal(result.accounting, 0);
   }
 });

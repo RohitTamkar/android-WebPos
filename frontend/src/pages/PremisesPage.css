@@ -4,6 +4,9 @@
 .premises-total { padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); font-size: 13px; }
 .premises-total strong { margin-left: 10px; color: var(--ink); }
 .premises-list { overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+.premises-list-row { display: flex; align-items: center; gap: 12px; padding-right: 20px; border-bottom: 1px solid var(--line); }
+.premises-list-row:last-child { border-bottom: 0; }
+.premises-list-row .premises-list-item { flex: 1; min-width: 0; border-bottom: 0; }
 .premises-list-item { display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 20px; padding: 24px; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .premises-list-item:hover { background: color-mix(in srgb, var(--blue) 4%, var(--card)); }
 .premises-list-item:focus-visible { outline: 2px solid var(--blue); outline-offset: -3px; }
