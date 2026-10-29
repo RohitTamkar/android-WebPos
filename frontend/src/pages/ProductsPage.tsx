@@ -1,4 +1,5 @@
 import { readMasterSnapshot, masterSnapshotRevision } from '../utils/masterSnapshots.ts';
+import { useMasterSync } from '../utils/useMasterSync.ts';
 import { useRowBatches } from '../utils/useRowBatches.ts';
 import { useTimedNotice, useSuccessDismiss } from '../utils/useTimedNotice.ts';
 import { loadProductList, ProductListRequestError, streamProductList } from './productListApi.ts';
@@ -68,6 +69,7 @@ function ProductsPageContent({ outlet, token, onSessionExpired }: ProductsPagePr
   const [categories, setCategories] = useState<ProductCategory[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [liveReady, setLiveReady] = useState(false);
   // Set while the product stream is still arriving; bulk actions need the full list.
   const [progress, setProgress] = useState<{ loaded: number; total: number | null } | null>(null);
   const busyLoading = loading || !!progress;
@@ -138,6 +140,7 @@ function ProductsPageContent({ outlet, token, onSessionExpired }: ProductsPagePr
 
   useEffect(() => {
     const controller = new AbortController();
+    setLiveReady(false);
     async function loadProducts() {
       const base = `/api/outlets/${encodeURIComponent(outlet.id)}`;
       const cachedProducts = readMasterSnapshot<ProductDocument[]>(`${base}/products`, token);
@@ -157,19 +160,19 @@ function ProductsPageContent({ outlet, token, onSessionExpired }: ProductsPagePr
         const categoriesLoaded = loadProductList<ProductCategory>(`${base}/categories`, token, controller.signal, 'categories', true)
           .then(loaded => { if (!controller.signal.aborted) setCategories(loaded); return loaded; });
         // Without a cached list, show products batch by batch while the rest streams in.
-        const loadedProducts = await streamProductList<ProductDocument>(`${base}/products`, token, controller.signal, (loaded, total) => {
+        const [loadedProducts] = await Promise.all([streamProductList<ProductDocument>(`${base}/products`, token, controller.signal, (loaded, total) => {
           if (controller.signal.aborted) return;
           setProgress({ loaded: loaded.length, total });
           if (cachedProducts || !loaded.length) return;
           for (const product of loaded) fromServer.add(product);
           setProducts(withLocalChanges(loaded.slice()));
           setLoading(false);
-        });
-        await categoriesLoaded;
+        }), categoriesLoaded]);
         if (!controller.signal.aborted) {
           if (snapshotRevision !== masterSnapshotRevision()) { setReloadKey(value => value + 1); return; }
           for (const product of loadedProducts) fromServer.add(product);
           setProducts(withLocalChanges(loadedProducts));
+          setLiveReady(true);
         }
       } catch (requestError) {
         if (controller.signal.aborted) return;
@@ -183,6 +186,26 @@ function ProductsPageContent({ outlet, token, onSessionExpired }: ProductsPagePr
     void loadProducts();
     return () => controller.abort();
   }, [outlet.id, token, reloadKey, onSessionExpired]);
+
+  useMasterSync(outlet.id, token, 'products', liveReady && !busyLoading && !error && !addOpen && !editTarget && !deleting && !deletingAll
+    && !flagsOpen && !pricesOpen && !taxOpen && !discountOpen && !assignmentOpen && !imageBatchMode && !imageRemovalTargets
+    && !pendingImageAction && !deleteTarget && !deleteAllOpen && !premisesOpen && !excelOpen,
+  async signal => {
+    const revision = masterSnapshotRevision();
+    const base = `/api/outlets/${encodeURIComponent(outlet.id)}`;
+    try {
+      const [freshProducts, freshCategories] = await Promise.all([
+        streamProductList<ProductDocument>(`${base}/products`, token, signal, () => {}),
+        loadProductList<ProductCategory>(`${base}/categories`, token, signal, 'categories', true),
+      ]);
+      if (!signal.aborted && revision === masterSnapshotRevision()) {
+        setProducts(freshProducts); setCategories(freshCategories);
+      }
+    } catch (failure) {
+      if (!signal.aborted && failure instanceof ProductListRequestError && failure.status === 401) onSessionExpired();
+      else throw failure;
+    }
+  });
 
   const deleteProduct = async (documentId: string) => {
     if (deleteBusy.current) return;

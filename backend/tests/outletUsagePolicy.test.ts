@@ -22,7 +22,8 @@ function fixture(sourceExempt: boolean, targetExempt: boolean) {
   const ref = (path: string): any => ({ path, collection: (name: string) => ref(`${path}/${name}`), doc: (id: string) => ref(`${path}/${id}`) });
   const db = { collection: (name: string) => ref(name), runTransaction: async (work: any) => {
     const writes: [string, any][] = [];
-    const result = await work({ get: async (reference: any) => { assert.equal(writes.length, 0); return { data: () => records.get(reference.path) }; },
+    const get = async (reference: any) => { assert.equal(writes.length, 0); return { data: () => records.get(reference.path) }; };
+    const result = await work({ get, getAll: (...references: any[]) => Promise.all(references.map(get)),
       set: (reference: any, value: any) => writes.push([reference.path, value]) });
     for (const [path, value] of writes) records.set(path, { ...value, updatedAt: now });
     return result;

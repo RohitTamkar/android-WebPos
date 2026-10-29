@@ -1,7 +1,10 @@
 import { OutletMasterDeleteButton } from './OutletMasterDeleteButton.tsx';
+import { DeleteConfirmation } from './DeleteConfirmation.tsx';
+import { DeleteAllError, deleteAllRecords } from './deleteAllApi.ts';
+import { SuccessPopup } from './SuccessPopup.tsx';
 import { useTimedNotice } from '../utils/useTimedNotice.ts';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { ArrowLeft, Plus, RefreshCw, Search, Store, X } from 'lucide-react';
+import { ArrowLeft, MoreVertical, Plus, RefreshCw, Search, Store, Trash2, X } from 'lucide-react';
 import type { OutletSummary } from './OutletSelectionPage.tsx';
 import { createRequestId } from '../utils/requestId.ts';
 import { ANDROID_TAX_OPTIONS } from '../../../shared/androidTaxes.ts';
@@ -36,6 +39,26 @@ export function PremisesPage({ outlet, token, onSessionExpired, onClose }: {
   const [notice, setNotice] = useTimedNotice();
   const busy = useRef(false);
   const requests = useRef<AbortController | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [deleteAllOpen, setDeleteAllOpen] = useState(false);
+  const [deleteAllError, setDeleteAllError] = useState('');
+  const [deletingAll, setDeletingAll] = useState(false);
+  const [deleteAllDone, setDeleteAllDone] = useState(false);
+  // Removes only this outlet's premises masters. Product prices saved for them
+  // stay stored but are no longer shown, as with a single premises deletion.
+  const deleteAllPremises = async () => {
+    if (busy.current) return;
+    busy.current = true; setDeletingAll(true); setDeleteAllError(''); setNotice('');
+    try {
+      await deleteAllRecords(outlet.id, token, 'premises');
+      setData(current => current ? { ...current, premises: [] } : current);
+      setDeleteAllOpen(false); setDeleteAllDone(true);
+    } catch (failure) {
+      if (failure instanceof DeleteAllError && failure.status === 401) { setDeleteAllOpen(false); onSessionExpired(); return; }
+      setDeleteAllError((failure as Error).message);
+      setReload(value => value + 1);
+    } finally { busy.current = false; setDeletingAll(false); }
+  };
   const endpoint = `/api/outlets/${encodeURIComponent(outlet.id)}/premises`;
 
   useEffect(() => {
@@ -151,11 +174,22 @@ export function PremisesPage({ outlet, token, onSessionExpired, onClose }: {
 
   return (
     <section className="premises-page" aria-label="Premises" aria-busy={!data && !error}>
+      {deleteAllOpen && <DeleteConfirmation kind="premises" name="all premises" busy={deletingAll} error={deleteAllError}
+        title="Delete all premises?" description={`Are you sure you want to delete all premises? This will permanently remove all ${data?.premises.length ?? 0} premises of this outlet. Products are kept.`}
+        confirmLabel="Yes" cancelLabel="No" onCancel={() => { if (!busy.current) setDeleteAllOpen(false); }} onConfirm={() => void deleteAllPremises()} />}
+      {deleteAllDone && <SuccessPopup message="Premises deleted successfully" onDismiss={() => setDeleteAllDone(false)} />}
       <div className="category-header-row"><div className="category-title-group"><h1><Store size={22} color="#3567f0" />Premises</h1><p>Manage tables, rooms and bill premises.</p></div>
         <div className="category-header-actions">{onClose
           ? <button type="button" className="btn-secondary" onClick={onClose}><ArrowLeft size={16} />Back to Products</button>
           : <button type="button" className="btn-primary-add" onClick={openAdd}><Plus size={16} />Add New Premises</button>}
-          <button type="button" className="btn-secondary" onClick={() => setReload(value => value + 1)}><RefreshCw size={15} />Refresh</button></div></div>
+          <button type="button" className="btn-secondary" onClick={() => setReload(value => value + 1)}><RefreshCw size={15} />Refresh</button>
+          <div className="category-more-actions">
+            <button type="button" className="category-menu-toggle" aria-label="Premises options" aria-expanded={menuOpen}
+              aria-controls="premises-options-menu" onClick={() => setMenuOpen(value => !value)}><MoreVertical size={17} /></button>
+            {menuOpen && <div id="premises-options-menu" className="category-options-menu">
+              <button type="button" disabled={!data || !!error || deletingAll || !data.premises.length} onClick={() => { setMenuOpen(false); setDeleteAllError(''); setDeleteAllOpen(true); }}><Trash2 size={14} />Delete All</button>
+            </div>}
+          </div></div></div>
       {notice && <p className="premises-notice" role="status">{notice}</p>}
       <div className="category-toolbar"><label className="toolbar-search-box"><span className="search-input-icon"><Search size={16} /></span>
         <input className="search-input" type="search" aria-label="Search premises" placeholder="Search premises name, code, type…" value={search} onChange={event => setSearch(event.target.value)} /></label>

@@ -1,6 +1,7 @@
 import { createOutletLogoHandler } from './outletLogo.js';
+import { createMasterSyncHandler } from './masterSync.js';
 import express from "express";
-import { listOutletServicePoints, createOutletServicePoint, updateOutletServicePoint, deleteOutletServicePoint, assignCategoryServicePoint } from './servicePoints.js';
+import { listOutletServicePoints, createOutletServicePoint, updateOutletServicePoint, deleteOutletServicePoint, deleteAllOutletServicePoints, assignCategoryServicePoint } from './servicePoints.js';
 import { productExportRouter } from './productExportRoutes.js';
 import { createWebUsageGuard } from "./webUsageMiddleware.js";
 import { initializeOutletDailyUsage, operateOutletDailyUsage, DailyUsageError } from "./dailyUsage.js";
@@ -77,6 +78,15 @@ app.delete('/api/outlets/:outletId/logo', createOutletLogoHandler(outletLogoDepe
 // Checks never renew leases; dashboard polling therefore cannot keep a session active.
 app.use('/api/outlets/:outletId', createWebUsageGuard({ readToken: readAccessToken,
   db: getFirestoreDb, assigned: assignedOutletIds, operate: operateOutletDailyUsage }));
+
+app.get('/api/outlets/:outletId/master-sync', createMasterSyncHandler({ db: getFirestoreDb,
+  authorize: async req => {
+    const token = readAccessToken(req);
+    if (!token) throw new ProductCreationError(401, 'Your session has expired.');
+    await operateOutletDailyUsage(getFirestoreDb(), String(req.params.outletId), token.profileDocId, assignedOutletIds,
+      { action: 'check', sessionId: req.header('x-web-usage-session') ?? '', generation: req.header('x-web-usage-generation') ?? '' }, undefined, { readOnly: true });
+  },
+}));
 
 // In-memory Category Store
 interface CategoryItem {
@@ -487,6 +497,14 @@ app.get("/api/outlets/:outletId/dashboard", async (req: Request, res: Response):
 
   try {
     const db = getFirestoreDb();
+    // Read shifts alongside the profile; they are only used after access is confirmed.
+    const shiftRead = db
+      .collection("OUTLET")
+      .doc(outletId)
+      .collection("SHIFT")
+      .where("dayId", "==", requestedDay)
+      .get();
+    shiftRead.catch(() => undefined);
     const profileDocument = await db.collection("USER_PROFILE").doc(token.profileDocId).get();
     const profile = profileDocument.data();
     if (!profileDocument.exists || !profile || profile.active !== true) {
@@ -499,12 +517,7 @@ app.get("/api/outlets/:outletId/dashboard", async (req: Request, res: Response):
       return;
     }
 
-    const shiftSnapshot = await db
-      .collection("OUTLET")
-      .doc(outletId)
-      .collection("SHIFT")
-      .where("dayId", "==", requestedDay)
-      .get();
+    const shiftSnapshot = await shiftRead;
 
     if (shiftSnapshot.empty) {
       res.status(404).json({ success: false, message: `No shift data found for ${requestedDay}` });
@@ -1371,6 +1384,18 @@ app.post('/api/outlets/:outletId/service-points', async (req: Request, res: Resp
   }
 });
 
+app.delete('/api/outlets/:outletId/service-points', async (req: Request, res: Response): Promise<void> => {
+  res.setHeader('Cache-Control', 'no-store');
+  const token = readAccessToken(req);
+  if (!token) { res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' }); return; }
+  try {
+    const data = await deleteAllOutletServicePoints(getFirestoreDb(), String(req.params.outletId ?? ''), token.profileDocId, assignedOutletIds, req.body);
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(error instanceof ProductCreationError ? error.status : 503).json({ success: false,
+      message: error instanceof ProductCreationError ? error.message : 'Unable to delete all service points. Retry to finish.' });
+  }
+});
 app.delete('/api/outlets/:outletId/service-points/:documentId', async (req: Request, res: Response): Promise<void> => {
   const token = readAccessToken(req);
   if (!token) { res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' }); return; }
@@ -1701,7 +1726,7 @@ app.patch("/api/outlets/:outletId/categories/:documentId", async (req: Request, 
 });
 
 // Delete All for one outlet master collection; requires the explicit confirmation value in the body.
-for (const [route, collection] of [['categories', 'CATEGORY'], ['products', 'PRODUCT']] as const) {
+for (const [route, collection] of [['categories', 'CATEGORY'], ['products', 'PRODUCT'], ['employees', 'EMPLOYEE'], ['customers', 'CUSTOMER'], ['premises', 'PREMISES']] as const) {
   app.delete(`/api/outlets/:outletId/${route}`, async (req: Request, res: Response): Promise<void> => {
     res.setHeader('Cache-Control', 'no-store');
     try {

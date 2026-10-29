@@ -57,7 +57,7 @@ function localDate(now: Timestamp, timeZone: string): string {
 
 // Shared transaction engine: every calculation is rerun after a transaction conflict.
 async function usageTransaction(db: Firestore, outletId: string, profileId: string | null,
-  assigned: (profile: Record<string, unknown>) => string[], raw: unknown = {}, clock = () => Timestamp.now(), operation?: z.infer<typeof operationSchema>, requireAllowance = false, readOnly = false) {
+  assigned: (profile: Record<string, unknown>) => string[], raw: unknown = {}, clock = () => Timestamp.now(), operation?: z.infer<typeof operationSchema>, requireAllowance = false, readOnly = false, logoRead = readOnly) {
   if (!profileId) throw new ProductCreationError(401, 'Your session has expired. Please sign in again.');
   if (!outletId || outletId.length > 200 || outletId.includes('/') || outletId === '.' || outletId === '..') {
     throw new ProductCreationError(400, 'A valid outlet document ID is required.');
@@ -70,14 +70,16 @@ async function usageTransaction(db: Firestore, outletId: string, profileId: stri
   // This storage name does not establish or enable Web POS-only enforcement.
   const usageRef = outletRef.collection('SESSION').doc('dailyUsage');
   const outcome = await db.runTransaction(async transaction => {
-    const profile = (await transaction.get(db.collection('USER_PROFILE').doc(profileId))).data();
+    // One round trip for all three documents; each is still validated in order before use.
+    const [profileSnapshot, outletSnapshot, usageSnapshot] = await transaction.getAll(db.collection('USER_PROFILE').doc(profileId), outletRef, usageRef);
+    const profile = profileSnapshot!.data();
     requireProductOutlet(profileId, outletId, profile, assigned);
-    const outlet = (await transaction.get(outletRef)).data();
+    const outlet = outletSnapshot!.data();
     if (!outlet) throw new ProductCreationError(404, 'Outlet not found.');
     if (outlet.active !== true) throw new ProductCreationError(403, 'This outlet is inactive.');
     const exemptFromDailyLimit = outlet.eraseOutlet === true;
-    const stored = (await transaction.get(usageRef)).data();
-    if (readOnly && stored === undefined) throw new DailyUsageError(428, 'USAGE_SESSION_REQUIRED', 'Enter the outlet before loading its logo.');
+    const stored = usageSnapshot!.data();
+    if (logoRead && stored === undefined) throw new DailyUsageError(428, 'USAGE_SESSION_REQUIRED', 'Enter the outlet before loading its logo.');
     // Never silently grant a new allowance or migrate legacy data on entry.
     // An existing SESSION document is authoritative; legacy fields stay untouched.
     if (stored === undefined && outlet.dailyUsage !== undefined) {
@@ -113,7 +115,7 @@ async function usageTransaction(db: Firestore, outletId: string, profileId: stri
         updatedAt: now, generation: randomUUID(), version: 1, sessions: {} };
     const initialized = stored === undefined || reset;
     const summary = () => ({ outletId, initialized, reset, date, timeZone, limitSeconds, usedSeconds: dailyUsage.usedSeconds,
-      ...(readOnly ? { outletName: outlet.name } : {}) });
+      ...(logoRead ? { outletName: outlet.name } : {}) });
     if (!operation) {
       if (!readOnly) transaction.set(usageRef, { ...dailyUsage, updatedAt: FieldValue.serverTimestamp() });
       return summary();
@@ -183,10 +185,14 @@ export async function initializeOutletDailyUsage(db: Firestore, outletId: string
   return usageTransaction(db, outletId, profileId, assigned, raw, clock);
 }
 export async function operateOutletDailyUsage(db: Firestore, outletId: string, profileId: string | null,
-  assigned: (profile: Record<string, unknown>) => string[], raw: unknown, clock = () => Timestamp.now()) {
+  assigned: (profile: Record<string, unknown>) => string[], raw: unknown, clock = () => Timestamp.now(), options: { readOnly?: boolean } = {}) {
   const parsed = operationSchema.safeParse(raw);
   if (!parsed.success) throw new DailyUsageError(422, 'USAGE_INVALID_REQUEST', 'Invalid usage action. Client counters and timestamps are not accepted.');
-  return usageTransaction(db, outletId, profileId, assigned, {}, clock, parsed.data);
+  // A read-only check enforces the same profile, outlet, lease and allowance rules
+  // without settling. Settlement is cumulative, so the next heartbeat or stop
+  // records the same used time; the check alone never changes stored accounting.
+  const readOnly = options.readOnly === true && parsed.data.action === 'check';
+  return usageTransaction(db, outletId, profileId, assigned, {}, clock, parsed.data, false, readOnly, false);
 }
 
 // Transfer previews retain their valid source lease, but cannot use its exemption

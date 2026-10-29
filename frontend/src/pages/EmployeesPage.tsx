@@ -1,8 +1,11 @@
 import { readMasterSnapshot, masterSnapshotRevision, rememberMasterSnapshot } from '../utils/masterSnapshots.ts';
 import { OutletMasterDeleteButton } from './OutletMasterDeleteButton.tsx';
+import { DeleteConfirmation } from './DeleteConfirmation.tsx';
+import { DeleteAllError, deleteAllRecords } from './deleteAllApi.ts';
+import { SuccessPopup } from './SuccessPopup.tsx';
 import { useTimedNotice } from '../utils/useTimedNotice.ts';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Plus, RefreshCw, Save, UserRoundCog, X } from 'lucide-react';
+import { MoreVertical, Plus, RefreshCw, Save, Trash2, UserRoundCog, X } from 'lucide-react';
 import type { OutletSummary } from './OutletSelectionPage.tsx';
 import { ReportDateInput } from './ReportDateInput.tsx';
 import { createRequestId } from '../utils/requestId.ts';
@@ -32,6 +35,11 @@ export function EmployeesPage({ outlet, token, onSessionExpired }: {
   const busy = useRef(false);
   const requests = useRef<AbortController | null>(null);
   const shortNameEdited = useRef(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [deleteAllOpen, setDeleteAllOpen] = useState(false);
+  const [deleteAllError, setDeleteAllError] = useState('');
+  const [deletingAll, setDeletingAll] = useState(false);
+  const [deleteAllDone, setDeleteAllDone] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController(); requests.current = controller;
@@ -103,6 +111,20 @@ export function EmployeesPage({ outlet, token, onSessionExpired }: {
     finally { if (!controller.signal.aborted) { busy.current = false; setSaving(false); } }
   };
   const selected = data?.employees.find(row => row.documentId === selectedId);
+  // Removes only this outlet's employee masters; bills and user accounts are kept.
+  const deleteAllEmployees = async () => {
+    if (busy.current) return;
+    busy.current = true; setDeletingAll(true); setDeleteAllError(''); setNotice('');
+    try {
+      await deleteAllRecords(outlet.id, token, 'employees');
+      setData(current => current ? { ...current, employees: [] } : current);
+      setSelectedId(''); setDeleteAllOpen(false); setDeleteAllDone(true);
+    } catch (failure) {
+      if (failure instanceof DeleteAllError && failure.status === 401) { setDeleteAllOpen(false); onSessionExpired(); return; }
+      setDeleteAllError((failure as Error).message);
+      setReload(value => value + 1);
+    } finally { busy.current = false; setDeletingAll(false); }
+  };
 
   if (draft) return <section className="category-modal employee-form-page master-form-page" aria-labelledby="employee-form-title"><form onSubmit={save}>
         <div className="modal-header master-form-header"><div className="master-form-title"><span className="master-form-icon" aria-hidden="true"><UserRoundCog size={24} /></span><div><h3 id="employee-form-title">Add {kind}</h3><p>{outlet.name} · Personal and work details</p></div></div><button type="button" className="modal-close-btn" aria-label="Close employee form" disabled={saving} onClick={() => setDraft(null)}><X size={18} /></button></div>
@@ -124,8 +146,21 @@ export function EmployeesPage({ outlet, token, onSessionExpired }: {
       </form></section>;
 
   return <section className="employees-page category-page-shell">
+    {deleteAllOpen && <DeleteConfirmation kind="employee" name="all employees" busy={deletingAll} error={deleteAllError}
+      title="Delete all employees?" description={`Are you sure you want to delete all employees? This will permanently remove all ${data?.employees.length ?? 0} employees and salesmen of this outlet.`}
+      confirmLabel="Yes" cancelLabel="No" onCancel={() => { if (!busy.current) setDeleteAllOpen(false); }} onConfirm={() => void deleteAllEmployees()} />}
+    {deleteAllDone && <SuccessPopup message="Employees deleted successfully" onDismiss={() => setDeleteAllDone(false)} />}
     <div className="category-header-row"><div className="category-title-group"><h1><UserRoundCog size={22} /> Employees / Salesman</h1><p>{outlet.name} · Select a person from your outlet’s employee list.</p></div>
-      <button type="button" className="btn-primary-add" disabled={!data || !!error} onClick={openAdd}><Plus size={16} /> Add {kind}</button></div>
+      <div className="category-header-actions category-master-actions">
+        <button type="button" className="btn-primary-add" disabled={!data || !!error} onClick={openAdd}><Plus size={16} /> Add {kind}</button>
+        <div className="category-more-actions">
+          <button type="button" className="category-menu-toggle" aria-label="Employee options" aria-expanded={menuOpen}
+            aria-controls="employee-options-menu" onClick={() => setMenuOpen(value => !value)}><MoreVertical size={17} /></button>
+          {menuOpen && <div id="employee-options-menu" className="category-options-menu">
+            <button type="button" disabled={!data || !!error || deletingAll || !data.employees.length} onClick={() => { setMenuOpen(false); setDeleteAllError(''); setDeleteAllOpen(true); }}><Trash2 size={14} />Delete All</button>
+          </div>}
+        </div>
+      </div></div>
     <div className="employees-selection"><label htmlFor="employee-selection-kind">Select as</label><select id="employee-selection-kind" value={kind} disabled={!!draft} onChange={event => { setKind(event.target.value); setNotice(''); }}><option>Employee</option><option>Salesman</option></select>
       {selected && <p role="status">Selected {kind.toLowerCase()}: <strong>{selected.name}</strong> · {selected.mobile}</p>}</div>
     {notice && <p className="employees-notice" role="status">{notice}</p>}

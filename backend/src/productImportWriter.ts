@@ -1,6 +1,6 @@
 import { Timestamp, type Firestore } from 'firebase-admin/firestore';
 import { requireProductOutlet } from './productCreation.js';
-import { planImportPremises } from './productImportPremises.js';
+import { planImportPremises, withStoredPremisesNames } from './productImportPremises.js';
 import { allocateProductCodes, assertPreviewCodes, type ImportDocument } from './productImportValidation.js';
 
 export async function createProductImportChunk(db: Firestore, outletId: string, documents: ImportDocument[], premises?: { names: string[]; profileId: string; assigned: (profile: Record<string, unknown>) => string[] }) {
@@ -8,13 +8,15 @@ export async function createProductImportChunk(db: Firestore, outletId: string, 
   return db.runTransaction(async transaction => {
     const outlet = db.collection('OUTLET').doc(outletId);
     let premiseCreates: ReturnType<typeof planImportPremises> = [];
+    let saving = documents;
     if (premises) {
       const profile = (await transaction.get(db.collection('USER_PROFILE').doc(premises.profileId))).data();
       requireProductOutlet(premises.profileId, outletId, profile, premises.assigned);
       if ((await transaction.get(outlet)).data()?.active !== true) throw new Error('This outlet is inactive or unavailable.');
       const snapshot = await transaction.get(outlet.collection('PREMISES'));
-      premiseCreates = planImportPremises(outletId, premises.profileId, premises.names,
-        snapshot.docs.map(document => ({ id: document.id, fields: document.data() })), documents);
+      const existingPremises = snapshot.docs.map(document => ({ id: document.id, fields: document.data() }));
+      saving = withStoredPremisesNames(premises.names, existingPremises, documents);
+      premiseCreates = planImportPremises(outletId, premises.profileId, premises.names, existingPremises, saving);
     }
     const categoryIds = [...new Set(documents.map(document => document.fields.category))];
     if (categoryIds.some(id => typeof id !== 'string' || !id || id.includes('/'))) throw new Error('Product categories must be resolved before importing products.');
@@ -24,8 +26,8 @@ export async function createProductImportChunk(db: Firestore, outletId: string, 
     // an empty outlet. Concurrent inserts cause allocation to retry against fresh data.
     const snapshot = await transaction.get(collection);
     const stored = snapshot.docs.map(document => ({ id: document.id, fields: document.data() }));
-    const allocated = allocateProductCodes(outletId, documents, stored);
-    assertPreviewCodes(documents, allocated);
+    const allocated = allocateProductCodes(outletId, saving, stored);
+    assertPreviewCodes(saving, allocated);
     const savedIds = new Set(stored.map(document => document.id));
     for (const premise of premiseCreates) transaction.create(outlet.collection('PREMISES').doc(premise.id), premise.fields);
     let created = 0, existing = 0;

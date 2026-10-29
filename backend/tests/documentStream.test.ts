@@ -43,6 +43,31 @@ test('lists stream as newline-delimited batches with an end marker', async () =>
   assert.deepEqual(lines.at(-1), { type: 'end', count: 2500 });
 });
 
+test('the first row reaches the browser before Firestore finishes the rest of the list', async () => {
+  let release!: () => void;
+  const remaining = new Promise<void>(resolve => { release = resolve; });
+  const query = { stream: () => Readable.from((async function* () {
+    yield { id: 'first', data: () => ({ name: 'First product' }) };
+    await remaining;
+    yield { id: 'second', data: () => ({ name: 'Second product' }) };
+  })()) } as unknown as Query;
+  const app = express();
+  app.get('/products', (req, res) => { void streamDocuments(req, res, query, toProduct, 'Failed'); });
+  const server = app.listen(0);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2000);
+  try {
+    const { port } = server.address() as { port: number };
+    const response = await fetch(`http://127.0.0.1:${port}/products`, { signal: controller.signal });
+    const reader = response.body!.getReader();
+    const first = new TextDecoder().decode((await reader.read()).value);
+    assert.match(first, /First product/);
+    assert.doesNotMatch(first, /Second product|"type":"end"/);
+    release();
+    await reader.cancel();
+  } finally { clearTimeout(timeout); release(); controller.abort(); server.close(); }
+});
+
 test('gzip-capable clients receive a compressed stream with the same lines', async () => {
   const app = express();
   app.get('/products', (req, res) => { void streamDocuments(req, res, fakeQuery(50), toProduct, 'Unable to load products right now'); });

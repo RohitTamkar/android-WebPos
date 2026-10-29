@@ -187,7 +187,7 @@ test('real authorization precedes acceptance and invalid source consumes a slot 
 });
 const undefinedCallback = () => {};
 
-test('frontend preview and confirmation send separate requests with exactly one import request', async () => {
+test('a single Upload click validates once, then sends exactly one import request with the validated codes', async () => {
   const text = readFileSync(new URL('../src/pages/CsvUploadPreview.tsx', import.meta.url), 'utf8');
   const ast = ts.createSourceFile('CsvUploadPreview.tsx', text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   let upload;
@@ -219,8 +219,6 @@ test('frontend preview and confirmation send separate requests with exactly one 
   const run = () => new Function(...Object.keys(deps), `${js}; return upload();`)(...Object.values(deps));
   await run();
   assert.deepEqual(codes, [1]);
-  deps.assignedCodes = codes;
-  await run();
   assert.deepEqual(calls.map(call => call.url), ['/api/outlets/outlet/products/import/validate', '/api/outlets/outlet/products/import']);
   assert.deepEqual(calls[1].body.codes, [1]);
   deps.fetch = async () => ({ ok: false, status: 429, json: async () => ({ message: 'Upload limit reached' }) });

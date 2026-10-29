@@ -1,6 +1,7 @@
 import { gstDetailRows, loadGstExportBills, gstBillSummary } from '../utils/gstExcel.ts';
 import { downloadReportExcel, billRange, sumPayments, paymentSummary } from '../utils/reportExcel.ts';
 import { ReportDateInput } from './ReportDateInput.tsx';
+import { isProvided, tableLabel } from './billReceipt.ts';
 import { useEffect, useState } from 'react';
 import { Banknote, CalendarDays, CreditCard, Download, Printer, ReceiptText, RefreshCw, TrendingUp, X } from 'lucide-react';
 import type { OutletSummary } from './OutletSelectionPage.tsx';
@@ -281,32 +282,28 @@ export const DaywiseReportPage = ({ outlet, token, onSessionExpired, reportName 
 
       {selectedBill && <div className="bill-detail-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setSelectedBill(null); }}>
         <article className="bill-detail-modal daywise-bill-detail" role="dialog" aria-modal="true" aria-label={`Bill ${selectedBill.billNo}`}>
-          <header><div><span>BILL DETAILS</span><h2>{selectedBill.billNo}</h2><p>{selectedBill.dayId} · {dateTime(selectedBill.createdDate)}</p></div><button type="button" onClick={() => setSelectedBill(null)} aria-label="Close bill details" autoFocus><X /></button></header>
+          <header><div><span>BILL DETAILS</span><h2>{selectedBill.billNo}</h2><p>{dateTime(selectedBill.createdDate)}</p></div><button type="button" onClick={() => setSelectedBill(null)} aria-label="Close bill details" autoFocus><X /></button></header>
           <div className="bill-detail-body">
             <div className="bill-detail-meta">
+              {/* Only details a person needs, and only when they are set; internal IDs are left out. */}
               {[
-                ['Bill type', selectedBill.billType], ['Serial No.', selectedBill.serialNo],
-                ['Day ID', selectedBill.dayId], ['Bill ID', selectedBill.documentId],
-                ['Shift', selectedBill.shiftId], ['Device', selectedBill.deviceId],
-                ['Table', selectedBill.table], ['Vehicle', selectedBill.vehicleNo],
-                ['Customer', detailLabel(selectedBill.customerDetails)],
-                ['Employee', detailLabel(selectedBill.employee)], ['Remark', detailLabel(selectedBill.remark)],
-              ].map(([label, value]) => <div key={label}><span>{label}</span><strong>{value || '—'}</strong></div>)}
+                ['Bill type', selectedBill.billType], ['Table', tableLabel(selectedBill.table)],
+                ['Customer', detailLabel(selectedBill.customerDetails)], ['Employee', detailLabel(selectedBill.employee)],
+                ['Vehicle', selectedBill.vehicleNo], ['Remark', detailLabel(selectedBill.remark)],
+              ].filter(([, value]) => isProvided(value)).map(([label, value]) => <div key={label}><span>{label}</span><strong>{value}</strong></div>)}
             </div>
             <h3>Products</h3>
             <div className="bill-items-table"><table>
-              <thead><tr><th>Product</th><th>Qty</th><th>Rate</th><th>Tax %</th><th>Total</th><th>Remark</th></tr></thead>
-              <tbody>{selectedBill.items.length ? selectedBill.items.map((item, index) => <tr key={index}><td>{item.name}</td><td>{item.quantity}</td><td>{money(item.price)}</td><td>{item.taxPercentage}%</td><td>{money(item.total)}</td><td>{detailLabel(item.remark)}</td></tr>) : <tr><td colSpan={6}>No product details available</td></tr>}</tbody>
+              <thead><tr><th>Product</th><th>Qty</th><th>Rate</th><th>Total</th></tr></thead>
+              <tbody>{selectedBill.items.length ? selectedBill.items.map((item, index) => <tr key={index}><td>{item.name}{isProvided(detailLabel(item.remark)) && <small className="bill-item-remark">{detailLabel(item.remark)}</small>}</td><td>{item.quantity}</td><td>{money(item.price)}</td><td>{money(item.total)}</td></tr>) : <tr><td colSpan={4}>No product details available</td></tr>}</tbody>
             </table></div>
             <div className="bill-payment-detail"><h3>Payments</h3>
               {Object.entries(selectedBill.payments).filter(([, amount]) => amount > 0).map(([mode, amount]) => <div key={mode}><span>{paymentLabel(mode)}</span><strong>{money(amount)}</strong></div>)}
               {!Object.values(selectedBill.payments).some(amount => amount > 0) && <div><span>No payments recorded</span><strong>{money(0)}</strong></div>}
             </div>
             <div className="bill-total-detail">
-              <div><span>Discount</span><strong>{money(selectedBill.discount)}</strong></div>
-              <div><span>Tax</span><strong>{money(selectedBill.taxAmount)}</strong></div>
-              <div><span>Service Charge</span><strong>{money(selectedBill.serviceChargeAmount)}</strong></div>
-              <div><span>Round Off</span><strong>{money(selectedBill.roundOff)}</strong></div>
+              {([['Discount', selectedBill.discount], ['Tax', selectedBill.taxAmount], ['Service Charge', selectedBill.serviceChargeAmount], ['Round Off', selectedBill.roundOff]] as const)
+                .filter(([, amount]) => amount !== 0).map(([label, amount]) => <div key={label}><span>{label}</span><strong>{money(amount)}</strong></div>)}
               <div className="grand-total"><span>Grand Total</span><strong>{money(selectedBill.finalTotal)}</strong></div>
             </div>
           </div>

@@ -89,3 +89,19 @@ test('a failed category cleanup after deleting products can be retried safely', 
   assert.deepEqual(await deleteAllOutletRecords(f.db, 'outlet', 'PRODUCT', 'user', assigned, { confirm: 'DELETE_ALL_PRODUCTS' }), { deleted: 0, deletedCategories: 2 });
   assert.ok(f.records.has('OUTLET/outlet/BILL/b1') && f.records.has('OUTLET/foreign/CATEGORY/c1'));
 });
+
+test('delete all employees, customers or premises removes only that outlet master and needs its own confirmation', async () => {
+  for (const [collection, confirm, other] of [['EMPLOYEE', 'DELETE_ALL_EMPLOYEES', 'CUSTOMER'], ['CUSTOMER', 'DELETE_ALL_CUSTOMERS', 'EMPLOYEE'], ['PREMISES', 'DELETE_ALL_PREMISES', 'CUSTOMER']] as const) {
+    const f = fixture(2);
+    for (let index = 0; index < 450; index++) f.records.set(`OUTLET/outlet/${collection}/r${index}`, { name: `R${index}` });
+    f.records.set(`OUTLET/outlet/${other}/keep`, { name: 'Keep' }); f.records.set(`OUTLET/foreign/${collection}/keep`, { name: 'Foreign' });
+    for (const body of [{}, { confirm: 'DELETE_ALL_PRODUCTS' }, { confirm: other === 'EMPLOYEE' ? 'DELETE_ALL_EMPLOYEES' : 'DELETE_ALL_CUSTOMERS' }]) {
+      await assert.rejects(deleteAllOutletRecords(f.db, 'outlet', collection, 'user', assigned, body), error => error instanceof OutletDeletionError && error.status === 400);
+    }
+    await assert.rejects(deleteAllOutletRecords(f.db, 'foreign', collection, 'user', assigned, { confirm }), error => error instanceof OutletDeletionError && error.status === 403);
+    const before = keys(f.records).filter(path => !path.startsWith(`OUTLET/outlet/${collection}/`));
+    assert.deepEqual(await deleteAllOutletRecords(f.db, 'outlet', collection, 'user', assigned, { confirm }), { deleted: 450 });
+    assert.deepEqual(f.commits, [400, 50], 'large lists are deleted in batches');
+    assert.deepEqual(keys(f.records), before, 'products, categories, bills, the other master and other outlets are untouched');
+  }
+});

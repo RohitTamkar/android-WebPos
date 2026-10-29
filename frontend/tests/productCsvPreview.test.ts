@@ -294,3 +294,17 @@ test('mixed-case headers and extra header/value spaces are accepted without alte
   const duplicate = [...headers]; duplicate[1] = 'PRODUCT   NAME';
   assert.ok(parseProductCsv(sheet([padded], ',', duplicate)).headerErrors.some(error => /Duplicate headers/.test(error)));
 });
+
+test('headers and Unit Type accept upper, lower and mixed case in both upload modes', () => {
+  const row = ['Paneer Tikka', 'Paneer', '100', '100', '0', '0', 'Starters', '1', '5', '0', ' NUMBER ', '0', 'YES', '1'];
+  for (const change of [(header: string) => header.toUpperCase(), (header: string) => header.toLowerCase()]) {
+    const standard = parseProductCsv(sheet([row], ',', PRODUCT_COLUMNS.map(change)));
+    assert.deepEqual(standard.headerErrors, []); assert.deepEqual(standard.rows[0]!.errors, []);
+    const premises = parseProductCsv(sheet([[...row, '120']], ',', [...PRODUCT_COLUMNS, 'AC Table'].map(change)), 'premises');
+    assert.deepEqual(premises.headerErrors, []); assert.deepEqual(premises.rows[0]!.errors, []);
+  }
+  for (const unit of ['number', 'Number', 'NUMBER']) {
+    assert.deepEqual(parseProductCsv(sheet([[...row.slice(0, 10), unit, ...row.slice(11), '120']], ',', [...PRODUCT_COLUMNS, 'AC Table']), 'premises').rows[0]!.errors, []);
+  }
+  assert.ok(parseProductCsv(sheet([[...row.slice(0, 10), 'kg', ...row.slice(11), '120']], ',', [...PRODUCT_COLUMNS, 'AC Table']), 'premises').rows[0]!.errors.some(issue => issue.column === 'Unit Type'));
+});

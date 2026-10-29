@@ -33,10 +33,11 @@ function fixture() {
   }, runTransaction: (callback: any) => {
     const operation = queue.then(async () => {
       let pending: { path: string; patch: Record<string, any> }[] = [];
-      const transaction = { get: async (ref: { path: string }) => {
+      const get = async (ref: { path: string }) => {
         assert.equal(pending.length, 0); reads.push(ref.path);
         return { data: () => records.get(ref.path) };
-      }, set: (ref: { path: string }, patch: Record<string, any>) => {
+      };
+      const transaction = { get, getAll: (...refs: { path: string }[]) => Promise.all(refs.map(get)), set: (ref: { path: string }, patch: Record<string, any>) => {
         assert.equal(ref.path, usagePath, 'Every usage write targets only the stable SESSION document');
         pending.push({ path: ref.path, patch });
       } };
@@ -57,7 +58,7 @@ function fixture() {
     usage: () => records.get(usagePath)!, setUsage: (value: unknown) => records.set(usagePath, value as Record<string, unknown>),
     initialize: (raw: unknown = {}, user: string | null = 'user', id = 'actual-document') =>
       initializeOutletDailyUsage(db, id, user, assigned, raw, () => now),
-    operate: (raw: unknown, user: string | null = 'user') => operateOutletDailyUsage(db, 'actual-document', user, assigned, raw, () => now),
+    operate: (raw: unknown, user: string | null = 'user', options: { readOnly?: boolean } = {}) => operateOutletDailyUsage(db, 'actual-document', user, assigned, raw, () => now, options),
     time: (value: string) => { now = instant(value); }, fail: () => { fail = true; }, conflict: (fn: () => void) => { retry = fn; } };
 }
 
@@ -331,6 +332,99 @@ test('entry starts a bounded lease; heartbeat settles elapsed time; checks do no
   f.time('2026-10-19T10:00:20Z'); await f.operate(lifecycle(hb, 'check'));
   const saved: any = f.usage(); assert.equal(saved.usedSeconds, 20);
   assert.equal(saved.sessions[s.sessionId].expiresAt.toMillis(), start.toMillis() + 40_000);
+});
+test('read-only checks deny exactly what read-write checks deny, write nothing, and leave the settled total unchanged', async () => {
+  const outcome = (operation: Promise<unknown>) => operation.then(() => 'allowed', (error: any) => [error.status, error.code]);
+  const run = async (readOnly: boolean) => {
+    const f = fixture(); const s = await startSession(f);
+    f.time('2026-10-19T10:00:10Z'); const hb: any = await f.operate(lifecycle(s, 'heartbeat'));
+    const writes = f.writes.length, before = JSON.stringify(f.usage());
+    f.time('2026-10-19T10:00:15Z');
+    const results = [await outcome(f.operate(lifecycle(hb, 'check'), 'user', { readOnly })),
+      await outcome(f.operate({ ...lifecycle(hb, 'check'), generation: crypto.randomUUID() }, 'user', { readOnly })),
+      await outcome(f.operate({ ...lifecycle(hb, 'check'), sessionId: 'f'.repeat(64) }, 'user', { readOnly })),
+      await outcome(f.operate(lifecycle(hb, 'check'), 'stranger', { readOnly }))];
+    if (readOnly) { assert.equal(f.writes.length, writes, 'read-only checks never write'); assert.equal(JSON.stringify(f.usage()), before); }
+    f.time('2026-10-19T10:00:20Z'); const settled: any = await f.operate(lifecycle(hb, 'heartbeat'));
+    f.time('2026-10-19T10:01:00Z'); results.push(await outcome(f.operate(lifecycle(settled, 'check'), 'user', { readOnly })));
+    const exhausted = fixture(); const e = await startSession(exhausted);
+    (exhausted.usage() as any).usedSeconds = 1799.5; exhausted.time('2026-10-19T10:00:01Z');
+    results.push(await outcome(exhausted.operate(lifecycle(e, 'check'), 'user', { readOnly })));
+    return { results, used: settled.usedSeconds };
+  };
+  const [readWrite, readOnly] = [await run(false), await run(true)];
+  assert.deepEqual(readOnly, readWrite);
+  assert.equal(readOnly.used, 20);
+  assert.equal(readOnly.results[0], 'allowed');
+  assert.ok(readOnly.results.slice(1).every(result => result !== 'allowed'), 'forged, foreign, expired and exhausted checks are denied');
+  assert.deepEqual(readOnly.results.at(-1), [403, 'USAGE_LIMIT_REACHED']);
+  assert.deepEqual(readOnly.results.at(-2), [428, 'USAGE_SESSION_EXPIRED']);
+});
+test('only check actions can skip the write; lifecycle actions always persist', async () => {
+  const f = fixture(); const s = await startSession(f); const writes = f.writes.length;
+  f.time('2026-10-19T10:00:10Z'); await f.operate(lifecycle(s, 'heartbeat'), 'user', { readOnly: true });
+  assert.equal(f.writes.length, writes + 1); assert.equal((f.usage() as any).usedSeconds, 10);
+});
+test('read-only and read-write checks agree on profile, outlet, lease, generation, period and limit boundaries', async () => {
+  const cases: [string, (f: ReturnType<typeof fixture>, s: any) => unknown][] = [
+    ['valid lease', () => {}],
+    ['inactive profile', f => { f.records.set('USER_PROFILE/user', { active: false, outlets: ['actual-document'] }); }],
+    ['unassigned outlet', f => { f.records.set('USER_PROFILE/user', { active: true, outlets: [] }); }],
+    ['deleted profile', f => { f.records.delete('USER_PROFILE/user'); }],
+    ['inactive outlet', f => { f.outlet().active = false; }],
+    ['deleted outlet', f => { f.records.delete('OUTLET/actual-document'); }],
+    ['1 ms before lease expiry', f => { f.time('2026-10-19T10:00:29.999Z'); }],
+    ['exactly at lease expiry', f => { f.time('2026-10-19T10:00:30Z'); }],
+    ['outlet midnight rollover', f => { f.time('2026-10-19T18:30:01Z'); }],
+    ['just below the limit', f => { f.usage().usedSeconds = 1799.998; f.time('2026-10-19T10:00:00.001Z'); }],
+    ['exactly at the limit', f => { f.usage().usedSeconds = 1799.999; f.time('2026-10-19T10:00:00.001Z'); }],
+    ['exempt outlet past the limit', f => { f.outlet().eraseOutlet = true; f.usage().usedSeconds = 1800; f.time('2026-10-19T10:00:10Z'); }],
+    ['damaged accounting', f => { f.usage().usedSeconds = -1; }],
+    ['timezone changed', f => { f.outlet().country = { timezone: 'UTC' }; }],
+    ['another employee lease', async (f, s) => {
+      f.records.set('USER_PROFILE/other', { active: true, outlets: ['actual-document'] });
+      await startSession(f, '00000000-0000-4000-8000-000000000009', 'other'); return { user: 'other', session: s };
+    }],
+    ['released lease', async (f, s) => { await f.operate(lifecycle(s, 'stop')); }],
+  ];
+  for (const [name, arrange] of cases) {
+    const outcomes: unknown[] = [];
+    for (const readOnly of [false, true]) {
+      const f = fixture(); const s = await startSession(f);
+      const custom = await arrange(f, s) as { user: string } | undefined;
+      const writes = f.writes.length, stored = JSON.stringify(f.usage());
+      outcomes.push(await f.operate(lifecycle(s, 'check'), custom?.user ?? 'user', { readOnly })
+        .then(() => 'allowed', (error: any) => [error.status, error.code ?? null]));
+      if (readOnly) { assert.equal(f.writes.length, writes, `${name}: no write`); assert.equal(JSON.stringify(f.usage()), stored, `${name}: stored usage unchanged`); }
+    }
+    assert.deepEqual(outcomes[1], outcomes[0], `${name}: same outcome in both modes`);
+    assert.equal(outcomes[0] === 'allowed', ['valid lease', '1 ms before lease expiry', 'just below the limit', 'exempt outlet past the limit'].includes(name), `${name}: expected access decision`);
+  }
+});
+test('reads cannot keep a lease alive or avoid charges: only heartbeats renew, and charged time is identical', async () => {
+  const charged: number[] = [];
+  for (const readOnly of [false, true]) {
+    const f = fixture(); const s = await startSession(f);
+    for (const at of ['10:00:05', '10:00:15', '10:00:29']) { f.time(`2026-10-19T${at}Z`); await f.operate(lifecycle(s, 'check'), 'user', { readOnly }); }
+    f.time('2026-10-19T10:00:31Z');
+    await assert.rejects(f.operate(lifecycle(s, 'check'), 'user', { readOnly }), { code: 'USAGE_SESSION_EXPIRED' });
+    f.time('2026-10-19T10:05:00Z'); charged.push((await startSession(f)).usedSeconds);
+  }
+  assert.deepEqual(charged, [30, 30], 'the expired lease is charged in full, never more, in both modes');
+});
+test('concurrent read-only checks never lose or duplicate heartbeat and stop accounting', async () => {
+  const final: unknown[] = [];
+  for (const readOnly of [false, true]) {
+    const f = fixture(); const s = await startSession(f);
+    f.time('2026-10-19T10:00:10Z');
+    const check = () => f.operate(lifecycle(s, 'check'), 'user', { readOnly });
+    const [, hb] = await Promise.all([check(), f.operate(lifecycle(s, 'heartbeat')), check(), check()]) as any[];
+    f.time('2026-10-19T10:00:25Z');
+    const [stopped] = await Promise.all([f.operate(lifecycle(hb, 'stop')), check().catch(() => 'denied')]) as any[];
+    await assert.rejects(check(), { code: 'USAGE_SESSION_REQUIRED' }, 'a stopped lease cannot be used by later reads');
+    final.push([hb.sequence, stopped.usedSeconds, (f.usage() as any).usedSeconds, Object.keys((f.usage() as any).sessions).length]);
+  }
+  assert.deepEqual(final[1], final[0]); assert.deepEqual(final[0], [1, 25, 25, 0]);
 });
 test('logout pauses accounting; subsequent entry resumes accumulated usage', async () => {
   const f = fixture(); const s = await startSession(f); f.time('2026-10-19T10:00:12Z');

@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSuccessDismiss } from '../utils/useTimedNotice.ts';
+import { useRowBatches } from '../utils/useRowBatches.ts';
 import { CheckCircle2, FileSpreadsheet, X } from 'lucide-react';
 import { fileSelectionError, namedPremisesHeaders, PRODUCT_COLUMNS, PREMISES_TEMPLATE_COLUMNS, type ProductUploadMode, type CsvPreview } from './productCsvPreview.ts';
-
-const PAGE_SIZE = 50;
 
 export function CsvUploadPreview({ outletId, token, onSessionExpired, onSuccessAcknowledged, mode = 'standard' }: { mode?: ProductUploadMode; outletId: string; token: string; onSessionExpired: () => void; onSuccessAcknowledged: () => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -15,7 +14,6 @@ export function CsvUploadPreview({ outletId, token, onSessionExpired, onSuccessA
   const [quotaChecked, setQuotaChecked] = useState(false);
   const [remainingAttempts, setRemainingAttempts] = useState<number | null>(null);
   const [parsing, setParsing] = useState(false);
-  const [page, setPage] = useState(1);
   const [source, setSource] = useState('');
   const [assignedCodes, setAssignedCodes] = useState<(string | number)[] | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -77,7 +75,6 @@ export function CsvUploadPreview({ outletId, token, onSessionExpired, onSuccessA
     setPreview(null);
     setError('');
     setParsing(false);
-    setPage(1);
     if (inputRef.current) inputRef.current.value = '';
   };
 
@@ -128,7 +125,10 @@ export function CsvUploadPreview({ outletId, token, onSessionExpired, onSuccessA
     let writeAttempted = false;
     try {
       const options = { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ source, mode }), signal: controller.signal };
-      if (!assignedCodes) {
+      // One click validates, assigns Search Codes and uploads. The server re-checks
+      // the same codes before writing, so nothing is saved if anything changed.
+      let codes = assignedCodes;
+      if (!codes) {
         const validation = await fetch(`/api/outlets/${encodeURIComponent(outletId)}/products/import/validate`, options);
         if (controller.signal.aborted) return;
         if (validation.status === 401) { onSessionExpired(); return; }
@@ -147,14 +147,12 @@ export function CsvUploadPreview({ outletId, token, onSessionExpired, onSuccessA
           const issues = checked.data?.rows.flatMap(row => row.errors.map(issue => `Row ${row.rowNumber} · ${issue.column}: ${issue.message}`)) ?? [];
           throw new Error(checked.message || [...(checked.data?.headerErrors ?? []), ...issues.slice(0, 8)].join(' ') || 'The file cannot be imported.');
         }
-        const codes = checked.data.documents.map(document => document.fields.code);
+        codes = checked.data.documents.map(document => document.fields.code);
         setAssignedCodes(codes);
-        setUploadStatus(`${checked.data.categorySummary ? `${checked.data.categorySummary.reused} categories will be reused; ${checked.data.categorySummary.toCreate} missing categories will be created on confirmation. ` : ''}${mode === 'premises' ? 'Named premises will be matched by name; missing premises will be created as Bill premises on confirmation. Each column supplies that premises selling price. ' : ''}Review the assigned Search Codes below, then click Upload to confirm. Excel Search Codes and Category Nos are ignored. Categories are matched by name; new categories receive sequential numbers.`);
-        return;
       }
       setUploadStatus('Uploading products…');
       writeAttempted = true;
-      const response = await fetch(`/api/outlets/${encodeURIComponent(outletId)}/products/import${mode === 'premises' ? '/premises' : ''}`, { ...options, body: JSON.stringify({ source, codes: assignedCodes }) });
+      const response = await fetch(`/api/outlets/${encodeURIComponent(outletId)}/products/import${mode === 'premises' ? '/premises' : ''}`, { ...options, body: JSON.stringify({ source, codes }) });
       if (controller.signal.aborted) return;
       if (response.status === 401) { onSessionExpired(); return; }
       const result = await response.json() as { success: boolean; message?: string; data?: { success: boolean; created: number; existing: number; confirmedRows: number[]; unconfirmedRows: number[]; message: string } };
@@ -194,15 +192,15 @@ export function CsvUploadPreview({ outletId, token, onSessionExpired, onSuccessA
     }
   };
 
+  const rows = preview?.rows ?? [];
+  // Every row is in one scrolling table; rows mount in batches as it scrolls.
+  const { rows: visibleRows, hasMore, sentinelRef } = useRowBatches(rows, filename);
+
   if (uploadLimitMessage) return <p className="csv-upload-error" role="alert">{uploadLimitMessage}</p>;
   if (!quotaChecked) return <p role="status">{error || 'Checking upload limit…'}</p>;
 
-  const rows = preview?.rows ?? [];
   const validRows = rows.filter(row => !row.errors.length).length;
   const warningRows = rows.filter(row => row.warnings.length).length;
-  const pageSize = mode === 'premises' ? 10 : PAGE_SIZE;
-  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
-  const visibleRows = rows.slice((page - 1) * pageSize, page * pageSize);
   const headers = preview && (mode === 'premises' || preview.headerErrors.length) ? preview.headers : [...(mode === 'premises' ? PREMISES_TEMPLATE_COLUMNS : PRODUCT_COLUMNS)];
   const columns = Math.max(headers.length, ...visibleRows.map(row => row.cells.length));
 
@@ -252,17 +250,13 @@ export function CsvUploadPreview({ outletId, token, onSessionExpired, onSuccessA
                   <div key={index} className={issue.level === 'Error' ? 'csv-upload-error' : 'csv-upload-warning'}>{issue.level} · Row {row.rowNumber} · {issue.column}: {issue.message}</div>
                 ))}
               </td>
-              {Array.from({ length: columns }, (_, index) => <td key={index}><span className="csv-upload-original-cell">{index === 13 && mode === 'standard' ? (assignedCodes?.[rows.indexOf(row)] ?? 'Assigned after validation') : row.cells[index] ?? ''}</span></td>)}
+              {Array.from({ length: columns }, (_, index) => <td key={index}><span className="csv-upload-original-cell">{index === 13 && mode === 'standard' ? (assignedCodes?.[rows.indexOf(row)] ?? 'Assigned on upload') : row.cells[index] ?? ''}</span></td>)}
             </tr>)}</tbody>
           </table>
+          {hasMore && <div ref={sentinelRef} className="csv-upload-help" role="status">Showing {visibleRows.length} of {rows.length} rows…</div>}
         </div>
-        {rows.length > pageSize && <div className="csv-upload-pagination">
-          <button type="button" disabled={page === 1} onClick={() => setPage(value => value - 1)}>Previous</button>
-          <span>Page {page} of {totalPages} · {rows.length} rows</span>
-          <button type="button" disabled={page === totalPages} onClick={() => setPage(value => value + 1)}>Next</button>
-        </div>}
       </>}
-      <div className="csv-upload-import-note"><button type="button" disabled={(mode === 'premises' && !namedPremisesHeaders(preview?.headers ?? []).length) || uploading || uploaded || parsing || !source || !rows.length || validRows !== rows.length || !!preview?.headerErrors.length} onClick={() => void upload()}>{mode === 'premises' && !namedPremisesHeaders(preview?.headers ?? []).length ? 'Confirm Upload' : uploading ? 'Checking…' : assignedCodes ? 'Upload' : 'Preview Search Codes'}</button><span role="status">{uploadStatus || (mode === 'premises' && !namedPremisesHeaders(preview?.headers ?? []).length ? 'Preview only. Saving premises requires a supported premises mapping. Use named premises columns to upload.' : '')}</span>{mode === 'premises' && <button type="button" className="csv-upload-secondary" onClick={onSuccessAcknowledged}>Cancel</button>}</div>
+      <div className="csv-upload-import-note"><button type="button" disabled={(mode === 'premises' && !namedPremisesHeaders(preview?.headers ?? []).length) || uploading || uploaded || parsing || !source || !rows.length || validRows !== rows.length || !!preview?.headerErrors.length} onClick={() => void upload()}>{mode === 'premises' && !namedPremisesHeaders(preview?.headers ?? []).length ? 'Confirm Upload' : uploading ? 'Uploading…' : 'Upload'}</button><span role="status">{uploadStatus || (mode === 'premises' && !namedPremisesHeaders(preview?.headers ?? []).length ? 'Preview only. Saving premises requires a supported premises mapping. Use named premises columns to upload.' : '')}</span>{mode === 'premises' && <button type="button" className="csv-upload-secondary" onClick={onSuccessAcknowledged}>Cancel</button>}</div>
     </div>
   );
 }

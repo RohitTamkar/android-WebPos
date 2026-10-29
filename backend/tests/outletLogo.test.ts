@@ -23,7 +23,8 @@ function fixture() {
   const reference = (path: string): any => ({ path, doc: (id: string) => reference(`${path}/${id}`), collection: (name: string) => reference(`${path}/${name}`) });
   const db = { collection: (name: string) => reference(name), runTransaction: async (work: any, options: unknown) => {
     assert.deepEqual(options, { readOnly: true });
-    return work({ get: async (ref: { path: string }) => { reads.push(ref.path); return { data: () => records.get(ref.path) }; },
+    const get = async (ref: { path: string }) => { reads.push(ref.path); return { data: () => records.get(ref.path) }; };
+    return work({ get, getAll: (...refs: { path: string }[]) => Promise.all(refs.map(get)),
       set: mutation, update: mutation, create: mutation, delete: mutation });
   }, set: mutation, batch: mutation } as unknown as Firestore;
   let storageError = false, invalidImage = false, nextGeneration = 3;

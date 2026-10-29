@@ -10,6 +10,8 @@ export function productPremisesPriceKey(name: string, table: Record<string, unkn
 
 // Android uses keys such as "TABLE price" inside the existing priceTable string.
 // Match those to the configured premise without rewriting any stored keys/values.
+// Only the outlet's current premises are listed: prices saved for a deleted
+// premise stay stored but are not shown.
 export function productPremisesPrices(premises: { name: string }[], priceTable: Record<string, unknown>) {
   const rows = new Map<string, { name: string; price: unknown; priority: number }>();
   for (const premise of premises) {
@@ -20,12 +22,8 @@ export function productPremisesPrices(premises: { name: string }[], priceTable: 
     const normalized = normalize(key);
     if (!normalized || normalized === 'default price') continue;
     const base = withoutPrice(key.trim().replace(/\s+/g, ' '));
-    const identity = rows.has(normalized) ? normalized : normalize(base);
-    let row = rows.get(identity);
-    if (!row) {
-      row = { name: base || key.trim(), price: undefined, priority: 0 };
-      rows.set(identity, row);
-    }
+    const row = rows.get(rows.has(normalized) ? normalized : normalize(base));
+    if (!row) continue;
     // Prefer the Android price key if both it and an older plain-name key exist.
     const priority = normalized === `${normalize(row.name)} price` ? 2 : 1;
     if (priority > row.priority) { row.price = price; row.priority = priority; }

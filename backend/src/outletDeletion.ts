@@ -25,17 +25,20 @@ export async function deleteOutletRecord(db: Firestore, outletId: string, collec
   });
 }
 
-export const DELETE_ALL_CONFIRMATIONS = { PRODUCT: 'DELETE_ALL_PRODUCTS', CATEGORY: 'DELETE_ALL_CATEGORIES' } as const;
+export const DELETE_ALL_CONFIRMATIONS = { PRODUCT: 'DELETE_ALL_PRODUCTS', CATEGORY: 'DELETE_ALL_CATEGORIES',
+  EMPLOYEE: 'DELETE_ALL_EMPLOYEES', CUSTOMER: 'DELETE_ALL_CUSTOMERS', PREMISES: 'DELETE_ALL_PREMISES' } as const;
+export type DeleteAllCollection = keyof typeof DELETE_ALL_CONFIRMATIONS;
 const BATCH_SIZE = 400;
 
 // Deletes outlet masters after explicit confirmation. Product delete-all also
-// removes that outlet's categories; category delete-all keeps products untouched.
+// removes that outlet's categories; category, employee, customer and premises
+// delete-all remove only their own masters (bills and other records stay untouched).
 // Batches commit independently, so a retry after a partial failure deletes whatever remains.
-export async function deleteAllOutletRecords(db: Firestore, outletId: string, collection: 'CATEGORY' | 'PRODUCT',
+export async function deleteAllOutletRecords(db: Firestore, outletId: string, collection: DeleteAllCollection,
   profileId: string | null, assignedOutlets: (profile: Record<string, unknown>) => string[], body: unknown): Promise<{ deleted: number; deletedCategories?: number }> {
   if (!profileId) throw new OutletDeletionError(401, 'Your session has expired. Please sign in again.');
   if (!outletId || outletId.includes('/') || outletId === '.' || outletId === '..') throw new OutletDeletionError(400, 'A valid outlet is required.');
-  if (collection !== 'CATEGORY' && collection !== 'PRODUCT') throw new OutletDeletionError(400, 'Invalid collection.');
+  if (!Object.hasOwn(DELETE_ALL_CONFIRMATIONS, collection)) throw new OutletDeletionError(400, 'Invalid collection.');
   const confirmation = body && typeof body === 'object' ? (body as Record<string, unknown>).confirm : undefined;
   if (confirmation !== DELETE_ALL_CONFIRMATIONS[collection]) throw new OutletDeletionError(400, 'Delete all must be confirmed.');
   const profile = (await db.collection('USER_PROFILE').doc(profileId).get()).data();

@@ -6,10 +6,11 @@ function save(path: string, value: unknown, token = 'user') {
   readMasterSnapshot(path, token);
   rememberMasterSnapshot(path, token, value, masterSnapshotRevision());
 }
-test('recent snapshots are immediately reusable and expire after thirty seconds', t => {
+test('recent snapshots remain visible on return visits and expire after five minutes', t => {
   clearMasterSnapshots(); let now = 1000; t.mock.method(Date, 'now', () => now);
   save(url, [{ id: 'product' }]); assert.deepEqual(readMasterSnapshot(url, 'user'), [{ id: 'product' }]);
-  now += 30_000; assert.equal(readMasterSnapshot(url, 'user'), undefined);
+  now += 30_000; assert.deepEqual(readMasterSnapshot(url, 'user'), [{ id: 'product' }]);
+  now += 270_000; assert.equal(readMasterSnapshot(url, 'user'), undefined);
 });
 test('tokens, outlet IDs, list shapes and logo variants never share cached data', () => {
   clearMasterSnapshots(); save(url, 'a'); save('/api/outlets/b/products', 'b');
@@ -31,8 +32,8 @@ test('outlet mutations invalidate all dependent snapshots and reject pre-mutatio
 test('logout cleanup rejects responses from the previous session and memory is bounded', () => {
   clearMasterSnapshots(); save(url, 'old'); const before = masterSnapshotRevision(); clearMasterSnapshots();
   rememberMasterSnapshot(url, 'user', 'late old session', before); assert.equal(readMasterSnapshot(url, 'user'), undefined);
-  for (let index = 0; index < 9; index++) save(`/api/outlets/a/list${index}`, index);
-  assert.equal(readMasterSnapshot('/api/outlets/a/list0', 'user'), undefined); assert.equal(readMasterSnapshot('/api/outlets/a/list8', 'user'), 8);
+  for (let index = 0; index < 33; index++) save(`/api/outlets/a/list${index}`, index);
+  assert.equal(readMasterSnapshot('/api/outlets/a/list0', 'user'), undefined); assert.equal(readMasterSnapshot('/api/outlets/a/list32', 'user'), 32);
 });
 
 test('the usage fetch wrapper invalidates snapshots before and after real mutations, including failed requests', async () => {

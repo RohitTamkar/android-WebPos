@@ -31,6 +31,9 @@
     .outlet-selection-page, .excel-sheet-instructions
   ) { color: var(--theme-text); color-scheme: dark; }
   :root[data-theme="dark"] .outlet-selection-page { background: var(--workspace); }
+  :root[data-theme="dark"] .business-outlet-switch { border-top-color: var(--line); }
+  :root[data-theme="dark"] .business-profile .business-outlet-status { color: #4ade80; }
+  :root[data-theme="dark"] .business-profile .business-outlet-summary > .business-avatar { color: white; }
   :root[data-theme="dark"] :is(
     .retail-dashboard-shell h1, .retail-dashboard-shell h2, .retail-dashboard-shell h3,
     .retail-dashboard-shell h4, .business-profile strong, .nav-group-title, .masters-group .nav-group-title,

@@ -4,6 +4,7 @@ import type { Firestore } from 'firebase-admin/firestore';
 import { PRODUCT_COLUMNS } from '../../frontend/src/pages/productCsvPreview.js';
 import { checkAuthorizedProductImport, type ImportValidationDependencies } from '../src/productImportValidation.js';
 import { createProductImportChunk } from '../src/productImportWriter.js';
+import { withStoredPremisesNames } from '../src/productImportPremises.js';
 const headers = [...PRODUCT_COLUMNS, 'AC Table', 'Non AC Table'];
 const source = [headers, ['Chicken', 'Local', '20', '20', '0', '0', 'Food', '1', '0', '0', 'number', '0', 'no', '', '25.50', '0']].map(cells => cells.join(',')).join('\n');
 const assigned = () => ['outlet'];
@@ -88,7 +89,8 @@ test('category resolution preserves named prices and reconciles retries through 
   const { persistProductImportWithCategories } = await import('../src/productImportFlow.js');
   const mock = fixture(); mock.records.delete('OUTLET/outlet/CATEGORY/cat');
   const before = { ...deps, readCategories: async () => mock.records.has('OUTLET/outlet/CATEGORY/cat') ? [{ id: 'cat', name: 'Food', categoryNo: 1 }] : [], readProducts: async () => [...mock.records]
-    .filter(([path]) => path.startsWith('OUTLET/outlet/PRODUCT/')).map(([path, fields]) => ({ id: path.split('/').at(-1)!, fields })) };
+    .filter(([path]) => path.startsWith('OUTLET/outlet/PRODUCT/')).map(([path, fields]) => ({ id: path.split('/').at(-1)!, fields })),
+    readPremises: async () => [...mock.records].filter(([path]) => path.startsWith('OUTLET/outlet/PREMISES/')).map(([, fields]) => ({ name: String(fields.name) })) };
   const writer = { enabled: true, readExisting: before.readProducts,
     createChunk: (outlet: string, docs: import('../src/productImportValidation.js').ImportDocument[]) => createProductImportChunk(mock.db, outlet, docs, context) };
   const resolve = async () => {
@@ -96,8 +98,18 @@ test('category resolution preserves named prices and reconciles retries through 
     return { success: true, categories: [{ id: 'cat', name: 'Food', categoryNo: 1 }], created: 1, reused: 0, issues: [] };
   };
   const result = await persistProductImportWithCategories('outlet', 'user', source, [1], before, resolve, writer, 'premises');
-  assert.equal(result.success, true); assert.equal(result.created, 1);
+  assert.equal(result.success, true, result.message); assert.equal(result.created, 1);
   const product = [...mock.records].find(([path]) => path.startsWith('OUTLET/outlet/PRODUCT/'))![1];
-  assert.equal(product.category, 'cat'); assert.equal(JSON.parse(String(product.priceTable))['AC Table price'], 25.5);
+  assert.equal(product.category, 'cat'); assert.equal(JSON.parse(String(product.priceTable))['ac table price'], 25.5, 'an existing premise keeps its stored spelling in the price key');
   assert.equal((await persistProductImportWithCategories('outlet', 'user', source, [1], before, resolve, writer, 'premises')).existing, 1);
+});
+
+test('headers in any letter case save prices under the existing premises spelling; new premises keep the header', async () => {
+  const docs = await documents();
+  const original = structuredClone(docs);
+  const saved = withStoredPremisesNames(['AC TABLE', 'Non AC Table'], [{ fields: { name: ' AC  Table ' } }],
+    docs.map(document => ({ ...document, fields: { ...document.fields, priceTable: JSON.stringify({ 'default price': 20, 'AC TABLE price': 25.5, 'Non AC Table price': 0 }) } })));
+  assert.deepEqual(JSON.parse(String(saved[0]!.fields.priceTable)), { 'default price': 20, 'AC Table price': 25.5, 'Non AC Table price': 0 });
+  assert.deepEqual(docs, original, 'inputs are not mutated, so transaction retries see the original documents');
+  assert.equal(withStoredPremisesNames(['AC Table'], [{ fields: { name: 'AC Table' } }], docs), docs, 'matching spelling needs no copy');
 });

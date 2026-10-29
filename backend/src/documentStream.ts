@@ -49,7 +49,7 @@ export async function streamDocuments<T>(req: Request, res: Response, query: Que
     for await (const document of stream as AsyncIterable<QueryDocumentSnapshot>) {
       if (closed) break;
       batch.push(toItem(document));
-      if (batch.length >= MAX_BATCH || Date.now() - lastFlush >= FLUSH_MS) flush();
+      if (sent === 0 || batch.length >= MAX_BATCH || Date.now() - lastFlush >= FLUSH_MS) flush();
     }
     if (closed) { stream.destroy(); return; }
     flush();

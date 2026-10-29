@@ -21,7 +21,7 @@ try {
         loader: 'ts', resolveDir: resolve(testDirectory, '../src/utils'),
       }));
     } }],
-    outfile: join(temporary, 'ui.js'), format: 'iife', jsx: 'automatic', loader: { '.png': 'dataurl' }, define: { 'process.env.NODE_ENV': '"production"' } });
+    outfile: join(temporary, 'ui.js'), format: 'iife', jsx: 'automatic', loader: { '.png': 'dataurl' }, define: { 'process.env.NODE_ENV': JSON.stringify(process.env.BROWSER_TEST_DEV === '1' ? 'development' : 'production') } });
   server = createServer(async (req, res) => {
     if (req.url === '/') { res.setHeader('Content-Type', 'text/html'); res.end('<html><head><link rel="stylesheet" href="/ui.css"></head><body><div id="root"></div><pre id="test-results">pending</pre><script src="/ui.js"></script></body></html>'); return; }
     if (req.url === '/ui.js' || req.url === '/ui.css') {

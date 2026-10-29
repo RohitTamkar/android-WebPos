@@ -32,7 +32,9 @@ export function createWebUsageGuard(deps: {
       const sessionId = req.header('x-web-usage-session');
       const generation = req.header('x-web-usage-generation');
       if (!sessionId || !generation) throw new DailyUsageError(428, 'USAGE_SESSION_REQUIRED', 'Enter the outlet before using Web POS.');
-      await deps.operate(deps.db(), context, token.profileDocId, deps.assigned, { action: 'check', sessionId, generation });
+      // Reads re-verify the lease without a write. Writes keep the read-write check.
+      const readOnly = req.method === 'GET' || req.method === 'HEAD';
+      await deps.operate(deps.db(), context, token.profileDocId, deps.assigned, { action: 'check', sessionId, generation }, undefined, { readOnly });
       if (context !== target) {
         await (deps.checkAllowance ?? checkOutletDailyUsageAllowance)(deps.db(), target, token.profileDocId, deps.assigned);
       }

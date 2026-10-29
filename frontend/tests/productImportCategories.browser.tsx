@@ -46,17 +46,16 @@ async function open() {
 void (async () => {
   await until(() => document.querySelector('.upload-excel-options'), 'page'); await open();
   assert(confirmations === 0 && previews === 0, 'Local preview makes no import calls');
-  button('Preview Search Codes').click(); await until(() => button('Upload'), 'server preview');
-  assert(confirmations === 0 && document.body.textContent?.includes('1 missing categories will be created on confirmation'), 'Missing categories are explained before any writes');
-  assert(document.body.textContent?.includes('new categories receive sequential numbers'), 'Automatic category numbering is explained before confirmation');
+  assert(!button('Preview Search Codes'), 'Upload is a single step');
   button('Upload').click(); await until(() => document.querySelector('.csv-upload-success-dialog[open]'), 'confirmed import');
+  assert(previews === 1, 'One Upload click validates once before importing');
   assert(confirmations === 1 && document.querySelector('#csv-upload-success-description')?.textContent === 'You can view the uploaded products on the Products page.', 'Success shows a concise confirmation');
   assert(!document.body.textContent?.includes('1 categories created'), 'Detailed success result text is removed');
   button('OK').click();
   await until(() => !document.querySelector('.upload-excel-preview-dialog[open]') && !document.querySelector('dialog .csv-upload-preview'), 'OK closes the preview and returns to Upload Excel');
   assert(document.querySelector('#upload-excel-title')?.textContent === 'Upload Excel', 'Upload Excel page remains visible');
   mode = 'partial'; await open();
-  button('Preview Search Codes').click(); await until(() => button('Upload'), 'second preview'); button('Upload').click();
+  button('Upload').click();
   await until(() => document.querySelector('.csv-upload-error'), 'partial result');
   assert(!document.querySelector('.csv-upload-success-dialog[open]'), 'Partial failure never shows success');
   assert(document.querySelector('.csv-upload-error')?.textContent?.includes('1 failed or unconfirmed') && document.querySelector('.csv-upload-error')?.textContent?.includes('Unconfirmed rows: 3'), 'Partial failure keeps category counts and original row numbers');

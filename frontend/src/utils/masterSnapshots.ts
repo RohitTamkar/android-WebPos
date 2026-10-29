@@ -2,7 +2,7 @@
 // No persistence, authorization decisions, stock calculations or write retries.
 const snapshots = new Map<string, { url: string; value: unknown; expires: number }>();
 let activeToken = '', revision = 0;
-const MAX_ENTRIES = 8, TTL = 30_000;
+const MAX_ENTRIES = 32, TTL = 5 * 60_000;
 const keyFor = (url: string, token: string) => JSON.stringify([token, url]);
 export function masterSnapshotRevision() { return revision; }
 export function clearMasterSnapshots() { snapshots.clear(); activeToken = ''; revision++; }

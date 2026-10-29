@@ -1,3 +1,4 @@
+import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import App from '../src/App.tsx';
 import '../src/index.css';
@@ -32,7 +33,12 @@ window.fetch = async (input, init) => {
   return Response.json({ success: true, data: payload(kind) });
 };
 const root = createRoot(document.getElementById('root')!); root.render(<App />);
-const navigate = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('.nav-group-items button')].find(button => button.textContent === label)!.click();
+const navItem = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('.nav-group-items button')].find(button => button.textContent === label);
+// The sidebar is an accordion: open sections (as a user would) until the page link is visible.
+const navigate = (label: string) => {
+  for (const title of document.querySelectorAll<HTMLElement>('.nav-group-title')) { if (navItem(label)) break; flushSync(() => title.click()); }
+  navItem(label)!.click();
+};
 const tableHas = (text: string) => document.querySelector('.dashboard-workspace tbody')?.textContent?.includes(text);
 void (async () => {
   await until(() => document.querySelector('.page-hero'));

@@ -1,9 +1,10 @@
 import { readMasterSnapshot, masterSnapshotRevision, rememberMasterSnapshot } from '../utils/masterSnapshots.ts';
+import { useMasterSync } from '../utils/useMasterSync.ts';
 import { useTimedNotice } from '../utils/useTimedNotice.ts';
 import { EditCategoryForm, CategoryUpdatedPopup } from './EditCategoryForm.tsx';
 import { DeleteConfirmation } from './DeleteConfirmation.tsx';
 import { DeleteAllError, deleteAllRecords } from './deleteAllApi.ts';
-import { loadProductList } from './productListApi.ts';
+import { loadProductList, ProductListRequestError } from './productListApi.ts';
 import { SuccessPopup } from './SuccessPopup.tsx';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
@@ -85,6 +86,7 @@ interface CategoryPageProps {
 export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSessionExpired }) => {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
+  const [liveReady, setLiveReady] = useState(false);
   const [error, setError] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -115,6 +117,7 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
   // Load existing categories without modifying their Firestore documents.
   useEffect(() => {
     const controller = new AbortController();
+    setLiveReady(false);
     const url = `/api/outlets/${encodeURIComponent(outlet.id)}/categories`;
     const cached = readMasterSnapshot<FirebaseCategory[]>(url, token);
     const revision = masterSnapshotRevision();
@@ -146,6 +149,7 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
           const counts = new Map(result.data.map(category => [category.id, category.productCount ?? null]));
           setCategories(current => current.map(category => ({ ...category, productCount: counts.get(category.id) ?? category.productCount })));
         } else setCategories(result.data.map(toCategory));
+        setLiveReady(true);
       })
       .catch(requestError => {
         if (!controller.signal.aborted) setError((requestError as Error).message);
@@ -155,6 +159,18 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ outlet, token, onSes
   // onSessionExpired is a stable callback from the parent.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [outlet.id, token, reloadKey]);
+
+  useMasterSync(outlet.id, token, 'categories', liveReady && !loading && !error && !addOpen && !editTarget && !saving && !deleting && !deleteAllOpen && !deleteTarget,
+    async signal => {
+      const revision = masterSnapshotRevision();
+      try {
+        const loaded = await loadProductList<FirebaseCategory>(`/api/outlets/${encodeURIComponent(outlet.id)}/categories`, token, signal, 'categories');
+        if (!signal.aborted && revision === masterSnapshotRevision()) setCategories(loaded.map(toCategory));
+      } catch (failure) {
+        if (!signal.aborted && failure instanceof ProductListRequestError && failure.status === 401) onSessionExpired();
+        else throw failure;
+      }
+    });
 
   // Filtered categories
   const filteredCategories = useMemo(() => {

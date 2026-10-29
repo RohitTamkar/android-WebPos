@@ -14,6 +14,8 @@ function LogoEditor({ outletId, outletName, token, variant, onBusyChange }: Prop
   const [preview, setPreview] = useState<Preview>(() => emptyPreview(0));
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ error: boolean; message: string } | null>(null);
+  const [removalMessage, setRemovalMessage] = useState('');
+  const confirmation = useRef<HTMLDialogElement>(null);
   const input = useRef<HTMLInputElement>(null);
   const mutation = useRef<AbortController | null>(null);
   const busyRef = useRef(false);
@@ -21,6 +23,10 @@ function LogoEditor({ outletId, outletName, token, variant, onBusyChange }: Prop
   const current = preview.revision === revision ? preview : emptyPreview(revision);
   const label = variant === 'header' ? 'Header Logo' : 'Footer Logo';
   const endpoint = `/api/outlets/${encodeURIComponent(outletId)}/logo?variant=${variant}`;
+
+  useEffect(() => {
+    if (removalMessage) confirmation.current?.showModal();
+  }, [removalMessage]);
 
   useEffect(() => {
     alive.current = true;
@@ -72,9 +78,10 @@ function LogoEditor({ outletId, outletName, token, variant, onBusyChange }: Prop
     return () => { active = false; controller.abort(); window.clearTimeout(timeout); for (const url of objectUrls) URL.revokeObjectURL(url); };
   }, [endpoint, outletName, token, revision]);
 
-  const save = async (file: File) => {
+  const save = async (file?: File) => {
     if (busyRef.current || current.loading || current.generation === null) return;
-    if ((!IMAGE_TYPES.includes(file.type) || !file.size || file.size > 5 * 1024 * 1024)) {
+    if (!file && (!current.source || current.generation === '0')) return;
+    if (file && (!IMAGE_TYPES.includes(file.type) || !file.size || file.size > 5 * 1024 * 1024)) {
       setNotice({ error: true, message: 'Choose a JPEG, PNG or WebP image up to 5 MB.' }); return;
     }
     busyRef.current = true; setBusy(true); onBusyChange(true); setNotice(null);
@@ -82,18 +89,26 @@ function LogoEditor({ outletId, outletName, token, variant, onBusyChange }: Prop
     const timeout = window.setTimeout(() => controller.abort(), 30_000);
     let attempted = false;
     try {
-      const url = URL.createObjectURL(file);
-      try { const image = new Image(); image.src = url; await image.decode(); }
-      catch { throw new Error('The selected file is not a readable image. Choose another image.'); }
-      finally { URL.revokeObjectURL(url); }
+      if (file) {
+        const url = URL.createObjectURL(file);
+        try { const image = new Image(); image.src = url; await image.decode(); }
+        catch { throw new Error('The selected file is not a readable image. Choose another image.'); }
+        finally { URL.revokeObjectURL(url); }
+      }
       if (!alive.current || controller.signal.aborted) return;
       attempted = true; invalidateMasterSnapshots(endpoint);
-      const response = await fetch(endpoint, { method: 'PUT',
-        headers: { Authorization: `Bearer ${token}`, 'X-Logo-Expected-Generation': current.generation, 'Content-Type': file.type },
+      const response = await fetch(endpoint, { method: file ? 'PUT' : 'DELETE',
+        headers: { Authorization: `Bearer ${token}`, 'X-Logo-Expected-Generation': current.generation, ...(file ? { 'Content-Type': file.type } : {}) },
         body: file, signal: controller.signal });
       const result = await response.json() as { success?: boolean; message?: string };
       if (!response.ok || !result.success) throw new Error(result.message || 'Unable to confirm this logo change.');
-      if (alive.current) setNotice({ error: false, message: `${label} uploaded successfully.` });
+      if (alive.current) {
+        if (!file) {
+          setPreview({ revision, source: '', generation: '0', loading: false, error: '' });
+          setRemovalMessage(`${label} removed successfully.`);
+        }
+        setNotice({ error: false, message: `${label} ${file ? 'uploaded' : 'removed'} successfully.` });
+      }
     } catch (error) {
       if (alive.current) setNotice({ error: true, message: controller.signal.aborted
         ? 'The change could not be confirmed. The preview will reload; review it before trying again.' : (error as Error).message });
@@ -121,10 +136,16 @@ function LogoEditor({ outletId, outletName, token, variant, onBusyChange }: Prop
       <button type="button" className="logo-upload" disabled={busy || current.loading || current.generation === null} onClick={() => input.current?.click()}>
         {busy ? <LoaderCircle size={17} /> : <ImagePlus size={17} />}{busy ? 'Please wait…' : `Upload ${label}`}
       </button>
-      {/* Display only: logo removal has no action for header or footer logos. */}
-      <button type="button" className="logo-remove"><Trash2 size={17} />Remove</button>
+      <button type="button" className="logo-remove" disabled={busy || current.loading || !current.source || !current.generation || current.generation === '0'}
+        onClick={() => void save()}><Trash2 size={17} />Remove</button>
     </div>
     <p className="outlet-logo-hint">JPEG, PNG or WebP · Up to 5 MB</p>
+    <dialog ref={confirmation} className="outlet-logo-confirm" aria-labelledby={`logo-removed-${variant}`}
+      aria-describedby={`logo-removed-message-${variant}`} onClose={() => setRemovalMessage('')}>
+      <h2 id={`logo-removed-${variant}`}>Logo removed</h2>
+      <p id={`logo-removed-message-${variant}`}>{removalMessage}</p>
+      <div><button type="button" className="logo-upload" onClick={() => confirmation.current?.close()}>OK</button></div>
+    </dialog>
   </>;
 }
 

@@ -218,3 +218,41 @@ test('a failed category assignment transaction leaves every product unchanged',a
  await assert.rejects(assignCategoryServicePoint(f.db,'outlet','current',assigned,{categoryId:'c1',servicePointId:'existing'}));
  assert.deepEqual(f.records,before);assert.deepEqual(f.writes,[]);
 });
+
+test('delete all service points unassigns their products first, then removes only this outlet\'s service points', async () => {
+  const { deleteAllOutletServicePoints } = await import('../src/servicePoints.js');
+  const records = new Map<string, Record<string, unknown>>([
+    ['USER_PROFILE/user', { active: true, outlets: ['outlet'] }], ['OUTLET/outlet', { active: true }], ['OUTLET/foreign', { active: true }],
+    ['OUTLET/foreign/SERVICE_POINT/k1', { name: 'Foreign' }], ['OUTLET/foreign/PRODUCT/f1', { kitchenId: 'k1' }],
+    ['OUTLET/outlet/PRODUCT/free', { kitchenId: '' }], ['OUTLET/outlet/PRODUCT/other', { kitchenId: 'unknown' }],
+  ]);
+  for (let index = 0; index < 35; index++) records.set(`OUTLET/outlet/SERVICE_POINT/k${index}`, { name: `Kitchen ${index}` });
+  for (let index = 0; index < 450; index++) records.set(`OUTLET/outlet/PRODUCT/p${index}`, { name: `P${index}`, kitchenId: `k${index % 35}` });
+  let failAt = -1, commits = 0;
+  const children = (path: string) => [...records.keys()].filter(key => key.startsWith(`${path}/`) && key.split('/').length === path.split('/').length + 1);
+  const ref = (path: string): any => ({ path, doc: (id: string) => ref(`${path}/${id}`), collection: (name: string) => query(`${path}/${name}`),
+    get: async () => ({ exists: records.has(path), data: () => records.get(path) }) });
+  const query = (path: string, filter?: (fields: Record<string, unknown>) => boolean): any => ({ ...ref(path),
+    where: (field: string, op: string, values: string[]) => { assert.equal(op, 'in'); assert.ok(values.length <= 30, 'in-queries stay within the limit'); return query(path, fields => values.includes(fields[field] as string)); },
+    select: () => ({ get: async () => ({ docs: children(path).filter(key => !filter || filter(records.get(key)!)).map(key => ({ id: key.split('/').at(-1), ref: ref(key) })) }) }) });
+  const db = { collection: (name: string) => query(name), batch: () => {
+    const writes: (() => void)[] = [];
+    return { update: (target: any, fields: Record<string, unknown>) => writes.push(() => records.set(target.path, { ...records.get(target.path), ...fields })),
+      delete: (target: any) => writes.push(() => records.delete(target.path)),
+      commit: async () => { if (commits++ === failAt) throw new Error('database failure'); writes.forEach(write => write()); } };
+  } } as unknown as Firestore;
+  const assigned = (profile: Record<string, unknown>) => profile.outlets as string[];
+  for (const [outlet, user, body, status] of [['outlet', 'user', {}, 400], ['outlet', 'user', { confirm: 'DELETE_ALL_PRODUCTS' }, 400],
+    ['outlet', null, { confirm: 'DELETE_ALL_SERVICE_POINTS' }, 401], ['foreign', 'user', { confirm: 'DELETE_ALL_SERVICE_POINTS' }, 403]] as const) {
+    await assert.rejects(deleteAllOutletServicePoints(db, outlet, user, assigned, body), (error: any) => error.status === status);
+  }
+  failAt = 0; commits = 0;
+  await assert.rejects(deleteAllOutletServicePoints(db, 'outlet', 'user', assigned, { confirm: 'DELETE_ALL_SERVICE_POINTS' }), (error: any) => error.status === 503 && /Retry Delete All/.test(error.message));
+  assert.equal(children('OUTLET/outlet/SERVICE_POINT').length, 35, 'no service point is deleted while products may still point at it');
+  failAt = -1;
+  assert.deepEqual(await deleteAllOutletServicePoints(db, 'outlet', 'user', assigned, { confirm: 'DELETE_ALL_SERVICE_POINTS' }), { deleted: 35, unassignedProducts: 450 });
+  assert.equal(children('OUTLET/outlet/SERVICE_POINT').length, 0);
+  assert.ok([...Array(450).keys()].every(index => records.get(`OUTLET/outlet/PRODUCT/p${index}`)!.kitchenId === '' && records.get(`OUTLET/outlet/PRODUCT/p${index}`)!.name === `P${index}`), 'products are kept and unassigned');
+  assert.equal(records.get('OUTLET/outlet/PRODUCT/other')!.kitchenId, 'unknown', 'products not assigned to these service points are untouched');
+  assert.ok(records.has('OUTLET/foreign/SERVICE_POINT/k1') && records.get('OUTLET/foreign/PRODUCT/f1')!.kitchenId === 'k1', 'other outlets are untouched');
+});

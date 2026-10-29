@@ -53,8 +53,10 @@ export function ProductPriceBulkUpdate({ products, outletId, token, onClose, onS
   const rows = useMemo(() => [...products].sort((left, right) => codeText(left).localeCompare(codeText(right), 'en', { numeric: true, sensitivity: 'base' })), [products]);
   const columns = useMemo(() => {
     const keys = new Set<string>([DEFAULT_KEY]);
-    rows.forEach(product => Object.keys(priceTableOf(product) ?? {}).forEach(key => keys.add(key)));
     const normalize = (key: string) => key.trim().replace(/\s+/g, ' ').toLowerCase();
+    // Prices saved for a deleted premise stay stored but get no column.
+    const current = new Set(premises.flatMap(name => [normalize(name), normalize(/\bprice$/i.test(name) ? name : `${name} price`)]));
+    rows.forEach(product => Object.keys(priceTableOf(product) ?? {}).forEach(key => { if (current.has(normalize(key))) keys.add(key); }));
     premises.forEach(name => {
       const key = /\bprice$/i.test(name) ? name : `${name} price`;
       if (![...keys].some(saved => normalize(saved) === normalize(key))) keys.add(key);

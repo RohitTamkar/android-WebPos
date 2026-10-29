@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { Firestore } from 'firebase-admin/firestore';
+import type { DocumentReference, Firestore, WriteBatch } from 'firebase-admin/firestore';
 import { z } from 'zod';
 import { ProductCreationError, requireProductOutlet } from './productCreation.js';
 
@@ -140,4 +140,45 @@ export async function assignCategoryServicePoint(db: Firestore, outletId: string
     changed.forEach(doc => transaction.update(outlet.collection('PRODUCT').doc(doc.id), { kitchenId: servicePointId }));
     return { categoryId, servicePointId, assignedCount: products.docs.length, updatedCount: changed.length };
   });
+}
+
+const DELETE_ALL_SERVICE_POINTS = 'DELETE_ALL_SERVICE_POINTS';
+const BATCH_SIZE = 400;
+
+// Deletes every service point of the outlet after explicit confirmation. Like a
+// single deletion, products assigned to them are first set to the existing
+// unassigned value; masters are deleted only after every product is cleared, so a
+// failure never leaves a product pointing at a removed service point. Retrying
+// finishes whatever remains.
+export async function deleteAllOutletServicePoints(db: Firestore, outletId: string, profileId: string | null, assigned: Assignments, body: unknown) {
+  validateTarget(outletId, profileId);
+  if (!body || typeof body !== 'object' || (body as Record<string, unknown>).confirm !== DELETE_ALL_SERVICE_POINTS) {
+    throw new ProductCreationError(400, 'Delete all must be confirmed.');
+  }
+  requireProductOutlet(profileId, outletId, (await db.collection('USER_PROFILE').doc(profileId!).get()).data(), assigned);
+  const outlet = db.collection('OUTLET').doc(outletId);
+  const parent = await outlet.get();
+  if (!parent.exists) throw new ProductCreationError(404, 'Outlet not found.');
+  if (parent.data()?.active !== true) throw new ProductCreationError(403, 'This outlet is inactive.');
+  const servicePoints = (await outlet.collection('SERVICE_POINT').select().get()).docs;
+  const ids = servicePoints.map(doc => doc.id);
+  const products = [];
+  for (let start = 0; start < ids.length; start += 30) {
+    products.push(...(await outlet.collection('PRODUCT').where('kitchenId', 'in', ids.slice(start, start + 30)).select().get()).docs);
+  }
+  const commit = async (refs: { ref: DocumentReference }[], write: (batch: WriteBatch, ref: DocumentReference) => void, label: string) => {
+    let done = 0;
+    for (let start = 0; start < refs.length; start += BATCH_SIZE) {
+      const batch = db.batch();
+      const chunk = refs.slice(start, start + BATCH_SIZE);
+      chunk.forEach(doc => write(batch, doc.ref));
+      try { await batch.commit(); }
+      catch { throw new ProductCreationError(503, `${done} of ${refs.length} ${label} before an error. Retry Delete All to finish.`); }
+      done += chunk.length;
+    }
+    return done;
+  };
+  const unassignedProducts = await commit(products, (batch, ref) => batch.update(ref, { kitchenId: '' }), 'products unassigned');
+  const deleted = await commit(servicePoints, (batch, ref) => batch.delete(ref), 'service points deleted');
+  return { deleted, unassignedProducts };
 }

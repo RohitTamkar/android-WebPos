@@ -38,11 +38,10 @@ void (async () => {
   input.dispatchEvent(new Event('change', { bubbles: true }));
   await until(() => document.querySelector('tbody'));
   assert(writes === 0 && validations === 0, 'selecting and previewing a file creates nothing');
-  assert(!button('Preview Search Codes').disabled, 'named premises enable server validation');
-  button('Preview Search Codes').click(); await until(() => button('Upload'));
-  assert(writes === 0 && validations === 1, 'code preview does not import products or premises');
+  assert(!button('Preview Search Codes') && !button('Next') && !button('Previous'), 'upload has a single step');
+  assert(!button('Upload').disabled, 'named premises enable upload');
   button('Upload').click(); await until(() => document.querySelector('.csv-upload-success-dialog[open]'));
-  assert(writes === 1, 'one explicit confirmation makes one import request');
+  assert(validations === 1 && writes === 1, 'one Upload click validates once and makes one import request');
   assert(button('Upload').disabled, 'success prevents duplicate submissions');
   root.unmount(); document.getElementById('test-results')!.textContent = JSON.stringify({ passed: checks.length, checks });
 })().catch(error => { document.getElementById('test-results')!.textContent = JSON.stringify({ failed: String(error), checks }); });

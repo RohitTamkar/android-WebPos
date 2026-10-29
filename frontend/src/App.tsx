@@ -2,6 +2,7 @@ import { OutletLogoPage } from './pages/OutletLogoPage.tsx';
 import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useBrowserHistoryState } from './utils/useBrowserHistoryState.ts';
 import { useWebUsage } from './utils/useWebUsage.ts';
+import { useSidebarSections } from './utils/useSidebarSections.ts';
 import { OutletAccessPaused, OutletAdmission } from './pages/OutletAccessPaused.tsx';
 import { LoginPage, type UserSession } from './pages/LoginPage.tsx';
 import { OutletSelectionPage, type OutletSummary } from './pages/OutletSelectionPage.tsx';
@@ -180,6 +181,7 @@ export default function App() {
   const [screenId, navigate] = useBrowserHistoryState('pos-screen', 'Home:Dashboard', validScreen);
   const activeNavigation = screens.find(screen => screen.id === screenId)!;
   const setActiveNavigation = (screen: { id: string; label: string }) => navigate(screen.id);
+  const { openGroup, toggleGroup } = useSidebarSections(activeNavigation.id);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [clock, setClock] = useState('16:45:21');
   const [darkMode, setDarkMode] = useState(() => {
@@ -221,20 +223,6 @@ export default function App() {
   const dashboardExportBusy = useRef(false);
   const [logoutConfirmationOpen, setLogoutConfirmationOpen] = useState(false);
 
-  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
-    Home: true,
-    Masters: true,
-    Inventory: false,
-    Operations: false,
-    Reports: false,
-  });
-
-  const toggleGroup = (groupLabel: string) => {
-    setOpenGroups((prev) => ({
-      ...prev,
-      [groupLabel]: !prev[groupLabel],
-    }));
-  };
 
   useEffect(() => {
     document.documentElement.dataset.theme = darkMode ? 'dark' : 'light';
@@ -475,9 +463,13 @@ export default function App() {
       <aside className={`dashboard-sidebar ${sidebarOpen ? 'open' : ''}`} aria-label="Primary navigation">
         <button type="button" className="sidebar-close" aria-label="Close navigation" onClick={() => setSidebarOpen(false)}><X /></button>
         <div className="business-profile">
-          <span className="business-avatar">{selectedOutlet.name.slice(0, 2).toUpperCase()}</span>
-          <div className="business-outlet-details"><small>Selected Outlet</small><strong><span className="business-outlet-name">{selectedOutlet.name}</span>{selectedOutlet.active !== false && <i className="business-outlet-active" role="img" aria-label="Active outlet" />}</strong><span>{selectedOutlet.branch || selectedOutlet.country}</span></div>
-          <button type="button" className="business-outlet-switch" aria-label="Change Outlet" title="Change Outlet" onClick={handleChangeOutlet}><RefreshCw aria-hidden="true" /></button>
+          <div className="business-outlet-heading"><small>Current Outlet</small>
+            {selectedOutlet.active !== false && <span className="business-outlet-status"><i className="business-outlet-active" role="img" aria-label="Active outlet" />Active</span>}</div>
+          <div className="business-outlet-summary">
+            <span className="business-avatar">{selectedOutlet.name.slice(0, 2).toUpperCase()}</span>
+            <div className="business-outlet-details"><strong><span className="business-outlet-name">{selectedOutlet.name}</span></strong><span>{selectedOutlet.branch || selectedOutlet.country}</span></div>
+          </div>
+          <button type="button" className="business-outlet-switch" aria-label="Change Outlet" title="Change Outlet" onClick={handleChangeOutlet}><RefreshCw aria-hidden="true" />Change Outlet</button>
         </div>
         <nav className="sidebar-nav">
           {navigationGroups.filter(group => !hiddenNavigationGroups.has(group.label)).map((group) => (
@@ -493,12 +485,12 @@ export default function App() {
                 <span>{group.icon}{group.label}</span>
                 <ChevronDown
                   style={{
-                    transform: openGroups[group.label] ? 'rotate(0deg)' : 'rotate(-90deg)',
+                    transform: openGroup === group.label ? 'rotate(0deg)' : 'rotate(-90deg)',
                     transition: 'transform 0.2s ease',
                   }}
                 />
               </div>
-              {(openGroups[group.label] ?? true) && (
+              {openGroup === group.label && (
                 <div className="nav-group-items">
                   {group.items.filter(item => !disabledNavigationItems.has(`${group.label}:${item.label}`)).map((item) => (
                     <button

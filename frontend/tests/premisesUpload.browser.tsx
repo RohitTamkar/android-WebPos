@@ -86,7 +86,7 @@ void (async () => {
   await until(() => document.querySelector('input[type=file]'), 'quota check');
   assert(document.querySelector('.upload-excel-dialog .csv-upload-preview')?.textContent?.includes('Upload attempts remaining for this outlet: 1'), 'remaining attempts come from the backend on opening');
   select(PREMISES_PRODUCT_COLUMNS);
-  await until(() => document.querySelectorAll('tbody tr').length === 10, '10-row preview');
+  await until(() => document.querySelectorAll('tbody tr').length === 12, 'all-row preview');
   assert(document.querySelectorAll('thead th').length === 17, 'preview displays all 15 data columns plus row and validation');
   assert(document.querySelector('thead th:last-child')?.textContent === 'Premises', 'Premises is immediately after Search Code');
   assert(document.querySelector('tbody tr td:last-child')?.textContent === 'Premises 0', 'premises value is preserved');
@@ -98,8 +98,8 @@ void (async () => {
 
   assert(button('Confirm Upload').disabled, 'confirmation remains disabled without verified premises persistence');
   assert(document.querySelector('.upload-excel-preview-dialog')?.textContent?.includes('Saving premises requires a supported premises mapping'), 'existing premises limitation is disclosed');
-  button('Next').click(); await pause();
-  assert(document.querySelectorAll('tbody tr').length === 2, 'preview paginates remaining rows');
+  assert(!button('Next') && !button('Previous'), 'no pagination buttons');
+  assert(document.querySelectorAll('tbody tr').length === 12, 'all rows are listed in one scrolling table');
   button('Remove File').click(); select(PREMISES_TEMPLATE_COLUMNS);
   await until(() => document.querySelectorAll('thead th').length === 19, 'three price columns');
   assert([...document.querySelectorAll('thead th')].slice(-3).map(cell => cell.textContent).join(',') === 'Premises 1,Premises 2,Premises 3', 'all three numbered premises-price headers appear');

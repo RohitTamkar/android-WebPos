@@ -159,8 +159,8 @@ export function AddProductForm({ outletId, token, initialCategory, onCancel, onC
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) priceTable = parsed as Record<string, unknown>;
   } catch { /* Preserve an unrecognized stored price table without rewriting it. */ }
   const premisePrices = productPremisesPrices(options?.premises ?? [], priceTable);
-  const savedPrices = Object.values(priceTable);
-  const allDefaultPrices = savedPrices.length > 1 && savedPrices.every(value => value === priceTable['default price']);
+  const savedPrices = premisePrices.map(({ price }) => price).filter(price => price !== undefined);
+  const allDefaultPrices = savedPrices.length > 0 && savedPrices.every(value => value === priceTable['default price']);
   const discountAmount = Number(draft.price) * Number(draft.discount) / 100;
   return (
     <section className="category-modal add-product-modal" aria-labelledby="add-product-title">

@@ -71,6 +71,7 @@
 .bill-items-table table { width: 100%; border-collapse: collapse; }
 .bill-items-table th, .bill-items-table td { padding: 9px; border-bottom: 1px solid #edf0f2; font-size: 9px; text-align: left; }
 .bill-items-table th { color: #7d8e9d; background: #f4f7f8; text-transform: uppercase; }
+.bill-items-table .bill-item-remark { display: block; margin-top: 2px; color: #7d8e9d; font-size: 8px; }
 .bill-payment-detail, .bill-total-detail { margin-top: 12px; padding: 13px; border: 1px solid #e0e6eb; border-radius: 8px; background: #fff; }
 .bill-payment-detail h3 { margin: 0 0 7px; }
 .bill-payment-detail div, .bill-total-detail div { display: flex; justify-content: space-between; padding: 6px 0; color: #65798b; font-size: 10px; }

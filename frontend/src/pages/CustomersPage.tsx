@@ -1,10 +1,14 @@
 import { readMasterSnapshot, masterSnapshotRevision } from '../utils/masterSnapshots.ts';
+import { useMasterSync } from '../utils/useMasterSync.ts';
 import { useRowBatches } from '../utils/useRowBatches.ts';
 import { ProductListRequestError, streamList } from './productListApi.ts';
 import { OutletMasterDeleteButton } from './OutletMasterDeleteButton.tsx';
+import { DeleteConfirmation } from './DeleteConfirmation.tsx';
+import { DeleteAllError, deleteAllRecords } from './deleteAllApi.ts';
+import { SuccessPopup } from './SuccessPopup.tsx';
 import { useTimedNotice } from '../utils/useTimedNotice.ts';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Plus, RefreshCw, Save, UsersRound, X } from 'lucide-react';
+import { MoreVertical, Plus, RefreshCw, Save, Trash2, UsersRound, X } from 'lucide-react';
 import type { OutletSummary } from './OutletSelectionPage.tsx';
 import { ReportDateInput } from './ReportDateInput.tsx';
 import { createRequestId } from '../utils/requestId.ts';
@@ -25,6 +29,7 @@ export function CustomersPage({ outlet, token, onSessionExpired }: {
   outlet: OutletSummary; token: string; onSessionExpired: () => void;
 }) {
   const [customers, setCustomers] = useState<Customer[] | null>(null);
+  const [liveReady, setLiveReady] = useState(false);
   const [error, setError] = useState('');
   const [reload, setReload] = useState(0);
   const [editing, setEditing] = useState<Customer | null>(null);
@@ -34,9 +39,15 @@ export function CustomersPage({ outlet, token, onSessionExpired }: {
   const [saving, setSaving] = useState(false);
   const busy = useRef(false);
   const request = useRef<AbortController | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [deleteAllOpen, setDeleteAllOpen] = useState(false);
+  const [deleteAllError, setDeleteAllError] = useState('');
+  const [deletingAll, setDeletingAll] = useState(false);
+  const [deleteAllDone, setDeleteAllDone] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController(); request.current = controller;
+    setLiveReady(false);
     const url = `/api/outlets/${encodeURIComponent(outlet.id)}/customers`;
     const cached = readMasterSnapshot<{ customers: Customer[] }>(url, token);
     const revision = masterSnapshotRevision();
@@ -59,6 +70,7 @@ export function CustomersPage({ outlet, token, onSessionExpired }: {
         if (revision !== masterSnapshotRevision()) { setReload(value => value + 1); return; }
         for (const customer of loaded) fromServer.add(customer);
         setCustomers(withLocalChanges(loaded));
+        setLiveReady(true);
       } catch (failure) {
         if (controller.signal.aborted) return;
         if (failure instanceof ProductListRequestError && failure.status === 401) { onSessionExpired(); return; }
@@ -67,6 +79,18 @@ export function CustomersPage({ outlet, token, onSessionExpired }: {
     })();
     return () => controller.abort();
   }, [outlet.id, token, onSessionExpired, reload]);
+
+  useMasterSync(outlet.id, token, 'customers', liveReady && !error && !draft && !saving && !deleteAllOpen, async signal => {
+    const revision = masterSnapshotRevision();
+    try {
+      const loaded = await streamList<Customer>(`/api/outlets/${encodeURIComponent(outlet.id)}/customers`, token, signal, 'customers', () => {},
+        { fromJson: data => (data as { customers?: Customer[] } | null)?.customers ?? null, snapshot: customers => ({ customers }) });
+      if (!signal.aborted && revision === masterSnapshotRevision()) setCustomers(loaded.sort((a, b) => a.name.localeCompare(b.name)));
+    } catch (failure) {
+      if (!signal.aborted && failure instanceof ProductListRequestError && failure.status === 401) onSessionExpired();
+      else throw failure;
+    }
+  });
 
   const openAdd = () => {
     setEditing(null);
@@ -79,6 +103,19 @@ export function CustomersPage({ outlet, token, onSessionExpired }: {
     const { documentId: _documentId, ...fields } = customer;
     setEditing(customer); setSaveError(''); setNotice('');
     setDraft({ ...fields, requestId: '', creditLimit: String(customer.creditLimit), dayLimit: String(customer.dayLimit), balance: String(customer.balance) });
+  };
+  // Removes only this outlet's customer masters; bills and balances elsewhere are kept.
+  const deleteAllCustomers = async () => {
+    if (busy.current) return;
+    busy.current = true; setDeletingAll(true); setDeleteAllError(''); setNotice('');
+    try {
+      await deleteAllRecords(outlet.id, token, 'customers');
+      setCustomers([]); setDeleteAllOpen(false); setDeleteAllDone(true);
+    } catch (failure) {
+      if (failure instanceof DeleteAllError && failure.status === 401) { setDeleteAllOpen(false); onSessionExpired(); return; }
+      setDeleteAllError((failure as Error).message);
+      setReload(value => value + 1);
+    } finally { busy.current = false; setDeletingAll(false); }
   };
   const customerDeleted = (documentId: string) => {
     setCustomers(current => current?.filter(customer => customer.documentId !== documentId) ?? null);
@@ -142,7 +179,21 @@ export function CustomersPage({ outlet, token, onSessionExpired }: {
   </form></section>;
 
   return <section className="customers-page category-page-shell">
-    <div className="category-header-row"><div className="category-title-group"><h1><UsersRound size={22} /> Customers</h1><p>{outlet.name} · Your outlet’s customer list.</p></div><button type="button" className="btn-primary-add" disabled={!customers || !!error} onClick={openAdd}><Plus size={16} /> Add Customer</button></div>
+    {deleteAllOpen && <DeleteConfirmation kind="customer" name="all customers" busy={deletingAll} error={deleteAllError}
+      title="Delete all customers?" description={`Are you sure you want to delete all customers? This will permanently remove all ${customers?.length ?? 0} customers of this outlet.`}
+      confirmLabel="Yes" cancelLabel="No" onCancel={() => { if (!busy.current) setDeleteAllOpen(false); }} onConfirm={() => void deleteAllCustomers()} />}
+    {deleteAllDone && <SuccessPopup message="Customers deleted successfully" onDismiss={() => setDeleteAllDone(false)} />}
+    <div className="category-header-row"><div className="category-title-group"><h1><UsersRound size={22} /> Customers</h1><p>{outlet.name} · Your outlet’s customer list.</p></div>
+      <div className="category-header-actions category-master-actions">
+        <button type="button" className="btn-primary-add" disabled={!customers || !!error} onClick={openAdd}><Plus size={16} /> Add Customer</button>
+        <div className="category-more-actions">
+          <button type="button" className="category-menu-toggle" aria-label="Customer options" aria-expanded={menuOpen}
+            aria-controls="customer-options-menu" onClick={() => setMenuOpen(value => !value)}><MoreVertical size={17} /></button>
+          {menuOpen && <div id="customer-options-menu" className="category-options-menu">
+            <button type="button" disabled={!customers || !!error || deletingAll || !customers.length} onClick={() => { setMenuOpen(false); setDeleteAllError(''); setDeleteAllOpen(true); }}><Trash2 size={14} />Delete All</button>
+          </div>}
+        </div>
+      </div></div>
     {notice && <p className="customer-notice" role="status">{notice}</p>}
     {error ? <div className="customer-state"><p role="alert">{error}</p><button type="button" className="btn-secondary" onClick={() => setReload(value => value + 1)}><RefreshCw size={16} /> Retry</button></div> : !customers ? <p className="customer-state" role="status">Loading customers…</p> : !customers.length ?
       <div className="customer-state"><UsersRound size={28} /><h2>No customers found</h2><p>Add your first customer for this outlet.</p><button type="button" className="btn-primary-add" onClick={openAdd}><Plus size={16} /> Add Customer</button></div> :

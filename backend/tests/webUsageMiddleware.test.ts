@@ -18,6 +18,7 @@ test('protected reports, devices, employees and mutations require the server che
   for (const [path, method] of [['/dashboard', 'GET'], ['/reports/gst', 'GET'], ['/devices', 'GET'], ['/employees', 'POST'], ['/master-transfer', 'POST'], ['/products/id', 'DELETE'], ['/product-image-assignments', 'POST']] as const) {
     const result = await run(path, { method }); assert.equal(result.next, true);
     assert.equal(result.calls[1][2], 'signed'); assert.deepEqual(result.calls[1][4], { action: 'check', sessionId: 'session', generation: 'generation' });
+    assert.deepEqual(result.calls[1][6], { readOnly: method === 'GET' }, 'only reads skip the accounting write; every mutation keeps the read-write check');
   }
 });
 test('omitting headers or authentication never bypasses enforcement', async () => {

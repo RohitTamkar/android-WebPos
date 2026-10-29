@@ -1,7 +1,9 @@
 import { useTimedNotice } from '../utils/useTimedNotice.ts';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Plus, Printer, RefreshCw, Save, Trash2, X } from 'lucide-react';
+import { MoreVertical, Plus, Printer, RefreshCw, Save, Trash2, X } from 'lucide-react';
 import { DeleteConfirmation } from './DeleteConfirmation.tsx';
+import { DeleteAllError, deleteAllRecords } from './deleteAllApi.ts';
+import { SuccessPopup } from './SuccessPopup.tsx';
 import type { OutletSummary } from './OutletSelectionPage.tsx';
 import { createRequestId } from '../utils/requestId.ts';
 import './CategoryPage.css';
@@ -31,6 +33,10 @@ function ServicePointsContent({ outlet, token, onSessionExpired }: Props) {
   const original = useRef<Draft | null>(null);
   const [saveError, setSaveError] = useState(''), [saving, setSaving] = useState(false);
   const busy = useRef(false), request = useRef<AbortController | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [deleteAllOpen, setDeleteAllOpen] = useState(false);
+  const [deleteAllError, setDeleteAllError] = useState(''), [deletingAll, setDeletingAll] = useState(false);
+  const [deleteAllDone, setDeleteAllDone] = useState(false);
   useEffect(() => {
     const controller = new AbortController(); request.current = controller;
     void (async () => {
@@ -47,6 +53,19 @@ function ServicePointsContent({ outlet, token, onSessionExpired }: Props) {
     })();
     return () => controller.abort();
   }, [outlet.id, token, onSessionExpired, reload]);
+  // Products assigned to any service point become unassigned, as with a single deletion.
+  const deleteAllServicePoints = async () => {
+    if (busy.current) return;
+    busy.current = true; setDeletingAll(true); setDeleteAllError(''); setNotice('');
+    try {
+      await deleteAllRecords(outlet.id, token, 'service-points');
+      setRows([]); setDeleteAllOpen(false); setDeleteAllDone(true);
+    } catch (failure) {
+      if (failure instanceof DeleteAllError && failure.status === 401) { setDeleteAllOpen(false); onSessionExpired(); return; }
+      setDeleteAllError((failure as Error).message);
+      setReload(value => value + 1);
+    } finally { busy.current = false; setDeletingAll(false); }
+  };
   const confirmDelete = async () => {
     const controller = request.current;
     if (!deleting || busy.current || !controller || controller.signal.aborted) return;
@@ -130,7 +149,21 @@ function ServicePointsContent({ outlet, token, onSessionExpired }: Props) {
     </form>
   </section>;
   return <section className="category-page service-points-page" aria-label="Service Points">
-    <div className="category-header-row"><h1>Service Points</h1><button type="button" className="btn-primary-add" disabled={rows === null || !!error} onClick={openAdd}><Plus size={16} />Add Service Point</button></div>
+    {deleteAllOpen && <DeleteConfirmation kind="service point" name="all service points" busy={deletingAll} error={deleteAllError}
+      title="Delete all service points?" description={`Are you sure you want to delete all service points? This will permanently remove all ${rows?.length ?? 0} service points of this outlet. Products are kept and become unassigned.`}
+      confirmLabel="Yes" cancelLabel="No" onCancel={() => { if (!busy.current) setDeleteAllOpen(false); }} onConfirm={() => void deleteAllServicePoints()} />}
+    {deleteAllDone && <SuccessPopup message="Service points deleted successfully" onDismiss={() => setDeleteAllDone(false)} />}
+    <div className="category-header-row"><h1>Service Points</h1>
+      <div className="category-header-actions category-master-actions">
+        <button type="button" className="btn-primary-add" disabled={rows === null || !!error} onClick={openAdd}><Plus size={16} />Add Service Point</button>
+        <div className="category-more-actions">
+          <button type="button" className="category-menu-toggle" aria-label="Service point options" aria-expanded={menuOpen}
+            aria-controls="service-point-options-menu" onClick={() => setMenuOpen(value => !value)}><MoreVertical size={17} /></button>
+          {menuOpen && <div id="service-point-options-menu" className="category-options-menu">
+            <button type="button" disabled={rows === null || !!error || deletingAll || !rows.length} onClick={() => { setMenuOpen(false); setDeleteAllError(''); setDeleteAllOpen(true); }}><Trash2 size={14} />Delete All</button>
+          </div>}
+        </div>
+      </div></div>
     {notice && <p className="service-point-notice" role="status">{notice}</p>}
     {error ? <div className="service-point-state" role="alert">{error}<button type="button" className="btn-secondary" onClick={() => { setRows(null); setError(''); setReload(value => value + 1); }}><RefreshCw size={15} />Retry</button></div>
       : rows === null ? <p className="service-point-state" role="status">Loading service points…</p>

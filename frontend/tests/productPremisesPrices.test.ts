@@ -26,11 +26,15 @@ test('Android keys take precedence over plain-name aliases without modifying sto
   assert.deepEqual(table, before);
 });
 
-test('unconfigured saved premises remain visible once, with zero and string values preserved', () => {
-  assert.deepEqual(productPremisesPrices([], { TABLE: 10, 'TABLE price': '20.00', 'AC Table price': 0 }), [
+test('prices saved for deleted premises are hidden; current premises keep zero and string values', () => {
+  const table = { 'default price': 3000, 'non ac price': 3000, 'GARDEN price': 3000, TABLE: 10, 'TABLE price': '20.00', 'AC Table price': 0 };
+  const before = structuredClone(table);
+  assert.deepEqual(productPremisesPrices([{ name: 'TABLE' }, { name: 'AC Table' }], table), [
     { name: 'TABLE', label: 'TABLE Price', price: '20.00' },
     { name: 'AC Table', label: 'AC Table Price', price: 0 },
   ]);
+  assert.deepEqual(productPremisesPrices([], table), [], 'no premises left means no premises price fields');
+  assert.deepEqual(table, before, 'stored prices are never rewritten');
 });
 
 test('unsaved prices remain empty and an existing premise ending in Price retains its name', () => {

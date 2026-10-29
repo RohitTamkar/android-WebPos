@@ -7,7 +7,7 @@ const patches: { id: string; body: { prices: Record<string, number>; expected: R
 let expired = 0, listLoads = 0, confirmAnswer = false, confirms = 0;
 const failIds = new Set<string>();
 const store = new Map<string, Record<string, unknown>>([
-  ['p1', { name: 'MASALA PAPAD', code: '1', price: 80, currentStock: 5, barcode: 'b1', priceTable: '{"default price":80,"AC Table price":30,"TABLE price":80}' }],
+  ['p1', { name: 'MASALA PAPAD', code: '1', price: 80, currentStock: 5, barcode: 'b1', priceTable: '{"default price":80,"AC Table price":30,"TABLE price":80,"GARDEN price":99}' }],
   ['p2', { name: 'FRY PAPAD', code: '2', price: 30, currentStock: 6, barcode: 'b2', priceTable: '{"default price":30,"AC Table price":30,"TABLE price":30,"Online price":30}' }],
   ['p3', { name: 'ONION SALAD', code: '3', price: 50, currentStock: 7, barcode: 'b3', priceTable: '{"default price":50}' }],
   ['p4', { name: 'BROKEN', code: '4', price: 1, priceTable: 'not json' }],
@@ -94,7 +94,7 @@ void (async () => {
   assert(!document.querySelector('.products-notice'), 'Completed update leaves no success banner');
   assert(patches.length === 1 && patches[0]!.id === 'p2', 'retry resends only the failed product');
   await waitFor(() => listLoads === 3, 'list reloaded');
-  assert(store.get('p1')!.priceTable === '{"default price":80,"AC Table price":35,"TABLE price":90}' && store.get('p2')!.price === 35, 'saved values');
+  assert(store.get('p1')!.priceTable === '{"default price":80,"AC Table price":35,"TABLE price":90,"GARDEN price":99}' && store.get('p2')!.price === 35, 'saved values; a deleted premise price stays stored but hidden');
   for (const [id, fields] of untouched) for (const key of ['name', 'code', 'currentStock', 'barcode']) assert(store.get(id)![key] === fields[key], `${id}.${key} preserved`);
   results.push('Retry saves remaining product, reloads list, and preserves unrelated fields');
 

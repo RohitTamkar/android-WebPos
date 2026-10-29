@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { productFields } from './productDefaults.js';
 import { parseProductCsv, namedPremisesHeaders, premisesPriceKey, type ProductUploadMode } from '../../frontend/src/pages/productCsvPreview.js';
 import { categoryNameKey, planImportCategories } from './productImportCategories.js';
+import { withStoredPremisesNames } from './productImportPremises.js';
 
 // Approved for user-triggered, create-only imports into the existing PRODUCT collection.
 export const PRODUCT_IMPORT_WRITES_ENABLED = true;
@@ -32,7 +33,7 @@ export function validateProductImport(source: string, categories: ImportCategory
       if (!c[column]?.trim() || !Number.isFinite(Number(c[column]))) errors.push({ column: preview.headers[column]!, message: 'A finite numeric value is required to construct the product.' });
     }
     if (Number(c[2]) !== Number(c[3])) errors.push({ column: 'Price 1', message: 'Price 1 must equal Default Price for the supplied single-entry priceTable. A separate Price 1 mapping has not been supplied.' });
-    if (c[10]?.toLowerCase() !== 'number') errors.push({ column: 'Unit Type', message: 'Only number (unitId 2) is supported by the supplied product template.' });
+    if (c[10]?.trim().toLowerCase() !== 'number') errors.push({ column: 'Unit Type', message: 'Only number (unitId 2) is supported by the supplied product template.' });
     if (Number(c[11]) !== 0) errors.push({ column: 'Stock', message: 'Only zero opening stock is supported until the stock-initialization workflow is specified.' });
     if (!['yes', 'no'].includes(c[12]?.toLowerCase() ?? '')) errors.push({ column: 'Weightable', message: 'Weightable must be yes or no.' });
     const matches = categories.filter(category => categoryNameKey(category.name) === categoryNameKey(c[6] ?? ''));
@@ -73,6 +74,7 @@ export interface ImportValidationDependencies {
   readCategories: (outletId: string) => Promise<ImportCategory[]>;
   readTaxes: () => Promise<ImportTax[]>;
   readProducts: (outletId: string) => Promise<StoredImportProduct[]>;
+  readPremises?: (outletId: string) => Promise<{ name: string }[]>;
 }
 export async function checkAuthorizedProductImport(profileId: string | null, outletId: string, source: unknown, deps: ImportValidationDependencies, acceptAttempt?: () => void, mode: ProductUploadMode = 'standard') {
   if (!profileId) return { status: 401, body: { success: false, message: 'Your session has expired. Please sign in again.' } };
@@ -86,7 +88,8 @@ export async function checkAuthorizedProductImport(profileId: string | null, out
   try { local = validateProductImport(source, [], [], mode); }
   catch (error) { return { status: 400, body: { success: false, message: error instanceof Error ? error.message : 'Invalid spreadsheet.' } }; }
   if (!local.categoryChecked) return { status: 422, body: { success: false, data: local } };
-  const [categories, taxes] = await Promise.all([deps.readCategories(outletId), deps.readTaxes()]);
+  const [categories, taxes, premises] = await Promise.all([deps.readCategories(outletId), deps.readTaxes(),
+    mode === 'premises' && deps.readPremises ? deps.readPremises(outletId) : []]);
   const plan = planImportCategories(source, categories, mode);
   const data = { ...validateProductImport(source, plan.previewCategories, taxes, mode), categorySummary: { reused: plan.reused, toCreate: plan.missing.length } };
   if (plan.issues.length) {
@@ -94,6 +97,9 @@ export async function checkAuthorizedProductImport(profileId: string | null, out
     data.canUpload = false; data.documents = [];
   }
   if (data.canUpload) {
+    // Price keys follow existing premises spelling, so retries match saved products.
+    if (premises.length) data.documents = withStoredPremisesNames(namedPremisesHeaders(parseProductCsv(source, mode).headers),
+      premises.map(premise => ({ fields: { name: premise.name } })), data.documents);
     const existing = await deps.readProducts(outletId);
     try { data.documents = allocateProductCodes(outletId, data.documents, existing); }
     catch (error) {
